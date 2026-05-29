@@ -299,3 +299,128 @@ def remove_player_from_group(c, group_id, player_id):
         print("Player is not in that group.")
     else:
         print(f"Error {response.status_code}: {response.json()}")
+
+
+# ── Handicaps ──────────────────────────────────────────────────
+
+@task
+def add_handicap(c, player_id, handicap, valid_from=None):
+    """
+    Add a handicap for a player.
+
+    Usage:
+        uv run invoke add-handicap --player-id=<player-id> --handicap=18.4
+        uv run invoke add-handicap --player-id=<player-id> --handicap=18.4 --valid-from=2025-01-01
+    """
+    import requests
+
+    payload = {
+        "player_id": player_id,
+        "handicap": float(handicap),
+    }
+
+    if valid_from:
+        payload["valid_from"] = valid_from
+
+    response = requests.post("http://localhost:8000/handicaps/", json=payload)
+
+    if response.status_code == 201:
+        row = response.json()
+        print(
+            f"Handicap added: player_id={row['player_id']} "
+            f"handicap={row['handicap']} valid_from={row['valid_from']}"
+        )
+    else:
+        print(f"Error {response.status_code}: {response.json()}")
+
+
+@task
+def list_handicaps(c, player_id):
+    """
+    List handicap history for a player.
+
+    Usage:
+        uv run invoke list-handicaps --player-id=<player-id>
+    """
+    import requests
+
+    response = requests.get(f"http://localhost:8000/handicaps/player/{player_id}")
+
+    if response.status_code == 200:
+        rows = response.json()
+
+        if not rows:
+            print("No handicaps found for this player.")
+            return
+
+        print(f"\n{'ID':<38} {'Player ID':<38} {'Handicap':<10} {'Valid from'}")
+        print("-" * 100)
+
+        for row in rows:
+            print(
+                f"{row['id']:<38} "
+                f"{row['player_id']:<38} "
+                f"{row['handicap']:<10} "
+                f"{row['valid_from']}"
+            )
+    else:
+        print(f"Error {response.status_code}: {response.json()}")
+
+
+@task
+def current_handicap(c, player_id):
+    """
+    Get the current handicap for a player.
+
+    Usage:
+        uv run invoke current-handicap --player-id=<player-id>
+    """
+    import requests
+
+    response = requests.get(f"http://localhost:8000/handicaps/player/{player_id}/current")
+
+    if response.status_code == 200:
+        row = response.json()
+        print(
+            f"Current handicap: player_id={row['player_id']} "
+            f"handicap={row['handicap']} valid_from={row['valid_from']}"
+        )
+    elif response.status_code == 404:
+        print("No handicap found for this player.")
+    else:
+        print(f"Error {response.status_code}: {response.json()}")
+
+
+@task
+def list_latest_handicaps_for_group(c, group_id):
+    """
+    Get the latest handicaps for all players in a group.
+
+    Usage:
+        uv run invoke list-group-handicaps --group-id=<group-id>
+    """
+    import requests
+
+    response = requests.get(f"http://localhost:8000/handicaps/group/{group_id}/latest")
+
+    if response.status_code != 200:
+        print(f"Error {response.status_code}: {response.json()}")
+        return
+
+    rows = response.json()
+
+    if not rows:
+        print("No players found in this group.")
+        return
+
+    print(f"\n{'Player':<25} {'Handicap':<10} {'Valid from'}")
+    print("-" * 50)
+
+    for row in rows:
+        player_name = f"{row.get('first_name', '—')} {row.get('surname', '—')}"
+        latest = row.get("latest_handicap") or {}
+
+        handicap = latest.get("handicap", "—")
+        valid_from = latest.get("valid_from", "—")
+
+        print(f"{player_name:<25} {str(handicap):<10} {valid_from}")

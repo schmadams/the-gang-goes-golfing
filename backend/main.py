@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from backend.routers import players, groups, group_players
+from backend.routers import players, groups, group_players, handicaps
 
 app = FastAPI(title="The Gang Goes Golfing API")
 
@@ -14,6 +14,7 @@ app.add_middleware(
 app.include_router(players.router)
 app.include_router(groups.router)
 app.include_router(group_players.router)
+app.include_router(handicaps.router)
 
 
 @app.get("/")
