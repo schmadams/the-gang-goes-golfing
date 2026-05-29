@@ -1,0 +1,29 @@
+[project]
+name = "the-gang-goes-golfing"
+version = "0.1.0"
+description = "Backend API for The Gang Goes Golfing"
+requires-python = ">=3.11"
+
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "supabase",
+    "pydantic",
+    "python-dotenv",
+    "invoke>=3.0.3",
+    "requests"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "httpx",
+    "invoke",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["backend"]
