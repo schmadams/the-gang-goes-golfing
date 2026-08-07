@@ -5,7 +5,7 @@ import requests
 from dash import Input, Output, State, callback, dcc, html
 from flask import session
 
-from frontend.src.config import API_BASE_URL
+from config import API_BASE_URL
 
 dash.register_page(__name__, path="/signin", name="Sign In")
 
