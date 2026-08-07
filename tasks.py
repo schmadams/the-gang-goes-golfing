@@ -424,3 +424,53 @@ def list_latest_handicaps_for_group(c, group_id):
         valid_from = latest.get("valid_from", "—")
 
         print(f"{player_name:<25} {str(handicap):<10} {valid_from}")
+
+
+# Add to tasks.py in your project root.
+#
+# 1) Add these two imports up near the top, alongside `from invoke import task`:
+#
+#    import subprocess
+#    import time
+#
+# 2) Add the task below anywhere in the file (e.g. right after the existing
+#    `dev` task in the "Development server" section).
+#
+# Usage:
+#     uv run invoke dev-all
+#
+# Starts the backend (port 8000) and frontend (port 8050) together.
+# Press Ctrl+C once to stop both.
+
+
+@task
+def dev_all(c):
+    """Start both the backend API and frontend Dash app together."""
+    backend = subprocess.Popen(
+        ["uv", "run", "uvicorn", "backend.main:app", "--reload", "--port", "8000"]
+    )
+    frontend = subprocess.Popen(
+        ["uv", "run", "python", "frontend/src/app.py"]
+    )
+
+    print("\nBackend:  http://localhost:8000")
+    print("Frontend: http://localhost:8050")
+    print("Press Ctrl+C to stop both.\n")
+
+    try:
+        while True:
+            if backend.poll() is not None:
+                print("Backend process exited — stopping frontend too.")
+                break
+            if frontend.poll() is not None:
+                print("Frontend process exited — stopping backend too.")
+                break
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("\nStopping...")
+    finally:
+        for proc in (backend, frontend):
+            if proc.poll() is None:
+                proc.terminate()
+        for proc in (backend, frontend):
+            proc.wait()

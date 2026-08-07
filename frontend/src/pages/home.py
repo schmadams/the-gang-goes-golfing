@@ -10,11 +10,12 @@ dash.register_page(__name__, path="/", name="Home")
 
 
 def layout():
-    if not session.get("logged_in"):
-        # Not signed in — bounce to the sign-in page
-        return dcc.Location(pathname="/signin", id="redirect-to-signin")
+    player_id = session.get("player_id")
 
-    player_id = session["player_id"]
+    if not session.get("logged_in") or not player_id:
+        # Not signed in (or a stale/incomplete session) — bounce to sign-in
+        session.clear()
+        return dcc.Location(pathname="/signin", id="redirect-to-signin")
 
     groups_resp = requests.get(f"{API_BASE_URL}/group-players/player/{player_id}")
     groups = (
