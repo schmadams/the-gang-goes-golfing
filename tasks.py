@@ -1,3 +1,6 @@
+import subprocess
+import time
+
 from invoke import task
 
 
@@ -99,8 +102,8 @@ def check_env(c):
         "print('ENV_FILE:', env_file); "
         "print('EXISTS:', env_file.exists()); "
         "load_dotenv(env_file, override=True); "
-        "print('SUPABASE_URL loaded:', bool(os.getenv('SUPABASE_URL'))); "
-        "print('SUPABASE_KEY loaded:', bool(os.getenv('SUPABASE_KEY')))\""
+        "print('t3g_sbdb_URL loaded:', bool(os.getenv('t3g_sbdb_URL'))); "
+        "print('t3g_sbdb_KEY loaded:', bool(os.getenv('t3g_sbdb_KEY')))\""
     )
 
 # ── Groups ─────────────────────────────────────────────────────
@@ -424,23 +427,6 @@ def list_latest_handicaps_for_group(c, group_id):
         valid_from = latest.get("valid_from", "—")
 
         print(f"{player_name:<25} {str(handicap):<10} {valid_from}")
-
-
-# Add to tasks.py in your project root.
-#
-# 1) Add these two imports up near the top, alongside `from invoke import task`:
-#
-#    import subprocess
-#    import time
-#
-# 2) Add the task below anywhere in the file (e.g. right after the existing
-#    `dev` task in the "Development server" section).
-#
-# Usage:
-#     uv run invoke dev-all
-#
-# Starts the backend (port 8000) and frontend (port 8050) together.
-# Press Ctrl+C once to stop both.
 
 
 @task

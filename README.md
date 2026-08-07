@@ -173,8 +173,8 @@ C:\Users\<YourUsername>\.env
 Example:
 
 ```env
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_KEY=your_supabase_key_here
+t3g_sbdb_URL=https://your-project.supabase.co
+t3g_sbdb_KEY=your_supabase_key_here
 ```
 
 Check that your environment variables are available:
@@ -187,8 +187,8 @@ Expected output:
 
 ```text
 EXISTS: True
-SUPABASE_URL loaded: True
-SUPABASE_KEY loaded: True
+t3g_sbdb_URL loaded: True
+t3g_sbdb_KEY loaded: True
 ```
 
 ## Install dependencies
@@ -702,14 +702,14 @@ Or activate the virtual environment first:
 If you see an error like:
 
 ```text
-Missing SUPABASE_URL or SUPABASE_KEY
+Missing t3g_sbdb_URL or t3g_sbdb_KEY
 ```
 
 Check that your user-level `.env` exists and contains:
 
 ```env
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_KEY=your_supabase_key_here
+t3g_sbdb_URL=https://your-project.supabase.co
+t3g_sbdb_KEY=your_supabase_key_here
 ```
 
 Then run:
