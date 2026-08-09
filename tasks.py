@@ -1,3 +1,4 @@
+import platform
 import subprocess
 import time
 
@@ -102,8 +103,8 @@ def check_env(c):
         "print('ENV_FILE:', env_file); "
         "print('EXISTS:', env_file.exists()); "
         "load_dotenv(env_file, override=True); "
-        "print('t3g_sbdb_URL loaded:', bool(os.getenv('t3g_sbdb_URL'))); "
-        "print('t3g_sbdb_KEY loaded:', bool(os.getenv('t3g_sbdb_KEY')))\""
+        "print('SUPABASE_URL loaded:', bool(os.getenv('SUPABASE_URL'))); "
+        "print('SUPABASE_KEY loaded:', bool(os.getenv('SUPABASE_KEY')))\""
     )
 
 # ── Groups ─────────────────────────────────────────────────────
@@ -429,9 +430,39 @@ def list_latest_handicaps_for_group(c, group_id):
         print(f"{player_name:<25} {str(handicap):<10} {valid_from}")
 
 
+def _kill_port(port: int) -> None:
+    """Kill whatever process is currently listening on the given port, if any."""
+    system = platform.system()
+
+    if system == "Windows":
+        result = subprocess.run(["netstat", "-ano"], capture_output=True, text=True)
+        pids = set()
+        for line in result.stdout.splitlines():
+            parts = line.split()
+            if len(parts) < 5:
+                continue
+            _proto, local_addr, _remote_addr, state, pid = parts[:5]
+            if state == "LISTENING" and local_addr.endswith(f":{port}"):
+                pids.add(pid)
+        for pid in pids:
+            print(f"  Killing stale process {pid} on port {port}")
+            subprocess.run(["taskkill", "/PID", pid, "/F"], capture_output=True)
+    else:
+        result = subprocess.run(
+            ["lsof", "-ti", f":{port}"], capture_output=True, text=True
+        )
+        for pid in result.stdout.split():
+            print(f"  Killing stale process {pid} on port {port}")
+            subprocess.run(["kill", "-9", pid])
+
+
 @task
 def dev_all(c):
     """Start both the backend API and frontend Dash app together."""
+    print("Checking for stale processes on 8000/8050...")
+    _kill_port(8000)
+    _kill_port(8050)
+
     backend = subprocess.Popen(
         ["uv", "run", "uvicorn", "backend.main:app", "--reload", "--port", "8000"]
     )

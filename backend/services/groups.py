@@ -1,5 +1,19 @@
+# target path: backend/services/groups.py (full replacement)
+import re
+
+from postgrest.exceptions import APIError
+
 from backend.database import supabase
 from backend.models.group import GroupCreate
+
+
+class DuplicateGroupError(Exception):
+    """Raised when the generated/provided group code or slug is already taken."""
+
+
+def _slugify(name: str) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", name.strip()).strip("-").lower()
+    return slug or "group"
 
 
 def list_groups() -> list[dict]:
@@ -15,14 +29,30 @@ def list_groups() -> list[dict]:
 
 
 def create_group(group: GroupCreate) -> dict:
-    payload = group.model_dump()
+    slug = group.slug or _slugify(group.name)
+    code = group.code or slug
 
-    response = (
-        supabase
-        .table("groups")
-        .insert(payload)
-        .execute()
-    )
+    payload = {
+        "code": code,
+        "slug": slug,
+        "name": group.name,
+        "description": group.description,
+        "group_admin": str(group.admin_player_id) if group.admin_player_id else None,
+    }
+
+    try:
+        response = (
+            supabase
+            .table("groups")
+            .insert(payload)
+            .execute()
+        )
+    except APIError as exc:
+        if exc.code == "23505":
+            raise DuplicateGroupError(
+                "A group with a similar name already exists. Try a different name."
+            ) from exc
+        raise
 
     return response.data[0]
 

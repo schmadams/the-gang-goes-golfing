@@ -1,7 +1,13 @@
+# target path: backend/routers/groups.py (full replacement)
 from fastapi import APIRouter, HTTPException, status
 
 from backend.models.group import GroupCreate, GroupResponse
-from backend.services.groups import create_group, delete_group, list_groups
+from backend.services.groups import (
+    DuplicateGroupError,
+    create_group,
+    delete_group,
+    list_groups,
+)
 
 
 router = APIRouter(
@@ -17,7 +23,10 @@ def list_groups_route():
 
 @router.post("/", response_model=GroupResponse, status_code=status.HTTP_201_CREATED)
 def create_group_route(group: GroupCreate):
-    return create_group(group)
+    try:
+        return create_group(group)
+    except DuplicateGroupError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
 
 
 @router.delete("/{group_id}", response_model=GroupResponse)

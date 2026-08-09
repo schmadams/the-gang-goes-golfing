@@ -1,27 +1,49 @@
+# target path: frontend/src/app.py (full replacement)
 import logging
 import os
 
 import dash
 import dash_bootstrap_components as dbc
 from dash import html
+from flask import session
+
+from layouts.navbar import build_navbar
+from layouts.subnav import build_subnav
 
 # Quiet the default Flask dev-server request logging
 logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
 app = dash.Dash(
     __name__,
-    use_pages=True,
-    suppress_callback_exceptions=True,
+    use_pages=True,                     # auto-discovers files in pages/
+    suppress_callback_exceptions=True,  # needed since page-specific callbacks
+                                         # aren't in the layout until their page loads
     external_stylesheets=[dbc.themes.BOOTSTRAP],
 )
 
-server = app.server  
-server.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")
+server = app.server  # exposed so gunicorn/wsgi can target `app:server` in prod
+server.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")  # required for Flask sessions
 
-app.layout = html.Div(
-    dash.page_container,  # renders whichever page matches the current URL
-    style={"background": "#261C67", "minHeight": "100vh", "width": "100%"},
-)
+
+def serve_layout():
+    # A function (not a static value) so this re-evaluates on every fresh
+    # page load and picks up the current session — otherwise the navbar
+    # wouldn't know whether you're logged in.
+    children = []
+
+    if session.get("logged_in"):
+        children.append(build_navbar())
+        children.append(build_subnav())
+
+    children.append(dash.page_container)
+
+    return html.Div(
+        children,
+        style={"background": "#261C67", "minHeight": "100vh", "width": "100%"},
+    )
+
+
+app.layout = serve_layout
 
 if __name__ == "__main__":
-    app.run(debug=False)  # app.run_server is deprecated in newer Dash versions
+    app.run(debug=True)  # auto-reloads on file changes; app.run_server is deprecated

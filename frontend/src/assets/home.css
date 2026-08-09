@@ -1,0 +1,114 @@
+/* target path: frontend/src/assets/home.css (new file, same assets/ folder as navbar.css) */
+
+.t3g-page {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 3rem 1.5rem;
+}
+
+.t3g-panel {
+    background: #ffffff;
+    border-radius: 16px;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
+    margin-bottom: 2rem;
+    overflow: hidden; /* keeps the panel-navbar's square corners inside the rounded panel */
+}
+
+.t3g-panel-navbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1.1rem 1.5rem;
+    background: #f4f5f9;
+    border-bottom: 1px solid #e2e4ea;
+}
+
+.t3g-panel-navbar-title {
+    margin: 0;
+    color: #1e2a47;
+    font-weight: 800;
+    font-size: 1.1rem;
+}
+
+.t3g-panel-action-button {
+    background: #c21861;
+    color: #ffffff;
+    border: none;
+    font-weight: 700;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 0.5rem 1rem;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: opacity 0.15s ease, transform 0.08s ease;
+}
+
+.t3g-panel-action-button:hover {
+    opacity: 0.85;
+}
+
+.t3g-panel-action-button:active {
+    transform: scale(0.94);
+    opacity: 0.7;
+}
+
+.t3g-panel-action-button--secondary {
+    background: transparent;
+    border: 1px solid #c21861;
+    color: #c21861;
+}
+
+.t3g-panel-navbar-action {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.t3g-panel-body {
+    padding: 1.5rem;
+}
+
+.t3g-panel-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2rem;
+}
+
+.t3g-panel-grid > .t3g-panel {
+    margin-bottom: 0;
+}
+
+@media (max-width: 700px) {
+    .t3g-panel-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.t3g-groups-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.t3g-group-item {
+    display: block;
+    background: #f4f5f9;
+    border-radius: 10px;
+    padding: 1rem 1.25rem;
+    color: #1e2a47 !important;
+    font-weight: 700;
+    text-decoration: none !important;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.t3g-group-item:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
+}
+
+.t3g-empty-state {
+    color: #6b7280;
+    font-style: italic;
+}

@@ -13,7 +13,8 @@ dependencies = [
     "invoke>=3.0.3",
     "requests",
     "dash",
-    "dash-bootstrap-components"
+    "dash-bootstrap-components",
+    "python-multipart"
 ]
 
 [project.optional-dependencies]

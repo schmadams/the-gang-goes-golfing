@@ -24,7 +24,7 @@ dash.register_page(__name__, path="/signin", name="Sign In")
 def layout():
     return dbc.Container(
         [
-            dcc.Location(id="signin-redirect"),
+            dcc.Location(id="signin-redirect", refresh=True),
             dbc.Card(
                 dbc.CardBody(
                     [

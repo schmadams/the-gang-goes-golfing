@@ -1,0 +1,43 @@
+/* target path: frontend/src/assets/subnav.css (new file, same assets/ folder) */
+
+.t3g-subnav {
+    background: #f4f5f9;
+    border-bottom: 1px solid #e2e4ea;
+}
+
+.t3g-subnav-inner {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 1rem 1.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+
+.t3g-subnav-greeting {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #1e2a47;
+}
+
+.t3g-subnav-handicap {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+}
+
+.t3g-subnav-label {
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    font-size: 0.75rem;
+    color: #6b7280;
+    font-weight: 700;
+}
+
+.t3g-subnav-handicap-value {
+    font-size: 1.25rem;
+    font-weight: 800;
+    color: #1e2a47;
+}
