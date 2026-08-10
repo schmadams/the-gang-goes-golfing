@@ -1,5 +1,7 @@
 # target path: frontend/src/pages/my_account.py (full replacement)
 import base64
+import time
+from contextlib import contextmanager
 
 import dash
 import dash_bootstrap_components as dbc
@@ -12,6 +14,22 @@ from config import API_BASE_URL
 from layouts.panel_navbar import build_panel_navbar
 
 dash.register_page(__name__, path="/my-account", name="My Account")
+
+
+@contextmanager
+def _timed(label: str):
+    """
+    Logs how long a call to our own API took, tagged "own API" so it's
+    obvious from the console which layer (frontend->backend, vs the
+    backend's own external/database calls, logged separately in
+    backend/services/courses.py) any slowness is actually coming from.
+    """
+    start = time.perf_counter()
+    try:
+        yield
+    finally:
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        print(f"[TIMING] own API      {elapsed_ms:8.1f}ms  {label}")
 
 
 def _course_label(course):
@@ -31,18 +49,27 @@ def layout():
         session.clear()
         return dcc.Location(pathname="/signin", id="my-account-redirect", refresh=True)
 
-    player_resp = requests.get(f"{API_BASE_URL}/players/{player_id}")
+    with _timed(f"GET /players/{player_id}"):
+        player_resp = requests.get(f"{API_BASE_URL}/players/{player_id}")
     player = player_resp.json() if player_resp.status_code == 200 else {}
 
-    handicaps_resp = requests.get(f"{API_BASE_URL}/handicaps/player/{player_id}")
+    with _timed(f"GET /handicaps/player/{player_id}"):
+        handicaps_resp = requests.get(f"{API_BASE_URL}/handicaps/player/{player_id}")
     handicaps = handicaps_resp.json() if handicaps_resp.status_code == 200 else []
 
-    # The home-course dropdown starts with just whatever's already saved
-    # (as a single option so Dash can display it) -- it doesn't preload
-    # every course. Options are then filled in live as the player types,
-    # searching our own cached `courses` table.
+    # Preload every cached club once on page load (a few hundred rows --
+    # cheap) so the dropdown can filter client-side as the player types,
+    # rather than round-tripping to the backend on every keystroke.
+    with _timed("GET /courses/"):
+        courses_resp = requests.get(f"{API_BASE_URL}/courses/")
+    courses = courses_resp.json() if courses_resp.status_code == 200 else []
+    course_options = [{"label": _course_label(c), "value": _course_label(c)} for c in courses]
+
     home_course = player.get("home_course")
-    initial_course_options = [{"label": home_course, "value": home_course}] if home_course else []
+    if home_course and not any(opt["value"] == home_course for opt in course_options):
+        # Whatever's already saved should always be selectable, even if
+        # it's somehow missing from the cached list.
+        course_options.append({"label": home_course, "value": home_course})
 
     photo_url = player.get("profile_picture_url")
 
@@ -135,10 +162,13 @@ def layout():
                             dcc.Dropdown(
                                 id="account-home-course",
                                 placeholder="Start typing your home course...",
-                                options=initial_course_options,
+                                options=course_options,
                                 value=home_course,
                                 searchable=True,
                                 clearable=True,
+                                # All cached clubs are preloaded above, so
+                                # filtering happens client-side as you type
+                                # -- no backend round-trip per keystroke.
                                 className="mb-1 mt-2 t3g-course-dropdown",
                             ),
                             html.Button(
@@ -228,26 +258,6 @@ def layout():
 
 
 @callback(
-    Output("account-home-course", "options"),
-    Input("account-home-course", "search_value"),
-    prevent_initial_call=True,
-)
-def search_local_home_course(search_value):
-    # Narrows the dropdown as the player types, searching only the courses
-    # we've already cached -- never calls the external API.
-    if not search_value or len(search_value) < 2:
-        raise PreventUpdate
-
-    response = requests.get(f"{API_BASE_URL}/courses/", params={"search": search_value})
-
-    if response.status_code != 200:
-        raise PreventUpdate
-
-    courses = response.json()
-    return [{"label": _course_label(c), "value": _course_label(c)} for c in courses]
-
-
-@callback(
     Output("account-course-external-modal", "is_open"),
     Input("account-course-external-toggle", "n_clicks"),
     State("account-course-external-modal", "is_open"),
@@ -271,10 +281,18 @@ def run_external_course_search(n_clicks, query):
     if not query:
         return html.Span("Enter a club name to search.", className="text-danger"), dash.no_update
 
-    response = requests.get(f"{API_BASE_URL}/courses/external-search", params={"query": query})
+    with _timed("GET /courses/external-search"):
+        response = requests.get(f"{API_BASE_URL}/courses/external-search", params={"query": query})
 
     if response.status_code != 200:
-        return html.Span("Search failed. Try again.", className="text-danger"), dash.no_update
+        # Surface the backend's actual error (which now includes RapidAPI's
+        # real rejection reason) instead of a generic message, so we don't
+        # have to guess from PyCharm's console every time.
+        try:
+            detail = response.json().get("detail", "Search failed. Try again.")
+        except ValueError:
+            detail = "Search failed. Try again."
+        return html.Span(detail, className="text-danger"), dash.no_update
 
     candidates = response.json()
 
@@ -316,7 +334,8 @@ def select_external_course(n_clicks_list, candidates):
     candidate = candidates[triggered_id["index"]]
 
     # Caches the full scorecard for this course (if not already cached).
-    response = requests.post(f"{API_BASE_URL}/courses/import", json=candidate)
+    with _timed("POST /courses/import"):
+        response = requests.post(f"{API_BASE_URL}/courses/import", json=candidate)
 
     if response.status_code != 201:
         raise PreventUpdate
@@ -344,10 +363,11 @@ def handle_photo_upload(contents, filename):
     file_bytes = base64.b64decode(encoded)
     content_type = header.split(";")[0].replace("data:", "") or "image/jpeg"
 
-    response = requests.post(
-        f"{API_BASE_URL}/players/{player_id}/profile-picture",
-        files={"file": (filename or "photo.jpg", file_bytes, content_type)},
-    )
+    with _timed(f"POST /players/{player_id}/profile-picture"):
+        response = requests.post(
+            f"{API_BASE_URL}/players/{player_id}/profile-picture",
+            files={"file": (filename or "photo.jpg", file_bytes, content_type)},
+        )
 
     if response.status_code != 200:
         return "Couldn't upload that photo. Try again.", dash.no_update
@@ -385,7 +405,8 @@ def handle_save_profile(
     }
     payload = {k: v for k, v in payload.items() if v not in (None, "")}
 
-    response = requests.patch(f"{API_BASE_URL}/players/{player_id}", json=payload)
+    with _timed(f"PATCH /players/{player_id}"):
+        response = requests.patch(f"{API_BASE_URL}/players/{player_id}", json=payload)
 
     if response.status_code == 200:
         return "", "/my-account"
@@ -411,10 +432,11 @@ def handle_add_handicap(n_clicks, handicap_value):
         )
 
     player_id = session.get("player_id")
-    response = requests.post(
-        f"{API_BASE_URL}/handicaps/",
-        json={"player_id": player_id, "handicap": float(handicap_value)},
-    )
+    with _timed("POST /handicaps/"):
+        response = requests.post(
+            f"{API_BASE_URL}/handicaps/",
+            json={"player_id": player_id, "handicap": float(handicap_value)},
+        )
 
     if response.status_code == 201:
         return "", "/my-account"
