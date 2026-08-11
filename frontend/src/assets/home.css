@@ -1,9 +1,11 @@
-/* target path: frontend/src/assets/home.css (new file, same assets/ folder as navbar.css) */
+/* target path: frontend/src/assets/home.css (full replacement) */
 
 .t3g-page {
-    max-width: 900px;
+    width: 96vw; /* fills nearly the full viewport width */
+    max-width: 1800px; /* still caps on ultra-wide monitors */
     margin: 0 auto;
     padding: 3rem 1.5rem;
+    box-sizing: border-box;
 }
 
 .t3g-panel {
@@ -111,4 +113,182 @@
 .t3g-empty-state {
     color: #6b7280;
     font-style: italic;
+}
+
+/* Rounds History -- each completed round renders as its own "tab": a
+   bordered card with a labeled header band (club/course/tees/date, one
+   line, echoing the .t3g-panel-navbar treatment above it) and a
+   traditional scorecard underneath (hole numbers, par row, scores row
+   with the same birdie/bogey marks the live round page uses). The list
+   scrolls vertically so ~10 rounds fit without pushing the page around. */
+.t3g-rounds-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    max-height: 680px;
+    overflow-y: auto;
+    padding-right: 0.4rem;
+}
+
+.t3g-round-card {
+    background: #ffffff;
+    border: 1px solid #e2e4ea;
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+.t3g-round-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    background: #f4f5f9;
+    border-bottom: 1px solid #e2e4ea;
+    padding: 0.65rem 1.1rem;
+}
+
+.t3g-round-card-title {
+    color: #1e2a47;
+    font-weight: 700;
+    font-size: 0.9rem;
+}
+
+.t3g-round-card-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-shrink: 0;
+}
+
+/* Reuses navbar.css's .t3g-live-dot pulsing animation -- this is just the
+   pill wrapper around it, tinted to sit on the light card header instead
+   of the dark navbar. */
+.t3g-live-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    color: #c0392b;
+    font-weight: 800;
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    background: rgba(230, 57, 70, 0.1);
+    border: 1px solid rgba(230, 57, 70, 0.4);
+    border-radius: 999px;
+    padding: 0.25rem 0.65rem 0.25rem 0.5rem;
+    white-space: nowrap;
+}
+
+/* Horizontal scroll wrapper -- 18 holes + OUT/IN/TOT/HCP/NET is a lot of
+   columns to fit on a narrow panel, so this scrolls independently rather
+   than squeezing the table or breaking the panel layout. */
+.t3g-history-scorecard-wrap {
+    overflow-x: auto;
+    padding: 0.75rem 1.1rem 1rem;
+}
+
+.t3g-history-scorecard-table {
+    border-collapse: collapse;
+    width: 100%;
+}
+
+.t3g-history-scorecard-table th,
+.t3g-history-scorecard-table td {
+    padding: 0.3rem 0.5rem;
+    text-align: center;
+    font-size: 0.78rem;
+    white-space: nowrap;
+}
+
+.t3g-history-scorecard-table th {
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    font-size: 0.65rem;
+    font-weight: 700;
+}
+
+.t3g-history-par-row td {
+    color: #6b7280;
+    font-weight: 700;
+    border-bottom: 1px solid #e2e4ea;
+}
+
+.t3g-history-row-label {
+    text-align: left;
+}
+
+.t3g-history-summary-cell {
+    font-weight: 800;
+    color: #1e2a47;
+    border-left: 2px solid #e2e4ea;
+}
+
+.t3g-history-player-row td {
+    padding-top: 0.5rem;
+}
+
+.t3g-history-player-cell {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    text-align: left;
+    font-weight: 700;
+    color: #1e2a47;
+}
+
+.t3g-history-player-avatar {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: #c21861;
+    color: #ffffff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.68rem;
+    font-weight: 800;
+    flex-shrink: 0;
+}
+
+/* Same visual system as the live round page's score marks (green circle
+   for birdie/eagle, magenta square for bogey/double-bogey+), scaled down
+   to fit inline in a dense table cell instead of a 44px button. Fixed
+   box-sizing + line-height so the border/box-shadow rings actually draw
+   as circles/squares instead of collapsing against the table cell's own
+   line height. */
+.t3g-history-score {
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    line-height: 1;
+    font-weight: 700;
+    font-size: 0.82rem;
+    color: #1e2a47;
+    border: 2px solid transparent; /* reserves space so unmarked (par) scores don't jump size */
+}
+
+.t3g-history-score-birdie {
+    border-radius: 50%;
+    border: 2px solid #2a9d3f;
+}
+
+.t3g-history-score-eagle {
+    border-radius: 50%;
+    border: 2px solid #2a9d3f;
+    box-shadow: 0 0 0 2px #ffffff, 0 0 0 4px #2a9d3f;
+}
+
+.t3g-history-score-bogey {
+    border-radius: 0;
+    border: 2px solid #c21861;
+}
+
+.t3g-history-score-double-bogey {
+    border-radius: 0;
+    border: 2px solid #c21861;
+    box-shadow: 0 0 0 2px #f4f5f9, 0 0 0 4px #c21861;
 }

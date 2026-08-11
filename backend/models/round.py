@@ -99,3 +99,37 @@ class RoundDetailResponse(RoundResponse):
     course_name: Optional[str] = None
     tee_name: Optional[str] = None
     holes: list[HoleScoreResponse] = []
+
+
+class RoundHoleSummary(BaseModel):
+    """Per-hole shape for the Rounds History / Scoring History pages --
+    par + strokes for the traditional birdie/bogey marks, plus putts,
+    fairway hit, and the handicap-adjusted net strokes / Stableford points
+    for that hole. Not the full manual-entry fields HoleScoreResponse
+    carries, since history views never edit a finished round's course
+    data."""
+    hole_number: int
+    par: Optional[int] = None
+    stroke_index: Optional[int] = None
+    strokes: Optional[int] = None
+    putts: Optional[int] = None
+    fairway_hit: Optional[bool] = None
+    net_strokes: Optional[int] = None
+    stableford_points: Optional[int] = None
+
+
+class RoundSummaryResponse(RoundResponse):
+    """Shape for the Rounds History panel and Scoring History page -- a
+    full mini scorecard (par/strokes/putts/fairway/net/Stableford per
+    hole) plus round-level totals. Covers both completed rounds and the
+    single in-progress round (status distinguishes them, inherited from
+    RoundResponse) so a live round can show up in the same list, marked
+    as live, instead of needing a separate lookup."""
+    club_name: Optional[str] = None
+    course_name: Optional[str] = None
+    tee_name: Optional[str] = None
+    total_strokes: Optional[int] = None
+    holes_played: int = 0
+    holes: list[RoundHoleSummary] = []
+    handicap: Optional[float] = None
+    total_stableford: Optional[int] = None

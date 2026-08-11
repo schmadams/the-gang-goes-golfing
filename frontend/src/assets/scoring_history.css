@@ -1,0 +1,56 @@
+/* target path: frontend/src/assets/scoring_history.css (new file)
+   Extends the .t3g-round-card / .t3g-history-* scorecard classes defined
+   in home.css (loaded globally, same as every file in assets/) with the
+   bits specific to the full Scoring History page: the Putts/Fairway/Net/
+   Stableford detail rows, fairway hit marks, the delete/scrap button, and
+   a naturally-scrolling list instead of the home panel's capped-height
+   one. */
+
+.t3g-scoring-history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+}
+
+.t3g-history-detail-row td {
+    color: #6b7280;
+    font-size: 0.74rem;
+    border-top: 1px solid #f0f1f5;
+}
+
+.t3g-history-detail-row .t3g-history-row-label {
+    color: #1e2a47;
+    font-weight: 700;
+}
+
+.t3g-history-fairway-yes {
+    color: #2a9d3f;
+    font-weight: 800;
+}
+
+.t3g-history-fairway-no {
+    color: #c21861;
+    font-weight: 800;
+}
+
+.t3g-history-fairway-na {
+    color: #c7cad1;
+}
+
+.t3g-history-delete-button {
+    background: transparent;
+    border: 1px solid #c21861;
+    color: #c21861;
+    font-weight: 700;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 0.35rem 0.8rem;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background 0.15s ease, opacity 0.15s ease;
+}
+
+.t3g-history-delete-button:hover {
+    background: rgba(194, 24, 97, 0.08);
+}

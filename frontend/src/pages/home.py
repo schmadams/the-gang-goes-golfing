@@ -8,6 +8,7 @@ import requests
 from dash import Input, Output, State, callback, dcc, html
 from flask import session
 
+from components.scorecard import format_handicap, history_score_mark_class, live_badge, round_header_label
 from config import API_BASE_URL
 from layouts.panel_navbar import build_panel_navbar
 
@@ -38,6 +39,127 @@ def _course_label(course):
         label += f" — {course['course_name']}"
     location = course.get("county") or course.get("postcode")
     return f"{label} ({location})" if location else label
+
+
+def _round_scorecard_card(round_data, player_initial, player_label):
+    """Renders one completed round as a mini traditional scorecard: hole
+    numbers across the top, a par row, and a scores row with the same
+    birdie/bogey marks used on the live round page, plus OUT/IN/TOT/HCP/NET
+    summary columns."""
+    holes_by_number = {h["hole_number"]: h for h in (round_data.get("holes") or [])}
+    front9 = [holes_by_number.get(n, {"hole_number": n}) for n in range(1, 10)]
+    back9 = [holes_by_number.get(n, {"hole_number": n}) for n in range(10, 19)]
+
+    def _sum_par(hole_subset):
+        pars = [h.get("par") for h in hole_subset if h.get("par") is not None]
+        return sum(pars) if pars else None
+
+    def _sum_strokes(hole_subset):
+        strokes = [h.get("strokes") for h in hole_subset if h.get("strokes") is not None]
+        return sum(strokes) if strokes else None
+
+    out_par, in_par = _sum_par(front9), _sum_par(back9)
+    tot_par = out_par + in_par if out_par is not None and in_par is not None else None
+    out_strokes, in_strokes = _sum_strokes(front9), _sum_strokes(back9)
+    total_strokes = round_data.get("total_strokes")
+
+    handicap = round_data.get("handicap")
+    hcp_display = format_handicap(handicap)
+    net_display = round(total_strokes - handicap) if (handicap is not None and total_strokes is not None) else "—"
+
+    def _hole_number_cells(hole_subset):
+        return [html.Th(str(h["hole_number"])) for h in hole_subset]
+
+    def _par_cells(hole_subset):
+        return [html.Td(h.get("par") if h.get("par") is not None else "—") for h in hole_subset]
+
+    def _score_cells(hole_subset):
+        return [
+            html.Td(
+                html.Span(
+                    h.get("strokes") if h.get("strokes") is not None else "—",
+                    className=history_score_mark_class(h.get("strokes"), h.get("par")),
+                )
+            )
+            for h in hole_subset
+        ]
+
+    header_row = html.Tr(
+        [html.Th("Hole", className="t3g-history-row-label")]
+        + _hole_number_cells(front9)
+        + [html.Th("OUT")]
+        + _hole_number_cells(back9)
+        + [html.Th("IN"), html.Th("TOT"), html.Th("HCP"), html.Th("NET")]
+    )
+
+    par_row = html.Tr(
+        className="t3g-history-par-row",
+        children=(
+            [html.Td("Par", className="t3g-history-row-label")]
+            + _par_cells(front9)
+            + [html.Td(out_par if out_par is not None else "—", className="t3g-history-summary-cell")]
+            + _par_cells(back9)
+            + [
+                html.Td(in_par if in_par is not None else "—", className="t3g-history-summary-cell"),
+                html.Td(tot_par if tot_par is not None else "—", className="t3g-history-summary-cell"),
+                html.Td(""),
+                html.Td(""),
+            ]
+        ),
+    )
+
+    player_row = html.Tr(
+        className="t3g-history-player-row",
+        children=(
+            [
+                html.Td(
+                    html.Div(
+                        [
+                            html.Div(player_initial, className="t3g-history-player-avatar"),
+                            html.Span(player_label),
+                        ],
+                        className="t3g-history-player-cell",
+                    )
+                )
+            ]
+            + _score_cells(front9)
+            + [html.Td(out_strokes if out_strokes is not None else "—", className="t3g-history-summary-cell")]
+            + _score_cells(back9)
+            + [
+                html.Td(in_strokes if in_strokes is not None else "—", className="t3g-history-summary-cell"),
+                html.Td(total_strokes if total_strokes is not None else "—", className="t3g-history-summary-cell"),
+                html.Td(hcp_display, className="t3g-history-summary-cell"),
+                html.Td(net_display, className="t3g-history-summary-cell"),
+            ]
+        ),
+    )
+
+    is_live = round_data.get("status") == "in_progress"
+    header_children = [html.Span(round_header_label(round_data), className="t3g-round-card-title")]
+    if is_live:
+        header_children.append(
+            html.Div(live_badge(), className="t3g-round-card-header-actions")
+        )
+
+    return html.Div(
+        className="t3g-round-card",
+        children=[
+            html.Div(
+                header_children,
+                className="t3g-round-card-header",
+            ),
+            html.Div(
+                className="t3g-history-scorecard-wrap",
+                children=html.Table(
+                    className="t3g-history-scorecard-table",
+                    children=[
+                        html.Thead([header_row, par_row]),
+                        html.Tbody([player_row]),
+                    ],
+                ),
+            ),
+        ],
+    )
 
 
 def layout():
@@ -84,6 +206,30 @@ def layout():
     courses = courses_resp.json() if courses_resp.status_code == 200 else []
     course_options = [{"label": _course_label(c), "value": c["id"]} for c in courses]
 
+    with _timed(f"GET /rounds/player/{player_id}"):
+        rounds_resp = requests.get(f"{API_BASE_URL}/rounds/player/{player_id}")
+    rounds_history = rounds_resp.json() if rounds_resp.status_code == 200 else []
+
+    if rounds_history:
+        # Only needed for the scorecard's avatar/name -- skip the call
+        # entirely when there's no history to render.
+        with _timed(f"GET /players/{player_id}"):
+            player_resp = requests.get(f"{API_BASE_URL}/players/{player_id}")
+        player = player_resp.json() if player_resp.status_code == 200 else {}
+        player_label = player.get("nickname") or player.get("first_name") or "You"
+        player_initial = player_label[0].upper() if player_label else "Y"
+
+        rounds_section = html.Div(
+            className="t3g-rounds-list",
+            children=[
+                _round_scorecard_card(r, player_initial, player_label) for r in rounds_history
+            ],
+        )
+    else:
+        rounds_section = html.P(
+            "No rounds recorded yet.", className="t3g-empty-state"
+        )
+
     return html.Div(
         className="t3g-page",
         children=[
@@ -122,13 +268,7 @@ def layout():
                                     className="t3g-panel-action-button",
                                 ),
                             ),
-                            html.Div(
-                                html.P(
-                                    "No rounds recorded yet.",
-                                    className="t3g-empty-state",
-                                ),
-                                className="t3g-panel-body",
-                            ),
+                            html.Div(rounds_section, className="t3g-panel-body"),
                         ],
                     ),
                 ],

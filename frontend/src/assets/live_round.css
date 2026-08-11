@@ -50,12 +50,11 @@
 }
 
 /* The "Enter Score" button that replaces a plain score input -- clicking
-   it opens the shots/putts/fairway modal. Once a score is saved, the
-   button's own label becomes the score and it picks up the traditional
-   scorecard mark (see the .t3g-score-* classes below). */
+   it opens the shots/putts/fairway modal. Sized to comfortably fit the
+   "Enter Score" label; once a score exists the button switches to
+   .t3g-score-button-filled instead (see below), which is a fixed square. */
 .t3g-score-button {
-    width: 90px;
-    padding: 0.4rem 0.5rem;
+    padding: 0.5rem 0.9rem;
     border: 1px solid #ced4da;
     border-radius: 6px;
     background: #f4f5f9;
@@ -71,10 +70,24 @@
     box-shadow: 0 4px 10px rgba(0, 0, 0, 0.12);
 }
 
+/* Once a hole has a score, the button becomes a fixed-size square so the
+   birdie/bogey marks below (border-radius / box-shadow) render as a true
+   circle or square instead of stretching into an oval/rectangle to fit
+   whatever width the label happened to need. */
+.t3g-score-button-filled {
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.05rem;
+}
+
 /* Traditional scorecard marks around the score itself: birdie = circle,
    eagle (or better) = double circle, bogey = square, double bogey (or
-   worse) = double square. Declared after .t3g-score-button so these
-   overrides win on the shared border/border-radius properties. */
+   worse) = double square. Declared after .t3g-score-button-filled so
+   these overrides win on the shared border/border-radius properties. */
 
 .t3g-score-birdie {
     border-radius: 50%;
@@ -99,12 +112,172 @@
 }
 
 /* Enter Score modal */
+.t3g-score-modal .modal-content {
+    border-radius: 20px;
+    border: none;
+    overflow: hidden;
+}
+
+.t3g-score-modal .modal-header {
+    border-bottom: none;
+    padding-bottom: 0;
+}
+
+.t3g-score-modal .modal-title {
+    font-weight: 800;
+    color: #1e2a47;
+}
+
 .t3g-modal-label {
     display: block;
+    text-align: center;
     font-weight: 700;
     font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.03em;
     color: #6b7280;
     margin-bottom: 0.35rem;
+}
+
+.t3g-enter-button {
+    min-width: 100px;
+    font-weight: 800;
+}
+
+/* Score / Putts steppers -- a pill-shaped +/- control with a big number in
+   the middle, standing in for a plain number input. */
+.t3g-stepper-row {
+    display: flex;
+    justify-content: center;
+    gap: 3rem;
+    margin: 0.5rem 0 1.25rem;
+}
+
+.t3g-stepper-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.t3g-stepper-label {
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    font-size: 0.8rem;
+    color: #6b7280;
+    margin-bottom: 0.75rem;
+}
+
+.t3g-stepper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    background: #eef0f8;
+    border-radius: 999px;
+    padding: 0.75rem 0.5rem;
+    width: 84px;
+}
+
+.t3g-stepper-button {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    border: none;
+    background: #ffffff;
+    color: #1e2a47;
+    font-size: 1.4rem;
+    font-weight: 800;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+    transition: transform 0.08s ease, box-shadow 0.15s ease;
+}
+
+.t3g-stepper-button:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+}
+
+.t3g-stepper-button:active {
+    transform: scale(0.92);
+}
+
+.t3g-stepper-value {
+    font-size: 2.1rem;
+    font-weight: 800;
+    color: #1e2a47;
+    min-height: 2.6rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Live "Birdie" / "Bogey" etc. feedback while adjusting the Score stepper. */
+.t3g-result-badge {
+    text-align: center;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    font-size: 0.85rem;
+    min-height: 1.2rem;
+    margin-bottom: 1rem;
+}
+
+.t3g-result-eagle,
+.t3g-result-birdie {
+    color: #2a9d3f;
+}
+
+.t3g-result-par {
+    color: #6b7280;
+}
+
+.t3g-result-bogey,
+.t3g-result-double-bogey {
+    color: #c21861;
+}
+
+/* Fairway Hit -- label sits inline to the left of the toggle instead of
+   stacked above it. */
+.t3g-fairway-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    margin-bottom: 0.5rem;
+}
+
+.t3g-fairway-label {
+    margin-bottom: 0;
+}
+
+/* Restyles dbc.RadioItems' default circle+label markup into a pill
+   segmented toggle instead. */
+.t3g-fairway-toggle .form-check {
+    display: inline-block;
+    margin-right: 0.75rem;
+}
+
+.t3g-fairway-toggle .form-check-input {
+    display: none;
+}
+
+.t3g-fairway-toggle .form-check-label {
+    display: inline-block;
+    padding: 0.5rem 1.5rem;
+    border-radius: 999px;
+    background: #f4f5f9;
+    border: 1px solid #ced4da;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.t3g-fairway-toggle .form-check-input:checked + .form-check-label {
+    background: #8dc63f;
+    border-color: #8dc63f;
+    color: #ffffff;
 }
