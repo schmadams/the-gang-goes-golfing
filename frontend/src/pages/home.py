@@ -222,6 +222,34 @@ def layout():
                                 ),
                             ),
                             html.Div(id="upload-round-tee-status", className="t3g-empty-state mt-1"),
+                            html.Button(
+                                "Can't find your course? Enter it manually",
+                                id="upload-round-manual-toggle",
+                                className="t3g-link-button mb-2",
+                                n_clicks=0,
+                            ),
+                            html.Div(
+                                id="upload-round-manual-fields",
+                                style={"display": "none"},
+                                children=[
+                                    dbc.Input(
+                                        id="upload-round-manual-club",
+                                        placeholder="Club name",
+                                        className="mb-2",
+                                    ),
+                                    dbc.Input(
+                                        id="upload-round-manual-tee",
+                                        placeholder="Tee name (e.g. White)",
+                                        className="mb-2",
+                                    ),
+                                    html.P(
+                                        "You'll enter par, length, and stroke index for each "
+                                        "hole once the round starts.",
+                                        className="t3g-empty-state",
+                                    ),
+                                ],
+                            ),
+                            dcc.Store(id="upload-round-manual-mode", data=False),
                             html.Div(id="upload-round-error", className="text-danger mt-2"),
                             html.Div(id="upload-round-status", className="mt-2"),
                         ]
@@ -241,6 +269,7 @@ def layout():
                     ),
                 ],
             ),
+            dcc.Location(id="upload-round-redirect", refresh=True),
         ],
     )
 
@@ -355,6 +384,11 @@ def handle_create_group(open_clicks, cancel_clicks, submit_clicks, name, descrip
 @callback(
     Output("upload-round-modal", "is_open"),
     Output("upload-round-course", "value"),
+    Output("upload-round-redirect", "pathname", allow_duplicate=True),
+    Output("upload-round-manual-mode", "data", allow_duplicate=True),
+    Output("upload-round-manual-fields", "style", allow_duplicate=True),
+    Output("upload-round-course", "style", allow_duplicate=True),
+    Output("upload-round-tee-status", "style", allow_duplicate=True),
     Input("upload-round-button", "n_clicks"),
     Input("upload-round-cancel", "n_clicks"),
     prevent_initial_call=True,
@@ -362,14 +396,44 @@ def handle_create_group(open_clicks, cancel_clicks, submit_clicks, name, descrip
 def toggle_upload_round_modal(open_clicks, cancel_clicks):
     # Resetting the course value on open (via the Output below) also
     # triggers load_tees_for_course(None), which clears the tee dropdown --
-    # so the modal always starts fresh rather than showing a stale
-    # selection from last time it was opened.
+    # so the modal always starts fresh (manual mode off too) rather than
+    # showing a stale selection from last time it was opened.
     triggered_id = dash.ctx.triggered_id
+    reset_manual = (False, {"display": "none"}, {}, {})
 
     if triggered_id == "upload-round-button":
-        return True, None
+        player_id = session.get("player_id")
+        with _timed(f"GET /rounds/active/{player_id}"):
+            response = requests.get(f"{API_BASE_URL}/rounds/active/{player_id}")
 
-    return False, dash.no_update
+        if response.status_code == 200:
+            # Already have a live round in progress -- go straight there
+            # instead of opening the modal. The backend would reject a
+            # second one anyway (one-active-round-per-player), but this
+            # avoids making them fill out the form just to be told no.
+            return (False, dash.no_update, "/live-round", *reset_manual)
+
+        return (True, None, dash.no_update, *reset_manual)
+
+    return (False, dash.no_update, dash.no_update, *reset_manual)
+
+
+@callback(
+    Output("upload-round-manual-fields", "style", allow_duplicate=True),
+    Output("upload-round-course", "style", allow_duplicate=True),
+    Output("upload-round-tee-status", "style", allow_duplicate=True),
+    Output("upload-round-manual-mode", "data", allow_duplicate=True),
+    Input("upload-round-manual-toggle", "n_clicks"),
+    State("upload-round-manual-mode", "data"),
+    prevent_initial_call=True,
+)
+def toggle_manual_entry(n_clicks, is_manual):
+    is_manual = not bool(is_manual)
+
+    if is_manual:
+        return {"display": "block"}, {"display": "none"}, {"display": "none"}, True
+
+    return {"display": "none"}, {}, {}, False
 
 
 @callback(
@@ -421,26 +485,57 @@ def load_tees_for_course(course_id):
     Output("upload-round-continue", "disabled"),
     Input("upload-round-course", "value"),
     Input("upload-round-tee", "value"),
+    Input("upload-round-manual-mode", "data"),
+    Input("upload-round-manual-club", "value"),
+    Input("upload-round-manual-tee", "value"),
     prevent_initial_call=True,
 )
-def toggle_continue_button(course_id, tee_id):
+def toggle_continue_button(course_id, tee_id, is_manual, manual_club, manual_tee):
+    if is_manual:
+        return not (manual_club and manual_tee)
     return not (course_id and tee_id)
 
 
 @callback(
     Output("upload-round-status", "children"),
+    Output("upload-round-redirect", "pathname", allow_duplicate=True),
     Input("upload-round-continue", "n_clicks"),
     State("upload-round-course", "value"),
     State("upload-round-tee", "value"),
+    State("upload-round-manual-mode", "data"),
+    State("upload-round-manual-club", "value"),
+    State("upload-round-manual-tee", "value"),
     prevent_initial_call=True,
 )
-def handle_continue_round(n_clicks, course_id, tee_id):
-    if not course_id or not tee_id:
-        return html.Span("Select a course and tees first.", className="text-danger")
+def handle_continue_round(n_clicks, course_id, tee_id, is_manual, manual_club, manual_tee):
+    player_id = session.get("player_id")
+    payload = {"player_id": player_id, "is_manual": bool(is_manual)}
 
-    # Score entry isn't built yet -- this just confirms the selection so
-    # far. Next step: hook this up to an actual scorecard entry screen.
-    return html.Span(
-        "Course and tees selected — score entry comes next.",
-        className="text-success",
-    )
+    if is_manual:
+        if not manual_club or not manual_tee:
+            return (
+                html.Span("Enter a club name and tee name first.", className="text-danger"),
+                dash.no_update,
+            )
+        payload["manual_club_name"] = manual_club
+        payload["manual_tee_name"] = manual_tee
+    else:
+        if not course_id or not tee_id:
+            return (
+                html.Span("Select a course and tees first.", className="text-danger"),
+                dash.no_update,
+            )
+        payload["course_id"] = course_id
+        payload["tee_id"] = tee_id
+
+    with _timed("POST /rounds/"):
+        response = requests.post(f"{API_BASE_URL}/rounds/", json=payload)
+
+    if response.status_code == 201:
+        return "", "/live-round"
+
+    try:
+        detail = response.json().get("detail", "Couldn't start the round.")
+    except ValueError:
+        detail = "Couldn't start the round."
+    return html.Span(detail, className="text-danger"), dash.no_update

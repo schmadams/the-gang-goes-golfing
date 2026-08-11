@@ -17,7 +17,6 @@ class HoleResponse(BaseModel):
 class TeeResponse(BaseModel):
     id: UUID
     name: str
-    gender: Optional[str] = None
     par: Optional[int] = None
     course_rating: Optional[float] = None
     slope_rating: Optional[int] = None

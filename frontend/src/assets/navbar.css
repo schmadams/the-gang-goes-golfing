@@ -1,4 +1,4 @@
-/* target path: frontend/src/assets/navbar.css (new file, new "assets" folder)
+/* target path: frontend/src/assets/navbar.css (full replacement)
    Dash automatically finds and loads anything in an assets/ folder next to
    app.py — no need to link this manually. */
 
@@ -64,6 +64,7 @@
 .t3g-navbar-actions {
     display: flex;
     align-items: center;
+    gap: 1.25rem;
 }
 
 .t3g-signout-button {
@@ -83,4 +84,46 @@
 .t3g-signout-button:hover {
     background: rgba(255, 255, 255, 0.15);
     border-color: #ffffff;
+}
+
+.t3g-live-round-indicator {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: #ffffff !important;
+    font-weight: 700;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    text-decoration: none !important;
+    background: rgba(230, 57, 70, 0.15);
+    border: 1px solid rgba(230, 57, 70, 0.5);
+    border-radius: 999px;
+    padding: 0.4rem 0.9rem 0.4rem 0.7rem;
+    transition: transform 0.15s ease;
+}
+
+.t3g-live-round-indicator:hover {
+    transform: scale(1.05);
+}
+
+.t3g-live-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #e63946;
+    box-shadow: 0 0 0 rgba(230, 57, 70, 0.6);
+    animation: t3g-pulse 1.6s infinite;
+}
+
+@keyframes t3g-pulse {
+    0% {
+        box-shadow: 0 0 0 0 rgba(230, 57, 70, 0.6);
+    }
+    70% {
+        box-shadow: 0 0 0 8px rgba(230, 57, 70, 0);
+    }
+    100% {
+        box-shadow: 0 0 0 0 rgba(230, 57, 70, 0);
+    }
 }

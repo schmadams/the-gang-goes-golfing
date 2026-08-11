@@ -67,52 +67,33 @@ def search_local_courses(query: str = "", limit: int = 3000) -> list[dict]:
     of round-tripping to the backend on every keystroke. Free either way —
     this never touches the external API or its monthly quota.
 
-    Supabase/PostgREST caps any single request at 1000 rows regardless of
-    .limit() -- confirmed empirically (a request for "everything" silently
-    came back with exactly 1000 rows, cutting off alphabetically once the
-    cached club list grew past that). When there's no filter, we page
-    through in batches of 1000 and concatenate rather than trusting one
-    .limit() call to return it all.
+    Supabase/PostgREST used to cap any single request at 1000 rows
+    regardless of .limit() -- confirmed empirically (a request for
+    "everything" silently came back with exactly 1000 rows, cutting off
+    alphabetically once the cached club list grew past that), which we
+    worked around by paging through in batches of 1000. The project's Max
+    Rows setting (Project Settings -> API -> Max Rows) is now raised to
+    10,000 -- comfortably above the current cached club count -- so a
+    single request is sufficient again and the extra round trip (and its
+    ~200-300ms of added latency) is gone. If the cached count ever
+    approaches 10,000, either raise Max Rows further or bring back .range()
+    pagination.
     """
+    query_builder = supabase.table("courses").select("*").order("club_name")
+
     if query:
         escaped = query.replace(",", " ").replace("%", "")
-        with _timed(f"search_local_courses(query={query!r})", "database"):
-            response = (
-                supabase
-                .table("courses")
-                .select("*")
-                .or_(f"club_name.ilike.%{escaped}%,course_name.ilike.%{escaped}%")
-                .order("club_name")
-                .limit(min(limit, 1000))
-                .execute()
-            )
-        return response.data
+        query_builder = query_builder.or_(
+            f"club_name.ilike.%{escaped}%,course_name.ilike.%{escaped}%"
+        )
+        label = f"search_local_courses(query={query!r})"
+    else:
+        label = "search_local_courses(all)"
 
-    all_rows = []
-    batch_size = 1000
-    offset = 0
-    batch_num = 0
+    with _timed(label, "database"):
+        response = query_builder.limit(limit).execute()
 
-    while len(all_rows) < limit:
-        batch_num += 1
-        with _timed(f"search_local_courses(all, batch {batch_num})", "database"):
-            batch = (
-                supabase
-                .table("courses")
-                .select("*")
-                .order("club_name")
-                .range(offset, offset + batch_size - 1)
-                .execute()
-            )
-        rows = batch.data or []
-        all_rows.extend(rows)
-
-        if len(rows) < batch_size:
-            break
-
-        offset += batch_size
-
-    return all_rows[:limit]
+    return response.data or []
 
 
 def search_external_clubs(query: str) -> list[dict]:
@@ -258,7 +239,6 @@ def _fetch_and_store_course_detail(course_row: dict, course_id: str) -> dict:
                 .insert({
                     "course_id": course_row["id"],
                     "name": tee_name,
-                    "gender": tee_set.get("gender"),
                     "par": tee_set.get("par"),
                     "course_rating": tee_set.get("course_rating"),
                     "slope_rating": tee_set.get("slope_rating"),

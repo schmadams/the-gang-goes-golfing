@@ -1,0 +1,110 @@
+/* target path: frontend/src/assets/live_round.css (full replacement) */
+
+.t3g-scorecard-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.t3g-scorecard-table th {
+    text-align: left;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    font-size: 0.75rem;
+    font-weight: 700;
+    padding: 0.5rem 0.75rem;
+    border-bottom: 2px solid #e2e4ea;
+}
+
+.t3g-scorecard-table td {
+    padding: 0.4rem 0.75rem;
+    border-bottom: 1px solid #e2e4ea;
+    color: #1e2a47;
+}
+
+.t3g-hole-number {
+    font-weight: 800;
+}
+
+/* OUT / IN / TOTAL rows -- shaded and bordered like the summary rows on a
+   paper scorecard, to visually break up the front 9 / back 9 / grand
+   total. */
+.t3g-scorecard-summary-row {
+    background: #f4f5f9;
+    font-weight: 800;
+}
+
+.t3g-scorecard-summary-row td {
+    border-top: 2px solid #1e2a47;
+    border-bottom: 2px solid #1e2a47;
+}
+
+.t3g-manual-input {
+    width: 60px;
+    padding: 0.35rem 0.5rem;
+    border: 1px solid #f0c987;
+    border-radius: 6px;
+    font-weight: 700;
+    text-align: center;
+    background: #fff7ed;
+}
+
+/* The "Enter Score" button that replaces a plain score input -- clicking
+   it opens the shots/putts/fairway modal. Once a score is saved, the
+   button's own label becomes the score and it picks up the traditional
+   scorecard mark (see the .t3g-score-* classes below). */
+.t3g-score-button {
+    width: 90px;
+    padding: 0.4rem 0.5rem;
+    border: 1px solid #ced4da;
+    border-radius: 6px;
+    background: #f4f5f9;
+    font-weight: 700;
+    text-align: center;
+    color: #1e2a47;
+    cursor: pointer;
+    transition: transform 0.1s ease, box-shadow 0.15s ease;
+}
+
+.t3g-score-button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.12);
+}
+
+/* Traditional scorecard marks around the score itself: birdie = circle,
+   eagle (or better) = double circle, bogey = square, double bogey (or
+   worse) = double square. Declared after .t3g-score-button so these
+   overrides win on the shared border/border-radius properties. */
+
+.t3g-score-birdie {
+    border-radius: 50%;
+    border: 2px solid #2a9d3f;
+}
+
+.t3g-score-eagle {
+    border-radius: 50%;
+    border: 2px solid #2a9d3f;
+    box-shadow: 0 0 0 3px #ffffff, 0 0 0 5px #2a9d3f;
+}
+
+.t3g-score-bogey {
+    border-radius: 0;
+    border: 2px solid #c21861;
+}
+
+.t3g-score-double-bogey {
+    border-radius: 0;
+    border: 2px solid #c21861;
+    box-shadow: 0 0 0 3px #ffffff, 0 0 0 5px #c21861;
+}
+
+/* Enter Score modal */
+.t3g-modal-label {
+    display: block;
+    font-weight: 700;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: #6b7280;
+    margin-bottom: 0.35rem;
+}
