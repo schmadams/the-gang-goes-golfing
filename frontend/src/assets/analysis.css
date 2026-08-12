@@ -1,0 +1,27 @@
+/* target path: frontend/src/assets/analysis.css (new file) */
+
+.t3g-analysis-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2rem;
+}
+
+@media (max-width: 900px) {
+    .t3g-analysis-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.t3g-analysis-card {
+    background: #ffffff;
+    border: 1px solid #e2e4ea;
+    border-radius: 12px;
+    padding: 1.25rem;
+}
+
+.t3g-analysis-card-title {
+    margin: 0 0 0.75rem;
+    color: #1e2a47;
+    font-weight: 800;
+    font-size: 0.95rem;
+}

@@ -45,6 +45,16 @@ def build_navbar():
                                     href="/scoring-history",
                                     className="t3g-nav-link",
                                 ),
+                                dcc.Link(
+                                    "Analysis",
+                                    href="/analysis",
+                                    className="t3g-nav-link",
+                                ),
+                                dcc.Link(
+                                    "Friends",
+                                    href="/friends",
+                                    className="t3g-nav-link",
+                                ),
                             ],
                         ),
                     ],

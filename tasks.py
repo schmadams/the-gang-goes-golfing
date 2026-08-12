@@ -26,7 +26,10 @@ def install(c):
 @task
 def dev(c):
     """Start the FastAPI development server with auto-reload."""
-    c.run("uv run uvicorn backend.main:app --reload --port 8000")
+    # --reload-dir scopes the file watcher to backend/ only — without it,
+    # uvicorn watches the whole project (including .venv), so any package
+    # install triggers a spurious reload.
+    c.run("uv run uvicorn backend.main:app --reload --reload-dir backend --port 8000")
 
 
 # ── Players ────────────────────────────────────────────────────
@@ -107,15 +110,15 @@ def check_env(c):
         "print('SUPABASE_KEY loaded:', bool(os.getenv('SUPABASE_KEY')))\""
     )
 
-# ── Groups ─────────────────────────────────────────────────────
+# ── Clubs ─────────────────────────────────────────────────────
 
 @task
-def add_group(c, code, slug, name, description=None):
+def add_club(c, code, slug, name, description=None):
     """
-    Add a new group to the database.
+    Add a new club to the database.
 
     Usage:
-        invoke add-group --code=The-SENCO-Swingers --slug=The-SENCO-Swingers --name="The SENCO Swingers"
+        invoke add-club --code=The-SENCO-Swingers --slug=The-SENCO-Swingers --name="The SENCO Swingers"
     """
     import requests
 
@@ -126,103 +129,103 @@ def add_group(c, code, slug, name, description=None):
         "description": description,
     }
 
-    response = requests.post("http://localhost:8000/groups/", json=payload)
+    response = requests.post("http://localhost:8000/clubs/", json=payload)
 
     if response.status_code == 201:
-        group = response.json()
-        print(f"Group created: {group['name']} ({group['code']}) id: {group['id']}")
+        club = response.json()
+        print(f"Club created: {club['name']} ({club['code']}) id: {club['id']}")
     else:
         print(f"Error {response.status_code}: {response.json()}")
 
 
 @task
-def list_groups(c):
-    """List all groups in the database."""
+def list_clubs(c):
+    """List all clubs in the database."""
     import requests
 
-    response = requests.get("http://localhost:8000/groups/")
+    response = requests.get("http://localhost:8000/clubs/")
 
     if response.status_code == 200:
-        groups = response.json()
-        if not groups:
-            print("No groups found.")
+        clubs = response.json()
+        if not clubs:
+            print("No clubs found.")
             return
 
         print(f"\n{'ID':<38} {'Code':<25} {'Name':<25} {'Description'}")
         print("-" * 110)
 
-        for g in groups:
+        for g in clubs:
             description = g.get("description") or "—"
             print(f"{g['id']:<38} {g['code']:<25} {g['name']:<25} {description}")
     else:
         print(f"Error {response.status_code}: {response.json()}")
 
 @task
-def delete_group(c, group_id):
+def delete_club(c, club_id):
     """
-    Delete a group by ID.
+    Delete a club by ID.
 
     Usage:
-        uv run invoke delete-group --group-id=<group-id>
+        uv run invoke delete-club --club-id=<club-id>
     """
     import requests
 
-    response = requests.delete(f"http://localhost:8000/groups/{group_id}")
+    response = requests.delete(f"http://localhost:8000/clubs/{club_id}")
 
     if response.status_code == 200:
-        group = response.json()
-        print(f"Group deleted: {group['name']} ({group['code']}) id: {group['id']}")
+        club = response.json()
+        print(f"Club deleted: {club['name']} ({club['code']}) id: {club['id']}")
     elif response.status_code == 404:
-        print("Group not found.")
+        print("Club not found.")
     else:
         print(f"Error {response.status_code}: {response.json()}")
 
-# ── Group players ──────────────────────────────────────────────
+# ── Club players ──────────────────────────────────────────────
 
 @task
-def add_player_to_group(c, group_id, player_id):
+def add_player_to_club(c, club_id, player_id):
     """
-    Add a player to a group.
+    Add a player to a club.
 
     Usage:
-        uv run invoke add-player-to-group --group-id=<group-id> --player-id=<player-id>
+        uv run invoke add-player-to-club --club-id=<club-id> --player-id=<player-id>
     """
     import requests
 
     payload = {
-        "group_id": group_id,
+        "club_id": club_id,
         "player_id": player_id,
     }
 
-    response = requests.post("http://localhost:8000/group-players/", json=payload)
+    response = requests.post("http://localhost:8000/club-players/", json=payload)
 
     if response.status_code == 201:
-        group_player = response.json()
+        club_player = response.json()
         print(
-            f"Player added to group: "
-            f"group_id={group_player['group_id']} player_id={group_player['player_id']}"
+            f"Player added to club: "
+            f"club_id={club_player['club_id']} player_id={club_player['player_id']}"
         )
     else:
         print(f"Error {response.status_code}: {response.json()}")
 
 
 @task
-def list_players_in_group(c, group_id):
+def list_players_in_club(c, club_id):
     """
-    List all players in a group.
+    List all players in a club.
 
     Usage:
-        uv run invoke list-players-in-group --group-id=<group-id>
+        uv run invoke list-players-in-club --club-id=<club-id>
     """
     import requests
 
-    response = requests.get(f"http://localhost:8000/group-players/group/{group_id}")
+    response = requests.get(f"http://localhost:8000/club-players/club/{club_id}")
 
     if response.status_code == 200:
         rows = response.json()
 
         if not rows:
-            print("No players found in this group.")
+            print("No players found in this club.")
             return
 
         print(f"\n{'Player ID':<38} {'First name':<15} {'Surname':<15} {'DOB'}")
@@ -243,64 +246,64 @@ def list_players_in_group(c, group_id):
 
 
 @task
-def list_groups_for_player(c, player_id):
+def list_clubs_for_player(c, player_id):
     """
-    List all groups for a player.
+    List all clubs for a player.
 
     Usage:
-        uv run invoke list-groups-for-player --player-id=<player-id>
+        uv run invoke list-clubs-for-player --player-id=<player-id>
     """
     import requests
 
-    response = requests.get(f"http://localhost:8000/group-players/player/{player_id}")
+    response = requests.get(f"http://localhost:8000/club-players/player/{player_id}")
 
     if response.status_code == 200:
         rows = response.json()
 
         if not rows:
-            print("No groups found for this player.")
+            print("No clubs found for this player.")
             return
 
-        print(f"\n{'Group ID':<38} {'Code':<25} {'Name':<25}")
+        print(f"\n{'Club ID':<38} {'Code':<25} {'Name':<25}")
         print("-" * 95)
 
         for row in rows:
-            group = row.get("groups") or {}
+            club = row.get("clubs") or {}
 
             print(
-                f"{row['group_id']:<38} "
-                f"{group.get('code', '—'):<25} "
-                f"{group.get('name', '—'):<25}"
+                f"{row['club_id']:<38} "
+                f"{club.get('code', '—'):<25} "
+                f"{club.get('name', '—'):<25}"
             )
     else:
         print(f"Error {response.status_code}: {response.json()}")
 
 
 @task
-def remove_player_from_group(c, group_id, player_id):
+def remove_player_from_club(c, club_id, player_id):
     """
-    Remove a player from a group.
+    Remove a player from a club.
 
     Usage:
-        uv run invoke remove-player-from-group --group-id=<group-id> --player-id=<player-id>
+        uv run invoke remove-player-from-club --club-id=<club-id> --player-id=<player-id>
     """
     import requests
 
     payload = {
-        "group_id": group_id,
+        "club_id": club_id,
         "player_id": player_id,
     }
 
-    response = requests.delete("http://localhost:8000/group-players/", json=payload)
+    response = requests.delete("http://localhost:8000/club-players/", json=payload)
 
     if response.status_code == 200:
-        group_player = response.json()
+        club_player = response.json()
         print(
-            f"Player removed from group: "
-            f"group_id={group_player['group_id']} player_id={group_player['player_id']}"
+            f"Player removed from club: "
+            f"club_id={club_player['club_id']} player_id={club_player['player_id']}"
         )
     elif response.status_code == 404:
-        print("Player is not in that group.")
+        print("Player is not in that club.")
     else:
         print(f"Error {response.status_code}: {response.json()}")
 
@@ -396,16 +399,16 @@ def current_handicap(c, player_id):
 
 
 @task
-def list_latest_handicaps_for_group(c, group_id):
+def list_latest_handicaps_for_club(c, club_id):
     """
-    Get the latest handicaps for all players in a group.
+    Get the latest handicaps for all players in a club.
 
     Usage:
-        uv run invoke list-group-handicaps --group-id=<group-id>
+        uv run invoke list-club-handicaps --club-id=<club-id>
     """
     import requests
 
-    response = requests.get(f"http://localhost:8000/handicaps/group/{group_id}/latest")
+    response = requests.get(f"http://localhost:8000/handicaps/club/{club_id}/latest")
 
     if response.status_code != 200:
         print(f"Error {response.status_code}: {response.json()}")
@@ -414,7 +417,7 @@ def list_latest_handicaps_for_group(c, group_id):
     rows = response.json()
 
     if not rows:
-        print("No players found in this group.")
+        print("No players found in this club.")
         return
 
     print(f"\n{'Player':<25} {'Handicap':<10} {'Valid from'}")

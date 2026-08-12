@@ -1,3 +1,4 @@
+# target path: backend/services/handicaps.py (full replacement)
 from backend.database import supabase
 from backend.models.handicap import HandicapCreate
 
@@ -51,20 +52,20 @@ def get_current_player_handicap(player_id: str) -> dict | None:
     return response.data[0]
 
 
-def list_latest_handicaps_for_group(group_id: str) -> list[dict]:
-    group_players_response = (
+def list_latest_handicaps_for_club(club_id: str) -> list[dict]:
+    club_players_response = (
         supabase
-        .table("group_players")
-        .select("group_id, player_id, players(id, first_name, surname, date_of_birth)")
-        .eq("group_id", group_id)
+        .table("club_players")
+        .select("club_id, player_id, players(id, first_name, surname, date_of_birth)")
+        .eq("club_id", club_id)
         .execute()
     )
 
-    group_player_rows = group_players_response.data
+    club_player_rows = club_players_response.data
 
     results = []
 
-    for row in group_player_rows:
+    for row in club_player_rows:
         player = row.get("players") or {}
         player_id = row["player_id"]
 
@@ -82,7 +83,7 @@ def list_latest_handicaps_for_group(group_id: str) -> list[dict]:
 
         results.append(
             {
-                "group_id": row["group_id"],
+                "club_id": row["club_id"],
                 "player_id": player_id,
                 "first_name": player.get("first_name"),
                 "surname": player.get("surname"),

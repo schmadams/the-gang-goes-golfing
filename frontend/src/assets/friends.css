@@ -1,0 +1,35 @@
+/* target path: frontend/src/assets/friends.css (new file) */
+
+.t3g-friend-request-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.t3g-friend-request-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    background: #f4f5f9;
+    border-radius: 10px;
+    padding: 0.85rem 1.1rem;
+}
+
+.t3g-friend-request-name {
+    color: #1e2a47;
+    font-weight: 700;
+}
+
+.t3g-friend-request-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.t3g-friend-request-pending {
+    color: #6b7280;
+    font-weight: 600;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}

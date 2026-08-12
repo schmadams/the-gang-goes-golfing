@@ -1,11 +1,11 @@
 from fastapi import APIRouter, HTTPException, status
 
-from backend.models.group_player import (
+from backend.models.club_player import (
     GroupPlayerCreate,
     GroupPlayerDelete,
     GroupPlayerResponse,
 )
-from backend.services.group_players import (
+from backend.services.club_players import (
     add_player_to_group,
     list_groups_for_player,
     list_players_in_group,

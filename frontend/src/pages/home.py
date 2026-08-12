@@ -5,7 +5,7 @@ from contextlib import contextmanager
 import dash
 import dash_bootstrap_components as dbc
 import requests
-from dash import Input, Output, State, callback, dcc, html
+from dash import ALL, Input, Output, State, callback, dcc, html
 from flask import session
 
 from components.scorecard import format_handicap, history_score_mark_class, live_badge, round_header_label
@@ -13,6 +13,8 @@ from config import API_BASE_URL
 from layouts.panel_navbar import build_panel_navbar
 
 dash.register_page(__name__, path="/", name="Home")
+
+_ROUNDS_PER_PAGE = 2
 
 
 @contextmanager
@@ -170,31 +172,31 @@ def layout():
         session.clear()
         return dcc.Location(pathname="/signin", id="redirect-to-signin", refresh=True)
 
-    with _timed(f"GET /group-players/player/{player_id}"):
-        groups_resp = requests.get(f"{API_BASE_URL}/group-players/player/{player_id}")
-    groups = (
-        [row["groups"] for row in groups_resp.json()]
-        if groups_resp.status_code == 200
+    with _timed(f"GET /club-players/player/{player_id}"):
+        clubs_resp = requests.get(f"{API_BASE_URL}/club-players/player/{player_id}")
+    clubs = (
+        [row["clubs"] for row in clubs_resp.json()]
+        if clubs_resp.status_code == 200
         else []
     )
 
-    if groups:
-        groups_section = html.Div(
-            className="t3g-groups-list",
+    if clubs:
+        clubs_section = html.Div(
+            className="t3g-clubs-list",
             children=[
-                # NOTE: /groups/<slug> doesn't exist yet — placeholder link
-                # for the group home page we haven't built.
+                # NOTE: /clubs/<slug> doesn't exist yet — placeholder link
+                # for the club home page we haven't built.
                 dcc.Link(
-                    group["name"],
-                    href=f"/groups/{group['slug']}",
-                    className="t3g-group-item",
+                    club["name"],
+                    href=f"/clubs/{club['slug']}",
+                    className="t3g-club-item",
                 )
-                for group in groups
+                for club in clubs
             ],
         )
     else:
-        groups_section = html.P(
-            "You're not in any groups yet.", className="t3g-empty-state"
+        clubs_section = html.P(
+            "You're not in any clubs yet.", className="t3g-empty-state"
         )
 
     # Preload every cached club (a few hundred rows -- cheap) so the round
@@ -206,9 +208,28 @@ def layout():
     courses = courses_resp.json() if courses_resp.status_code == 200 else []
     course_options = [{"label": _course_label(c), "value": c["id"]} for c in courses]
 
+    with _timed(f"GET /friends/player/{player_id}"):
+        friends_resp = requests.get(f"{API_BASE_URL}/friends/player/{player_id}")
+    friends = friends_resp.json() if friends_resp.status_code == 200 else []
+    friend_invite_options = [
+        {"label": f.get("nickname") or f"{f.get('first_name', '')} {f.get('surname', '')}".strip(), "value": f["player_id"]}
+        for f in friends
+    ]
+
+    with _timed(f"GET /rounds/invites/{player_id}"):
+        round_invites_resp = requests.get(f"{API_BASE_URL}/rounds/invites/{player_id}")
+    round_invites = round_invites_resp.json() if round_invites_resp.status_code == 200 else []
+
     with _timed(f"GET /rounds/player/{player_id}"):
         rounds_resp = requests.get(f"{API_BASE_URL}/rounds/player/{player_id}")
     rounds_history = rounds_resp.json() if rounds_resp.status_code == 200 else []
+
+    # The live round (if any) is always the most useful thing to see, so
+    # it's pinned above pagination rather than counted as part of it --
+    # pagination only applies to completed rounds, which is what "flick
+    # through older ones" actually means.
+    live_round = next((r for r in rounds_history if r.get("status") == "in_progress"), None)
+    completed_rounds = [r for r in rounds_history if r.get("status") != "in_progress"]
 
     if rounds_history:
         # Only needed for the scorecard's avatar/name -- skip the call
@@ -218,11 +239,27 @@ def layout():
         player = player_resp.json() if player_resp.status_code == 200 else {}
         player_label = player.get("nickname") or player.get("first_name") or "You"
         player_initial = player_label[0].upper() if player_label else "Y"
+        player_info = {"initial": player_initial, "label": player_label}
+
+        live_round_section = (
+            _round_scorecard_card(live_round, player_initial, player_label) if live_round else None
+        )
 
         rounds_section = html.Div(
-            className="t3g-rounds-list",
             children=[
-                _round_scorecard_card(r, player_initial, player_label) for r in rounds_history
+                live_round_section,
+                dcc.Store(id="home-rounds-store", data=completed_rounds),
+                dcc.Store(id="home-rounds-player-store", data=player_info),
+                dcc.Store(id="home-rounds-page", data=0),
+                html.Div(id="home-rounds-page-list", className="t3g-rounds-list"),
+                html.Div(
+                    className="t3g-rounds-pagination",
+                    children=[
+                        html.Button("‹ Newer", id="home-rounds-prev", n_clicks=0, className="t3g-pagination-button"),
+                        html.Span(id="home-rounds-page-label", className="t3g-pagination-label"),
+                        html.Button("Older ›", id="home-rounds-next", n_clicks=0, className="t3g-pagination-button"),
+                    ],
+                ) if completed_rounds else None,
             ],
         )
     else:
@@ -230,9 +267,60 @@ def layout():
             "No rounds recorded yet.", className="t3g-empty-state"
         )
 
+    round_invites_section = None
+    if round_invites:
+        round_invites_section = html.Div(
+            className="t3g-panel",
+            children=[
+                build_panel_navbar("Round Invites"),
+                html.Div(
+                    className="t3g-panel-body",
+                    children=[
+                        html.Div(id="round-invite-error", className="text-danger mb-2"),
+                        html.Div(
+                            className="t3g-friend-request-list",
+                            children=[
+                                html.Div(
+                                    className="t3g-friend-request-row",
+                                    children=[
+                                        html.Span(
+                                            f"{invite.get('owner_first_name', '')} {invite.get('owner_surname', '')} "
+                                            f"invited you to a round"
+                                            + (f" at {invite['club_name']}" if invite.get("club_name") else ""),
+                                            className="t3g-friend-request-name",
+                                        ),
+                                        html.Div(
+                                            [
+                                                html.Button(
+                                                    "Accept",
+                                                    id={"type": "round-invite-accept", "round_id": invite["round_id"]},
+                                                    className="t3g-panel-action-button",
+                                                    n_clicks=0,
+                                                ),
+                                                html.Button(
+                                                    "Decline",
+                                                    id={"type": "round-invite-decline", "round_id": invite["round_id"]},
+                                                    className="t3g-panel-action-button t3g-panel-action-button--secondary",
+                                                    n_clicks=0,
+                                                ),
+                                            ],
+                                            className="t3g-friend-request-actions",
+                                        ),
+                                    ],
+                                )
+                                for invite in round_invites
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        )
+
     return html.Div(
         className="t3g-page",
         children=[
+            dcc.Location(id="round-invite-refresh", refresh=True),
+            round_invites_section,
             html.Div(
                 className="t3g-panel-grid",
                 children=[
@@ -240,21 +328,21 @@ def layout():
                         className="t3g-panel",
                         children=[
                             build_panel_navbar(
-                                "Your Groups",
+                                "Your Clubs",
                                 action=[
                                     html.Button(
-                                        "Join Group",
-                                        id="join-group-button",
+                                        "Join Club",
+                                        id="join-club-button",
                                         className="t3g-panel-action-button t3g-panel-action-button--secondary",
                                     ),
                                     html.Button(
-                                        "Create Group",
-                                        id="create-group-button",
+                                        "Create Club",
+                                        id="create-club-button",
                                         className="t3g-panel-action-button",
                                     ),
                                 ],
                             ),
-                            html.Div(groups_section, className="t3g-panel-body"),
+                            html.Div(clubs_section, className="t3g-panel-body"),
                         ],
                     ),
                     html.Div(
@@ -274,68 +362,68 @@ def layout():
                 ],
             ),
             dbc.Modal(
-                id="join-group-modal",
+                id="join-club-modal",
                 is_open=False,
                 children=[
-                    dbc.ModalHeader(dbc.ModalTitle("Join a Group")),
+                    dbc.ModalHeader(dbc.ModalTitle("Join a Club")),
                     dbc.ModalBody(
                         [
                             dbc.Input(
-                                id="join-group-uuid-input",
-                                placeholder="Group ID (UUID)",
+                                id="join-club-uuid-input",
+                                placeholder="Club ID (UUID)",
                                 type="text",
                             ),
                             html.Div(
-                                id="join-group-error", className="text-danger mt-2"
+                                id="join-club-error", className="text-danger mt-2"
                             ),
                         ]
                     ),
                     dbc.ModalFooter(
                         [
                             dbc.Button(
-                                "Cancel", id="join-group-cancel", color="secondary"
+                                "Cancel", id="join-club-cancel", color="secondary"
                             ),
-                            dbc.Button("Join", id="join-group-submit", color="primary"),
+                            dbc.Button("Join", id="join-club-submit", color="primary"),
                         ]
                     ),
                 ],
             ),
-            dcc.Location(id="join-group-redirect", refresh=True),
+            dcc.Location(id="join-club-redirect", refresh=True),
             dbc.Modal(
-                id="create-group-modal",
+                id="create-club-modal",
                 is_open=False,
                 children=[
-                    dbc.ModalHeader(dbc.ModalTitle("Create a Group")),
+                    dbc.ModalHeader(dbc.ModalTitle("Create a Club")),
                     dbc.ModalBody(
                         [
                             dbc.Input(
-                                id="create-group-name-input",
-                                placeholder="Group name",
+                                id="create-club-name-input",
+                                placeholder="Club name",
                                 type="text",
                                 className="mb-2",
                             ),
                             dbc.Textarea(
-                                id="create-group-description-input",
+                                id="create-club-description-input",
                                 placeholder="Description (optional)",
                             ),
                             html.Div(
-                                id="create-group-error", className="text-danger mt-2"
+                                id="create-club-error", className="text-danger mt-2"
                             ),
                         ]
                     ),
                     dbc.ModalFooter(
                         [
                             dbc.Button(
-                                "Cancel", id="create-group-cancel", color="secondary"
+                                "Cancel", id="create-club-cancel", color="secondary"
                             ),
                             dbc.Button(
-                                "Create", id="create-group-submit", color="primary"
+                                "Create", id="create-club-submit", color="primary"
                             ),
                         ]
                     ),
                 ],
             ),
-            dcc.Location(id="create-group-redirect", refresh=True),
+            dcc.Location(id="create-club-redirect", refresh=True),
             dbc.Modal(
                 id="upload-round-modal",
                 is_open=False,
@@ -390,6 +478,25 @@ def layout():
                                 ],
                             ),
                             dcc.Store(id="upload-round-manual-mode", data=False),
+                            html.Label(
+                                "Add up to 3 friends to this round (optional)",
+                                className="t3g-modal-label mt-2",
+                            ),
+                            html.P(
+                                "Add some friends first to invite them to a round.",
+                                className="t3g-empty-state",
+                            )
+                            if not friend_invite_options
+                            else None,
+                            # Always rendered (even with empty options) so
+                            # the State lookup below never points at a
+                            # missing component.
+                            dcc.Checklist(
+                                id="upload-round-friends",
+                                options=friend_invite_options,
+                                value=[],
+                                className="t3g-friend-invite-checklist",
+                            ),
                             html.Div(id="upload-round-error", className="text-danger mt-2"),
                             html.Div(id="upload-round-status", className="mt-2"),
                         ]
@@ -415,46 +522,46 @@ def layout():
 
 
 @callback(
-    Output("join-group-modal", "is_open"),
-    Output("join-group-error", "children"),
-    Output("join-group-redirect", "pathname"),
-    Input("join-group-button", "n_clicks"),
-    Input("join-group-cancel", "n_clicks"),
-    Input("join-group-submit", "n_clicks"),
-    State("join-group-uuid-input", "value"),
+    Output("join-club-modal", "is_open"),
+    Output("join-club-error", "children"),
+    Output("join-club-redirect", "pathname"),
+    Input("join-club-button", "n_clicks"),
+    Input("join-club-cancel", "n_clicks"),
+    Input("join-club-submit", "n_clicks"),
+    State("join-club-uuid-input", "value"),
     prevent_initial_call=True,
 )
-def handle_join_group(open_clicks, cancel_clicks, submit_clicks, group_uuid):
+def handle_join_club(open_clicks, cancel_clicks, submit_clicks, club_uuid):
     triggered_id = dash.ctx.triggered_id
 
-    if triggered_id == "join-group-button":
+    if triggered_id == "join-club-button":
         return True, "", dash.no_update
 
-    if triggered_id == "join-group-cancel":
+    if triggered_id == "join-club-cancel":
         return False, "", dash.no_update
 
-    if triggered_id == "join-group-submit":
-        if not group_uuid:
-            return True, "Enter a group ID.", dash.no_update
+    if triggered_id == "join-club-submit":
+        if not club_uuid:
+            return True, "Enter a club ID.", dash.no_update
 
         player_id = session.get("player_id")
-        with _timed("POST /group-players/"):
+        with _timed("POST /club-players/"):
             response = requests.post(
-                f"{API_BASE_URL}/group-players/",
-                json={"group_id": group_uuid, "player_id": player_id},
+                f"{API_BASE_URL}/club-players/",
+                json={"club_id": club_uuid, "player_id": player_id},
             )
 
         if response.status_code == 201:
             return False, "", "/"
 
         if response.status_code == 422:
-            return True, "That doesn't look like a valid group ID.", dash.no_update
+            return True, "That doesn't look like a valid club ID.", dash.no_update
 
-        # NOTE: the backend doesn't yet distinguish "group not found" from
+        # NOTE: the backend doesn't yet distinguish "club not found" from
         # "already a member" — both currently surface as a generic error.
         return (
             True,
-            "Couldn't join that group. Check the ID, or you may already be a member.",
+            "Couldn't join that club. Check the ID, or you may already be a member.",
             dash.no_update,
         )
 
@@ -462,33 +569,33 @@ def handle_join_group(open_clicks, cancel_clicks, submit_clicks, group_uuid):
 
 
 @callback(
-    Output("create-group-modal", "is_open"),
-    Output("create-group-error", "children"),
-    Output("create-group-redirect", "pathname"),
-    Input("create-group-button", "n_clicks"),
-    Input("create-group-cancel", "n_clicks"),
-    Input("create-group-submit", "n_clicks"),
-    State("create-group-name-input", "value"),
-    State("create-group-description-input", "value"),
+    Output("create-club-modal", "is_open"),
+    Output("create-club-error", "children"),
+    Output("create-club-redirect", "pathname"),
+    Input("create-club-button", "n_clicks"),
+    Input("create-club-cancel", "n_clicks"),
+    Input("create-club-submit", "n_clicks"),
+    State("create-club-name-input", "value"),
+    State("create-club-description-input", "value"),
     prevent_initial_call=True,
 )
-def handle_create_group(open_clicks, cancel_clicks, submit_clicks, name, description):
+def handle_create_club(open_clicks, cancel_clicks, submit_clicks, name, description):
     triggered_id = dash.ctx.triggered_id
 
-    if triggered_id == "create-group-button":
+    if triggered_id == "create-club-button":
         return True, "", dash.no_update
 
-    if triggered_id == "create-group-cancel":
+    if triggered_id == "create-club-cancel":
         return False, "", dash.no_update
 
-    if triggered_id == "create-group-submit":
+    if triggered_id == "create-club-submit":
         if not name:
-            return True, "Enter a group name.", dash.no_update
+            return True, "Enter a club name.", dash.no_update
 
         player_id = session.get("player_id")
-        with _timed("POST /groups/"):
-            group_resp = requests.post(
-                f"{API_BASE_URL}/groups/",
+        with _timed("POST /clubs/"):
+            club_resp = requests.post(
+                f"{API_BASE_URL}/clubs/",
                 json={
                     "name": name,
                     "description": description or None,
@@ -496,24 +603,24 @@ def handle_create_group(open_clicks, cancel_clicks, submit_clicks, name, descrip
                 },
             )
 
-        if group_resp.status_code == 409:
+        if club_resp.status_code == 409:
             return (
                 True,
-                "A group with a similar name already exists. Try a different name.",
+                "A club with a similar name already exists. Try a different name.",
                 dash.no_update,
             )
-        if group_resp.status_code != 201:
-            return True, "Couldn't create the group. Try again.", dash.no_update
+        if club_resp.status_code != 201:
+            return True, "Couldn't create the club. Try again.", dash.no_update
 
-        new_group = group_resp.json()
+        new_club = club_resp.json()
 
-        # Automatically add the creator as a member too, so the group shows
-        # up in their own groups list right away. Best-effort: if this call
-        # fails, the group still exists and can be joined manually by ID.
-        with _timed("POST /group-players/ (auto-join creator)"):
+        # Automatically add the creator as a member too, so the club shows
+        # up in their own clubs list right away. Best-effort: if this call
+        # fails, the club still exists and can be joined manually by ID.
+        with _timed("POST /club-players/ (auto-join creator)"):
             requests.post(
-                f"{API_BASE_URL}/group-players/",
-                json={"group_id": new_group["id"], "player_id": player_id},
+                f"{API_BASE_URL}/club-players/",
+                json={"club_id": new_club["id"], "player_id": player_id},
             )
 
         return False, "", "/"
@@ -645,11 +752,24 @@ def toggle_continue_button(course_id, tee_id, is_manual, manual_club, manual_tee
     State("upload-round-manual-mode", "data"),
     State("upload-round-manual-club", "value"),
     State("upload-round-manual-tee", "value"),
+    State("upload-round-friends", "value"),
     prevent_initial_call=True,
 )
-def handle_continue_round(n_clicks, course_id, tee_id, is_manual, manual_club, manual_tee):
+def handle_continue_round(n_clicks, course_id, tee_id, is_manual, manual_club, manual_tee, invited_player_ids):
     player_id = session.get("player_id")
-    payload = {"player_id": player_id, "is_manual": bool(is_manual)}
+    invited_player_ids = invited_player_ids or []
+
+    if len(invited_player_ids) > 3:
+        return (
+            html.Span("You can only invite up to 3 friends to a round.", className="text-danger"),
+            dash.no_update,
+        )
+
+    payload = {
+        "player_id": player_id,
+        "is_manual": bool(is_manual),
+        "invited_player_ids": invited_player_ids,
+    }
 
     if is_manual:
         if not manual_club or not manual_tee:
@@ -679,3 +799,96 @@ def handle_continue_round(n_clicks, course_id, tee_id, is_manual, manual_club, m
     except ValueError:
         detail = "Couldn't start the round."
     return html.Span(detail, className="text-danger"), dash.no_update
+
+
+@callback(
+    Output("home-rounds-page", "data"),
+    Input("home-rounds-prev", "n_clicks"),
+    Input("home-rounds-next", "n_clicks"),
+    State("home-rounds-page", "data"),
+    State("home-rounds-store", "data"),
+    prevent_initial_call=True,
+)
+def change_rounds_page(prev_clicks, next_clicks, page, completed_rounds):
+    triggered_id = dash.ctx.triggered_id
+    page = page or 0
+    max_page = max(0, (len(completed_rounds or []) - 1) // _ROUNDS_PER_PAGE)
+
+    if triggered_id == "home-rounds-prev":
+        return max(0, page - 1)
+    if triggered_id == "home-rounds-next":
+        return min(max_page, page + 1)
+    return page
+
+
+@callback(
+    Output("home-rounds-page-list", "children"),
+    Output("home-rounds-prev", "disabled"),
+    Output("home-rounds-next", "disabled"),
+    Output("home-rounds-page-label", "children"),
+    Input("home-rounds-page", "data"),
+    State("home-rounds-store", "data"),
+    State("home-rounds-player-store", "data"),
+)
+def render_rounds_page(page, completed_rounds, player_info):
+    # Fires on load too (no prevent_initial_call) so the first page renders
+    # immediately rather than waiting on a button click.
+    completed_rounds = completed_rounds or []
+    player_info = player_info or {}
+    page = page or 0
+
+    total_pages = max(1, -(-len(completed_rounds) // _ROUNDS_PER_PAGE))  # ceil div
+    start = page * _ROUNDS_PER_PAGE
+    page_rounds = completed_rounds[start:start + _ROUNDS_PER_PAGE]
+
+    cards = [
+        _round_scorecard_card(r, player_info.get("initial", "Y"), player_info.get("label", "You"))
+        for r in page_rounds
+    ]
+
+    label = f"{page + 1} of {total_pages}"
+    return cards, page <= 0, page >= total_pages - 1, label
+
+
+@callback(
+    Output("round-invite-refresh", "pathname"),
+    Output("round-invite-error", "children"),
+    Input({"type": "round-invite-accept", "round_id": ALL}, "n_clicks"),
+    prevent_initial_call=True,
+)
+def accept_round_invite(n_clicks_list):
+    triggered_id = dash.ctx.triggered_id
+    if not triggered_id or not any(n_clicks_list):
+        return dash.no_update, dash.no_update
+
+    player_id = session.get("player_id")
+    with _timed(f"POST /rounds/{triggered_id['round_id']}/invites/{player_id}/accept"):
+        response = requests.post(
+            f"{API_BASE_URL}/rounds/{triggered_id['round_id']}/invites/{player_id}/accept"
+        )
+
+    if response.status_code == 200:
+        return "/live-round", ""
+
+    try:
+        detail = response.json().get("detail", "Couldn't accept that invite.")
+    except ValueError:
+        detail = "Couldn't accept that invite."
+    return dash.no_update, detail
+
+
+@callback(
+    Output("round-invite-refresh", "pathname", allow_duplicate=True),
+    Input({"type": "round-invite-decline", "round_id": ALL}, "n_clicks"),
+    prevent_initial_call=True,
+)
+def decline_round_invite(n_clicks_list):
+    triggered_id = dash.ctx.triggered_id
+    if not triggered_id or not any(n_clicks_list):
+        return dash.no_update
+
+    player_id = session.get("player_id")
+    with _timed(f"POST /rounds/{triggered_id['round_id']}/invites/{player_id}/decline"):
+        requests.post(f"{API_BASE_URL}/rounds/{triggered_id['round_id']}/invites/{player_id}/decline")
+
+    return "/"

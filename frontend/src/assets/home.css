@@ -88,13 +88,13 @@
     }
 }
 
-.t3g-groups-list {
+.t3g-clubs-list {
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
 }
 
-.t3g-group-item {
+.t3g-club-item {
     display: block;
     background: #f4f5f9;
     border-radius: 10px;
@@ -105,7 +105,7 @@
     transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
-.t3g-group-item:hover {
+.t3g-club-item:hover {
     transform: translateY(-3px);
     box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
 }
@@ -125,9 +125,45 @@
     display: flex;
     flex-direction: column;
     gap: 1rem;
-    max-height: 680px;
-    overflow-y: auto;
-    padding-right: 0.4rem;
+}
+
+/* Only completed rounds paginate -- the live round (if any) is pinned
+   above this and always visible. */
+.t3g-rounds-pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    margin-top: 1rem;
+}
+
+.t3g-pagination-button {
+    background: transparent;
+    border: 1px solid #c21861;
+    color: #c21861;
+    font-weight: 700;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 0.4rem 0.9rem;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background 0.15s ease, opacity 0.15s ease;
+}
+
+.t3g-pagination-button:hover:not(:disabled) {
+    background: rgba(194, 24, 97, 0.08);
+}
+
+.t3g-pagination-button:disabled {
+    opacity: 0.35;
+    cursor: default;
+}
+
+.t3g-pagination-label {
+    color: #6b7280;
+    font-weight: 700;
+    font-size: 0.8rem;
 }
 
 .t3g-round-card {
@@ -291,4 +327,19 @@
     border-radius: 0;
     border: 2px solid #c21861;
     box-shadow: 0 0 0 2px #f4f5f9, 0 0 0 4px #c21861;
+}
+
+.t3g-friend-invite-checklist {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    margin-bottom: 0.5rem;
+}
+
+.t3g-friend-invite-checklist label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: #1e2a47;
+    font-weight: 600;
 }

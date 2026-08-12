@@ -1,5 +1,26 @@
 /* target path: frontend/src/assets/live_round.css (full replacement) */
 
+/* One block per participant in a multiplayer round -- each gets its own
+   full scorecard table, stacked vertically and separated by a rule so
+   it's clear where one player's card ends and the next begins. */
+.t3g-player-scorecards {
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+}
+
+.t3g-player-scorecard + .t3g-player-scorecard {
+    border-top: 1px solid #e2e4ea;
+    padding-top: 2rem;
+}
+
+.t3g-player-scorecard-name {
+    color: #1e2a47;
+    font-weight: 800;
+    font-size: 1rem;
+    margin-bottom: 0.5rem;
+}
+
 .t3g-scorecard-table {
     width: 100%;
     border-collapse: collapse;

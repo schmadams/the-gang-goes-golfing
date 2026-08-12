@@ -1,14 +1,13 @@
+# target path: backend/routers/handicaps.py (full replacement)
 from fastapi import APIRouter, HTTPException, status
 
 from backend.models.handicap import HandicapCreate, HandicapResponse
 from backend.services.handicaps import (
     add_player_handicap,
     get_current_player_handicap,
-list_latest_handicaps_for_group,
+    list_latest_handicaps_for_club,
     list_player_handicaps,
 )
-
-
 
 
 router = APIRouter(
@@ -39,6 +38,7 @@ def get_current_player_handicap_route(player_id: str):
 
     return handicap
 
-@router.get("/group/{group_id}/latest")
-def list_latest_handicaps_for_group_route(group_id: str):
-    return list_latest_handicaps_for_group(group_id)
+
+@router.get("/club/{club_id}/latest")
+def list_latest_handicaps_for_club_route(club_id: str):
+    return list_latest_handicaps_for_club(club_id)

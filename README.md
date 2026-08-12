@@ -731,11 +731,11 @@ If a route is missing, check that the router is included in `backend/main.py`.
 Example:
 
 ```python
-from backend.routers import players, groups, group_players
+from backend.routers import players, clubs, club_players
 
 app.include_router(players.router)
-app.include_router(groups.router)
-app.include_router(group_players.router)
+app.include_router(clubs.router)
+app.include_router(club_players.router)
 ```
 
 ### Duplicate player in group

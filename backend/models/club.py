@@ -1,11 +1,11 @@
-# target path: backend/models/group.py (full replacement)
+# target path: backend/models/club.py (new file -- replaces backend/models/group.py, which should be deleted)
 from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel
 
 
-class GroupCreate(BaseModel):
+class ClubCreate(BaseModel):
     name: str
     description: str | None = None
     admin_player_id: UUID | None = None  # frontend always sends this; CLI usage can omit it
@@ -13,11 +13,11 @@ class GroupCreate(BaseModel):
     slug: str | None = None  # auto-generated from name if not provided
 
 
-class GroupResponse(BaseModel):
+class ClubResponse(BaseModel):
     id: UUID
     code: str
     slug: str
     name: str
     description: str | None = None
-    group_admin: UUID | None = None
+    club_admin: UUID | None = None
     created_at: datetime | None = None

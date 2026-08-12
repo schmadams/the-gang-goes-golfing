@@ -1,4 +1,4 @@
-# target path: backend/models/round.py (new file)
+# target path: backend/models/round.py (full replacement)
 from datetime import datetime
 from typing import Optional
 from uuid import UUID
@@ -13,11 +13,23 @@ class RoundStartRequest(BaseModel):
     is_manual: bool = False
     manual_club_name: Optional[str] = None
     manual_tee_name: Optional[str] = None
+    # Up to 3 confirmed friends invited into the round alongside you --
+    # each gets a round_players row with status='invited' and has to
+    # accept before their scorecard exists (see backend/services/rounds.py
+    # start_round / respond_to_round_invite).
+    invited_player_ids: list[str] = []
+
+    @field_validator("invited_player_ids")
+    @classmethod
+    def validate_invited_player_ids(cls, v):
+        if len(v) > 3:
+            raise ValueError("You can only add up to 3 other friends to a round.")
+        return v
 
 
 class HoleScoreUpdate(BaseModel):
     """
-    Partial update for a single hole. The router calls
+    Partial update for a single player's single hole. The router calls
     payload.model_dump(exclude_unset=True), so only fields actually sent
     get written -- e.g. saving a score doesn't clobber manual_par etc back
     to null.
@@ -81,9 +93,23 @@ class HoleScoreResponse(BaseModel):
     stroke_index: Optional[int] = None
 
 
+class RoundPlayerScorecard(BaseModel):
+    """One participant's scorecard within a live/detail round view --
+    accepted participants carry all 18 holes; invited-but-not-yet-responded
+    players show up in `pending_invites` on RoundDetailResponse instead,
+    without a scorecard (they don't have one yet)."""
+    player_id: UUID
+    is_owner: bool
+    status: str
+    first_name: Optional[str] = None
+    surname: Optional[str] = None
+    nickname: Optional[str] = None
+    holes: list[HoleScoreResponse] = []
+
+
 class RoundResponse(BaseModel):
     id: UUID
-    player_id: UUID
+    player_id: UUID  # the round's owner/starter
     course_id: Optional[UUID] = None
     tee_id: Optional[UUID] = None
     is_manual: bool
@@ -92,13 +118,18 @@ class RoundResponse(BaseModel):
     status: str
     started_at: datetime
     completed_at: Optional[datetime] = None
+    # Relative to whichever player_id the lookup was made for (e.g.
+    # get_active_round(player_id)) -- lets the frontend know whether the
+    # viewer can Finish/Scrap this round.
+    is_owner: Optional[bool] = None
 
 
 class RoundDetailResponse(RoundResponse):
     club_name: Optional[str] = None
     course_name: Optional[str] = None
     tee_name: Optional[str] = None
-    holes: list[HoleScoreResponse] = []
+    players: list[RoundPlayerScorecard] = []
+    pending_invites: list[RoundPlayerScorecard] = []
 
 
 class RoundHoleSummary(BaseModel):
@@ -119,12 +150,14 @@ class RoundHoleSummary(BaseModel):
 
 
 class RoundSummaryResponse(RoundResponse):
-    """Shape for the Rounds History panel and Scoring History page -- a
-    full mini scorecard (par/strokes/putts/fairway/net/Stableford per
-    hole) plus round-level totals. Covers both completed rounds and the
-    single in-progress round (status distinguishes them, inherited from
-    RoundResponse) so a live round can show up in the same list, marked
-    as live, instead of needing a separate lookup."""
+    """Shape for the Rounds History panel and Scoring History page --
+    always the *viewing* player's own scorecard within a round they own or
+    were an accepted participant in, not everyone's. A full mini scorecard
+    (par/strokes/putts/fairway/net/Stableford per hole) plus round-level
+    totals. Covers both completed rounds and any in-progress round the
+    player belongs to (status distinguishes them, inherited from
+    RoundResponse) so a live round can show up in the same list, marked as
+    live, instead of needing a separate lookup."""
     club_name: Optional[str] = None
     course_name: Optional[str] = None
     tee_name: Optional[str] = None
@@ -133,3 +166,27 @@ class RoundSummaryResponse(RoundResponse):
     holes: list[RoundHoleSummary] = []
     handicap: Optional[float] = None
     total_stableford: Optional[int] = None
+
+
+class RoundAnalysisPoint(BaseModel):
+    """One completed round's contribution to the Player Analysis charts --
+    its own totals plus the trailing rolling average as of that round."""
+    date: str
+    putts_total: Optional[int] = None
+    putts_rolling_avg: Optional[float] = None
+    fairway_pct: Optional[float] = None
+    fairway_rolling_avg: Optional[float] = None
+
+
+class RoundInviteResponse(BaseModel):
+    """A pending invite into someone else's round, for the notification
+    list on the home page / navbar."""
+    round_id: UUID
+    player_id: UUID
+    is_owner: bool
+    status: str
+    invited_at: datetime
+    owner_first_name: Optional[str] = None
+    owner_surname: Optional[str] = None
+    club_name: Optional[str] = None
+    course_name: Optional[str] = None

@@ -20,6 +20,14 @@ _FAIRWAY_RADIO_TO_BOOL = {"yes": True, "no": False}
 _FAIRWAY_BOOL_TO_RADIO = {True: "yes", False: "no"}
 
 
+def _player_display_name(player):
+    return (
+        player.get("nickname")
+        or f"{player.get('first_name', '')} {player.get('surname', '')}".strip()
+        or "Player"
+    )
+
+
 def _hole_par(hole):
     # Manual rounds don't have a real course_holes row yet, so par lives on
     # manual_par instead -- this picks whichever one actually applies.
@@ -81,17 +89,17 @@ def _result_badge(strokes, par):
     return "Double bogey or worse", "t3g-result-badge t3g-result-double-bogey"
 
 
-def _score_button(hole):
+def _score_button(player_id, hole):
     strokes = hole.get("strokes")
     return html.Button(
         str(strokes) if strokes is not None else "Enter Score",
-        id={"type": "live-round-score-button", "hole": hole["hole_number"]},
+        id={"type": "live-round-score-button", "player": player_id, "hole": hole["hole_number"]},
         className=_score_marking_class(strokes, _hole_par(hole)),
         n_clicks=0,
     )
 
 
-def _manual_input(field_type, hole, min_val, max_val):
+def _manual_input(owner_id, field_type, hole, min_val, max_val):
     return dcc.Input(
         id={"type": f"live-round-{field_type}", "hole": hole["hole_number"]},
         type="number",
@@ -103,11 +111,11 @@ def _manual_input(field_type, hole, min_val, max_val):
     )
 
 
-def _hole_row(hole, is_manual):
-    if is_manual:
-        yardage_cell = html.Td(_manual_input("yardage", hole, 0, 1000))
-        si_cell = html.Td(_manual_input("stroke_index", hole, 1, 18))
-        par_cell = html.Td(_manual_input("par", hole, 3, 5))
+def _hole_row(player_id, hole, is_manual, can_edit_course_info):
+    if is_manual and can_edit_course_info:
+        yardage_cell = html.Td(_manual_input(player_id, "yardage", hole, 0, 1000))
+        si_cell = html.Td(_manual_input(player_id, "stroke_index", hole, 1, 18))
+        par_cell = html.Td(_manual_input(player_id, "par", hole, 3, 5))
     else:
         yardage_cell = html.Td(hole["yardage"] if hole.get("yardage") is not None else "-")
         si_cell = html.Td(hole["stroke_index"] if hole.get("stroke_index") is not None else "-")
@@ -119,7 +127,7 @@ def _hole_row(hole, is_manual):
             yardage_cell,
             si_cell,
             par_cell,
-            html.Td(_score_button(hole)),
+            html.Td(_score_button(player_id, hole)),
         ]
     )
 
@@ -129,7 +137,7 @@ def _score_total_text(holes_subset):
     return str(sum(entered)) if entered else "-"
 
 
-def _summary_row(label, holes_subset, score_total_id):
+def _summary_row(player_id, label, holes_subset, total_id_type):
     yardage_total = sum(_hole_value(h, "yardage", "manual_yardage") or 0 for h in holes_subset)
     par_total = sum(_hole_value(h, "par", "manual_par") or 0 for h in holes_subset)
     return html.Tr(
@@ -139,7 +147,52 @@ def _summary_row(label, holes_subset, score_total_id):
             html.Td(yardage_total),
             html.Td("-"),
             html.Td(par_total),
-            html.Td(html.Span(_score_total_text(holes_subset), id=score_total_id)),
+            html.Td(
+                html.Span(
+                    _score_total_text(holes_subset),
+                    id={"type": total_id_type, "player": player_id},
+                )
+            ),
+        ],
+    )
+
+
+def _player_scorecard_block(player, is_manual, is_owner_of_round):
+    """One participant's full scorecard table -- everyone gets one, but
+    only the round's owner ever sees editable par/yardage/SI inputs for a
+    manual round (those describe the course, not any one player's
+    performance, so there's exactly one authoritative source of truth
+    instead of every player entering their own copy)."""
+    player_id = player["player_id"]
+    holes = player["holes"]
+    front_nine = [h for h in holes if h["hole_number"] <= 9]
+    back_nine = [h for h in holes if h["hole_number"] >= 10]
+    can_edit_course_info = is_owner_of_round and player.get("is_owner")
+
+    table_rows = (
+        [_hole_row(player_id, h, is_manual, can_edit_course_info) for h in front_nine]
+        + [_summary_row(player_id, "OUT", front_nine, "live-round-out-total")]
+        + [_hole_row(player_id, h, is_manual, can_edit_course_info) for h in back_nine]
+        + [_summary_row(player_id, "IN", back_nine, "live-round-in-total")]
+        + [_summary_row(player_id, "TOTAL", holes, "live-round-total-total")]
+    )
+
+    return html.Div(
+        className="t3g-player-scorecard",
+        children=[
+            html.H4(
+                _player_display_name(player) + (" (you)" if player.get("is_viewer") else ""),
+                className="t3g-player-scorecard-name",
+            ),
+            html.Table(
+                className="t3g-scorecard-table",
+                children=[
+                    html.Thead(
+                        html.Tr([html.Th("Hole"), html.Th("Yards"), html.Th("S.I."), html.Th("Par"), html.Th("Score")])
+                    ),
+                    html.Tbody(table_rows),
+                ],
+            ),
         ],
     )
 
@@ -151,8 +204,9 @@ def layout():
         session.clear()
         return dcc.Location(pathname="/signin", id="live-round-redirect-signin", refresh=True)
 
-    # No round_id in the URL on purpose -- there can only ever be one
-    # in-progress round per player (enforced in the DB), so looking it up
+    # No round_id in the URL on purpose -- there can only ever be one round
+    # (owned or joined) a player is an accepted participant in at a time
+    # (enforced app-side in backend/services/rounds.py), so looking it up
     # by player_id is exactly what lets this page "pick up where you left
     # off" after closing and reopening the app, with no state to restore.
     response = requests.get(f"{API_BASE_URL}/rounds/active/{player_id}")
@@ -177,16 +231,29 @@ def layout():
 
     round_data = response.json()
     is_manual = round_data.get("is_manual")
-    holes = round_data.get("holes", [])
+    is_owner_of_round = bool(round_data.get("is_owner"))
+    players = round_data.get("players", [])
+    pending_invites = round_data.get("pending_invites", [])
+    owner_player = next((p for p in players if p.get("is_owner")), None)
 
-    # Single source of truth for every hole's data (score, putts, fairway,
-    # par/yardage/SI, whether manual or real) -- everything reactive on
-    # this page (score button labels/marks, OUT/IN/TOTAL score sums, the
-    # score modal's prefilled values) reads from and writes back to this.
-    holes_by_number = {str(h["hole_number"]): h for h in holes}
+    for p in players:
+        p["is_viewer"] = p["player_id"] == player_id
 
-    front_nine = [h for h in holes if h["hole_number"] <= 9]
-    back_nine = [h for h in holes if h["hole_number"] >= 10]
+    # Single source of truth for every player's hole data -- everything
+    # reactive on this page (score button labels/marks, OUT/IN/TOTAL score
+    # sums per player, the score modal's prefilled values) reads from and
+    # writes back to this. A list (not a dict keyed by player_id) so
+    # iteration order is unambiguous and stays identical between this
+    # layout and the refresh_scorecard callback that rebuilds it.
+    players_store_data = [
+        {
+            "player_id": p["player_id"],
+            "display_name": _player_display_name(p),
+            "is_owner": p.get("is_owner", False),
+            "holes": {str(h["hole_number"]): h for h in p["holes"]},
+        }
+        for p in players
+    ]
 
     title_bits = [round_data.get("club_name") or "Live Round"]
     if round_data.get("course_name"):
@@ -195,19 +262,32 @@ def layout():
         title_bits.append(f"{round_data['tee_name']} tees")
     title = " — ".join(title_bits)
 
-    table_rows = (
-        [_hole_row(h, is_manual) for h in front_nine]
-        + [_summary_row("OUT", front_nine, "live-round-out-total")]
-        + [_hole_row(h, is_manual) for h in back_nine]
-        + [_summary_row("IN", back_nine, "live-round-in-total")]
-        + [_summary_row("TOTAL", holes, "live-round-total-total")]
-    )
+    header_actions = []
+    if is_owner_of_round:
+        header_actions = [
+            html.Button(
+                "Scrap Round",
+                id="live-round-scrap-button",
+                className="t3g-panel-action-button t3g-panel-action-button--secondary",
+            ),
+            html.Button(
+                "Finish Round",
+                id="live-round-finish-button",
+                className="t3g-panel-action-button",
+            ),
+        ]
+
+    pending_note = None
+    if pending_invites:
+        names = ", ".join(_player_display_name(p) for p in pending_invites)
+        pending_note = html.P(f"Waiting on {names} to accept their invite.", className="t3g-empty-state")
 
     return html.Div(
         className="t3g-page",
         children=[
             dcc.Store(id="live-round-id-store", data=round_data["id"]),
-            dcc.Store(id="live-round-holes-store", data=holes_by_number),
+            dcc.Store(id="live-round-owner-id-store", data=owner_player["player_id"] if owner_player else None),
+            dcc.Store(id="live-round-players-store", data=players_store_data),
             dcc.Store(id="live-round-active-hole-store"),
             html.Div(
                 className="t3g-panel",
@@ -216,49 +296,27 @@ def layout():
                         className="t3g-panel-navbar",
                         children=[
                             html.H3(title, className="t3g-panel-navbar-title"),
-                            html.Div(
-                                className="t3g-panel-navbar-action",
-                                children=[
-                                    html.Button(
-                                        "Scrap Round",
-                                        id="live-round-scrap-button",
-                                        className="t3g-panel-action-button t3g-panel-action-button--secondary",
-                                    ),
-                                    html.Button(
-                                        "Finish Round",
-                                        id="live-round-finish-button",
-                                        className="t3g-panel-action-button",
-                                    ),
-                                ],
-                            ),
+                            html.Div(header_actions, className="t3g-panel-navbar-action")
+                            if header_actions
+                            else None,
                         ],
                     ),
                     html.Div(
                         className="t3g-panel-body",
                         children=[
                             html.P(
-                                "This course isn't in our list yet -- enter yards, stroke "
-                                "index, and par for each hole as you go. It'll be saved as a "
-                                "real course once you finish the round.",
+                                "This course isn't in our list yet -- the round owner enters yards, "
+                                "stroke index, and par for each hole as they go. It'll be saved as a "
+                                "real course once the round finishes.",
                                 className="t3g-empty-state",
                             )
                             if is_manual
                             else None,
-                            html.Table(
-                                className="t3g-scorecard-table",
+                            pending_note,
+                            html.Div(
+                                className="t3g-player-scorecards",
                                 children=[
-                                    html.Thead(
-                                        html.Tr(
-                                            [
-                                                html.Th("Hole"),
-                                                html.Th("Yards"),
-                                                html.Th("S.I."),
-                                                html.Th("Par"),
-                                                html.Th("Score"),
-                                            ]
-                                        )
-                                    ),
-                                    html.Tbody(table_rows),
+                                    _player_scorecard_block(p, is_manual, is_owner_of_round) for p in players
                                 ],
                             ),
                             html.Div(id="live-round-error", className="text-danger mt-2"),
@@ -376,8 +434,8 @@ def layout():
                 children=[
                     dbc.ModalHeader(dbc.ModalTitle("Scrap this round?")),
                     dbc.ModalBody(
-                        "This live round and every score entered so far will be permanently "
-                        "deleted. This can't be undone."
+                        "This live round and every score entered so far -- for every player in it -- "
+                        "will be permanently deleted. This can't be undone."
                     ),
                     dbc.ModalFooter(
                         [
@@ -396,9 +454,9 @@ def layout():
     )
 
 
-def _patch_hole(round_id, hole_number, field, value):
+def _patch_hole(round_id, player_id, hole_number, field, value):
     response = requests.patch(
-        f"{API_BASE_URL}/rounds/{round_id}/holes/{hole_number}",
+        f"{API_BASE_URL}/rounds/{round_id}/players/{player_id}/holes/{hole_number}",
         json={field: value},
     )
     if response.status_code == 200:
@@ -407,6 +465,10 @@ def _patch_hole(round_id, hole_number, field, value):
         return response.json().get("detail", "Couldn't save that value.")
     except ValueError:
         return "Couldn't save that value."
+
+
+def _find_player(players, player_id):
+    return next((p for p in (players or []) if p["player_id"] == player_id), None)
 
 
 @callback(
@@ -422,12 +484,12 @@ def _patch_hole(round_id, hole_number, field, value):
     Output("live-round-score-result-badge", "children"),
     Output("live-round-score-result-badge", "className"),
     Output("live-round-active-hole-store", "data"),
-    Input({"type": "live-round-score-button", "hole": ALL}, "n_clicks"),
+    Input({"type": "live-round-score-button", "player": ALL, "hole": ALL}, "n_clicks"),
     Input("live-round-score-cancel", "n_clicks"),
-    State("live-round-holes-store", "data"),
+    State("live-round-players-store", "data"),
     prevent_initial_call=True,
 )
-def toggle_score_modal(button_clicks, cancel_clicks, holes_by_number):
+def toggle_score_modal(button_clicks, cancel_clicks, players):
     triggered_id = dash.ctx.triggered_id
     no_update = dash.no_update
 
@@ -444,7 +506,9 @@ def toggle_score_modal(button_clicks, cancel_clicks, holes_by_number):
             raise PreventUpdate
 
         hole_number = triggered_id["hole"]
-        hole = (holes_by_number or {}).get(str(hole_number), {})
+        clicked_player_id = triggered_id["player"]
+        player = _find_player(players, clicked_player_id) or {}
+        hole = (player.get("holes") or {}).get(str(hole_number), {})
         par = _hole_par(hole)
         strokes = hole.get("strokes")
         putts = hole.get("putts")
@@ -466,9 +530,13 @@ def toggle_score_modal(button_clicks, cancel_clicks, holes_by_number):
         # doesn't apply.
         fairway_row_style = {"display": "none"} if par == 3 else {}
 
+        title = f"{player.get('display_name', 'Player')} · Hole {hole_number}"
+        if par is not None:
+            title += f" · Par {par}"
+
         return (
             True,
-            f"Hole {hole_number} · Par {par}" if par is not None else f"Hole {hole_number}",
+            title,
             par,
             strokes,
             str(strokes) if strokes is not None else "-",
@@ -478,7 +546,7 @@ def toggle_score_modal(button_clicks, cancel_clicks, holes_by_number):
             fairway_row_style,
             badge_text,
             badge_class,
-            hole_number,
+            {"player_id": clicked_player_id, "hole_number": hole_number},
         )
 
     raise PreventUpdate
@@ -531,7 +599,7 @@ def adjust_putts(plus_clicks, minus_clicks, current):
 
 @callback(
     Output("live-round-score-modal", "is_open", allow_duplicate=True),
-    Output("live-round-holes-store", "data", allow_duplicate=True),
+    Output("live-round-players-store", "data", allow_duplicate=True),
     Output("live-round-error", "children", allow_duplicate=True),
     Input("live-round-score-save", "n_clicks"),
     State("live-round-active-hole-store", "data"),
@@ -540,12 +608,15 @@ def adjust_putts(plus_clicks, minus_clicks, current):
     State("live-round-score-putts-store", "data"),
     State("live-round-score-fairway-input", "value"),
     State("live-round-score-modal-par-store", "data"),
-    State("live-round-holes-store", "data"),
+    State("live-round-players-store", "data"),
     prevent_initial_call=True,
 )
-def save_score(n_clicks, hole_number, round_id, shots, putts, fairway_radio, par, holes_by_number):
-    if hole_number is None:
+def save_score(n_clicks, active_hole, round_id, shots, putts, fairway_radio, par, players):
+    if not active_hole:
         raise PreventUpdate
+
+    target_player_id = active_hole["player_id"]
+    hole_number = active_hole["hole_number"]
 
     # Par 3s don't get a fairway hit toggle in the UI -- also ignore
     # whatever's in the radio's stale value here, rather than trusting a
@@ -553,7 +624,7 @@ def save_score(n_clicks, hole_number, round_id, shots, putts, fairway_radio, par
     fairway_hit = None if par == 3 else _FAIRWAY_RADIO_TO_BOOL.get(fairway_radio)
 
     response = requests.patch(
-        f"{API_BASE_URL}/rounds/{round_id}/holes/{hole_number}",
+        f"{API_BASE_URL}/rounds/{round_id}/players/{target_player_id}/holes/{hole_number}",
         json={"strokes": shots, "putts": putts, "fairway_hit": fairway_hit},
     )
 
@@ -564,118 +635,141 @@ def save_score(n_clicks, hole_number, round_id, shots, putts, fairway_radio, par
             detail = "Couldn't save that score."
         return dash.no_update, dash.no_update, detail
 
-    holes_by_number = dict(holes_by_number or {})
-    hole = dict(holes_by_number.get(str(hole_number), {}))
-    hole.update({"strokes": shots, "putts": putts, "fairway_hit": fairway_hit})
-    holes_by_number[str(hole_number)] = hole
+    players = [dict(p) for p in (players or [])]
+    for p in players:
+        if p["player_id"] == target_player_id:
+            holes = dict(p["holes"])
+            hole = dict(holes.get(str(hole_number), {}))
+            hole.update({"strokes": shots, "putts": putts, "fairway_hit": fairway_hit})
+            holes[str(hole_number)] = hole
+            p["holes"] = holes
 
-    return False, holes_by_number, ""
+    return False, players, ""
 
 
 @callback(
-    Output({"type": "live-round-score-button", "hole": ALL}, "children"),
-    Output({"type": "live-round-score-button", "hole": ALL}, "className"),
-    Output("live-round-out-total", "children"),
-    Output("live-round-in-total", "children"),
-    Output("live-round-total-total", "children"),
-    Input("live-round-holes-store", "data"),
+    Output({"type": "live-round-score-button", "player": ALL, "hole": ALL}, "children"),
+    Output({"type": "live-round-score-button", "player": ALL, "hole": ALL}, "className"),
+    Output({"type": "live-round-out-total", "player": ALL}, "children"),
+    Output({"type": "live-round-in-total", "player": ALL}, "children"),
+    Output({"type": "live-round-total-total", "player": ALL}, "children"),
+    Input("live-round-players-store", "data"),
 )
-def refresh_scorecard(holes_by_number):
+def refresh_scorecard(players):
     # Fires on load too (no prevent_initial_call) so a resumed round shows
-    # correct labels/marks/totals immediately. Recomputes all 18 buttons
-    # together (rather than patching just the one hole that changed) since
-    # editing a manual round's par can change which mark an already-entered
-    # score should carry.
-    holes_by_number = holes_by_number or {}
+    # correct labels/marks/totals immediately. Iterates players in the
+    # store's list order, then holes 1-18 within each player -- the exact
+    # same order the layout rendered the matching components in, which is
+    # what lets Dash pair these flat return lists back up to the right
+    # button/total for each (player, hole) despite the wildcard match.
+    players = players or []
 
-    labels = []
-    classes = []
-    holes_in_order = []
-    for hole_number in range(1, 19):
-        hole = holes_by_number.get(str(hole_number), {})
-        holes_in_order.append(hole)
-        strokes = hole.get("strokes")
-        par = _hole_par(hole)
-        labels.append(str(strokes) if strokes is not None else "Enter Score")
-        classes.append(_score_marking_class(strokes, par))
+    labels, classes = [], []
+    out_totals, in_totals, total_totals = [], [], []
 
-    out_total = _score_total_text(holes_in_order[:9])
-    in_total = _score_total_text(holes_in_order[9:])
-    grand_total = _score_total_text(holes_in_order)
+    for player in players:
+        holes_by_number = player.get("holes") or {}
+        holes_in_order = []
+        for hole_number in range(1, 19):
+            hole = holes_by_number.get(str(hole_number), {})
+            holes_in_order.append(hole)
+            strokes = hole.get("strokes")
+            par = _hole_par(hole)
+            labels.append(str(strokes) if strokes is not None else "Enter Score")
+            classes.append(_score_marking_class(strokes, par))
 
-    return labels, classes, out_total, in_total, grand_total
+        out_totals.append(_score_total_text(holes_in_order[:9]))
+        in_totals.append(_score_total_text(holes_in_order[9:]))
+        total_totals.append(_score_total_text(holes_in_order))
+
+    return labels, classes, out_totals, in_totals, total_totals
 
 
 @callback(
     Output("live-round-error", "children", allow_duplicate=True),
-    Output("live-round-holes-store", "data", allow_duplicate=True),
+    Output("live-round-players-store", "data", allow_duplicate=True),
     Input({"type": "live-round-par", "hole": ALL}, "value"),
     State("live-round-id-store", "data"),
-    State("live-round-holes-store", "data"),
+    State("live-round-owner-id-store", "data"),
+    State("live-round-players-store", "data"),
     prevent_initial_call=True,
 )
-def save_manual_par(values, round_id, holes_by_number):
+def save_manual_par(values, round_id, owner_id, players):
     triggered_id = dash.ctx.triggered_id
     if not triggered_id:
         raise PreventUpdate
     hole_number = triggered_id["hole"]
     value = dash.ctx.triggered[0]["value"]
-    error = _patch_hole(round_id, hole_number, "manual_par", value)
+    error = _patch_hole(round_id, owner_id, hole_number, "manual_par", value)
 
-    holes_by_number = dict(holes_by_number or {})
-    hole = dict(holes_by_number.get(str(hole_number), {}))
-    hole["manual_par"] = value
-    holes_by_number[str(hole_number)] = hole
+    players = [dict(p) for p in (players or [])]
+    for p in players:
+        if p["player_id"] == owner_id:
+            holes = dict(p["holes"])
+            hole = dict(holes.get(str(hole_number), {}))
+            hole["manual_par"] = value
+            holes[str(hole_number)] = hole
+            p["holes"] = holes
 
-    return error, holes_by_number
+    return error, players
 
 
 @callback(
     Output("live-round-error", "children", allow_duplicate=True),
-    Output("live-round-holes-store", "data", allow_duplicate=True),
+    Output("live-round-players-store", "data", allow_duplicate=True),
     Input({"type": "live-round-yardage", "hole": ALL}, "value"),
     State("live-round-id-store", "data"),
-    State("live-round-holes-store", "data"),
+    State("live-round-owner-id-store", "data"),
+    State("live-round-players-store", "data"),
     prevent_initial_call=True,
 )
-def save_manual_yardage(values, round_id, holes_by_number):
+def save_manual_yardage(values, round_id, owner_id, players):
     triggered_id = dash.ctx.triggered_id
     if not triggered_id:
         raise PreventUpdate
     hole_number = triggered_id["hole"]
     value = dash.ctx.triggered[0]["value"]
-    error = _patch_hole(round_id, hole_number, "manual_yardage", value)
+    error = _patch_hole(round_id, owner_id, hole_number, "manual_yardage", value)
 
-    holes_by_number = dict(holes_by_number or {})
-    hole = dict(holes_by_number.get(str(hole_number), {}))
-    hole["manual_yardage"] = value
-    holes_by_number[str(hole_number)] = hole
+    players = [dict(p) for p in (players or [])]
+    for p in players:
+        if p["player_id"] == owner_id:
+            holes = dict(p["holes"])
+            hole = dict(holes.get(str(hole_number), {}))
+            hole["manual_yardage"] = value
+            holes[str(hole_number)] = hole
+            p["holes"] = holes
 
-    return error, holes_by_number
+    return error, players
 
 
 @callback(
     Output("live-round-error", "children", allow_duplicate=True),
-    Output("live-round-holes-store", "data", allow_duplicate=True),
+    Output("live-round-players-store", "data", allow_duplicate=True),
     Input({"type": "live-round-stroke_index", "hole": ALL}, "value"),
     State("live-round-id-store", "data"),
-    State("live-round-holes-store", "data"),
+    State("live-round-owner-id-store", "data"),
+    State("live-round-players-store", "data"),
     prevent_initial_call=True,
 )
-def save_manual_stroke_index(values, round_id, holes_by_number):
+def save_manual_stroke_index(values, round_id, owner_id, players):
     triggered_id = dash.ctx.triggered_id
     if not triggered_id:
         raise PreventUpdate
     hole_number = triggered_id["hole"]
     value = dash.ctx.triggered[0]["value"]
-    error = _patch_hole(round_id, hole_number, "manual_stroke_index", value)
+    error = _patch_hole(round_id, owner_id, hole_number, "manual_stroke_index", value)
 
-    holes_by_number = dict(holes_by_number or {})
-    hole = dict(holes_by_number.get(str(hole_number), {}))
-    hole["manual_stroke_index"] = value
-    holes_by_number[str(hole_number)] = hole
+    players = [dict(p) for p in (players or [])]
+    for p in players:
+        if p["player_id"] == owner_id:
+            holes = dict(p["holes"])
+            hole = dict(holes.get(str(hole_number), {}))
+            hole["manual_stroke_index"] = value
+            holes[str(hole_number)] = hole
+            p["holes"] = holes
 
-    return error, holes_by_number
+    return error, players
 
 
 @callback(
