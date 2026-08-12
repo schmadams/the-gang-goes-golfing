@@ -47,6 +47,30 @@
     font-weight: 800;
 }
 
+/* Merged multiplayer table -- Hole/Yards/S.I./Par stay shared columns on
+   the left, with one Score column per player grouped under a shared
+   "Score" header on the right. A rule down the left edge of that group
+   (repeated on the first player column, since the header cell and body
+   cells are separate elements) is what visually separates "the hole" from
+   "everyone's score for it". */
+.t3g-scorecard-table--multi th:nth-child(5),
+.t3g-scorecard-table--multi td:nth-child(5) {
+    border-left: 2px solid #e2e4ea;
+}
+
+.t3g-scorecard-score-group {
+    text-align: center;
+}
+
+.t3g-scorecard-player-col {
+    text-align: center;
+    white-space: nowrap;
+}
+
+.t3g-scorecard-table--multi td:nth-child(n + 5) {
+    text-align: center;
+}
+
 /* OUT / IN / TOTAL rows -- shaded and bordered like the summary rows on a
    paper scorecard, to visually break up the front 9 / back 9 / grand
    total. */

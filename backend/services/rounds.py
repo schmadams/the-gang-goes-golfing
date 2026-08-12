@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from backend.database import supabase
 from backend.services.friends import list_friends
 from backend.services.handicaps import get_current_player_handicap
+from backend.services.whs import recalculate_and_store_handicap
 
 _EXPIRY_HOURS = 8  # rounds still in_progress after this long are auto-scrapped
 
@@ -646,6 +647,8 @@ def start_round(payload: dict) -> dict:
         "is_manual": payload.get("is_manual", False),
         "manual_club_name": payload.get("manual_club_name"),
         "manual_tee_name": payload.get("manual_tee_name"),
+        "manual_course_rating": payload.get("manual_course_rating"),
+        "manual_slope_rating": payload.get("manual_slope_rating"),
     }
 
     with _timed("insert rounds row"):
@@ -754,6 +757,8 @@ def _create_course_from_manual_entry(round_data: dict, holes: list[dict]) -> Non
             "course_id": course_id,
             "name": tee_name,
             "par": total_par,
+            "course_rating": round_data.get("manual_course_rating"),
+            "slope_rating": round_data.get("manual_slope_rating"),
         }).execute().data[0]
 
     hole_rows = [
@@ -806,5 +811,17 @@ def finish_round(round_id: str) -> dict | None:
             "status": "completed",
             "completed_at": datetime.now(timezone.utc).isoformat(),
         }).eq("id", round_id).execute()
+
+    # Every accepted player just got a real, final scorecard -- recompute
+    # each of their Handicap Indexes from their full round history, not
+    # just the round owner's. Best-effort: the score data above is already
+    # safely saved, so a WHS calculation failure shouldn't block the round
+    # from finishing -- there's no logging/monitoring infra in this app
+    # yet to alert on it, so this print is the only trace if it ever fires.
+    for player in round_data["players"]:
+        try:
+            recalculate_and_store_handicap(player["player_id"])
+        except Exception as exc:
+            print(f"[WHS] Failed to recalculate handicap for player {player['player_id']}: {exc}")
 
     return get_round(round_id)

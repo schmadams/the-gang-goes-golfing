@@ -89,12 +89,12 @@ def _result_badge(strokes, par):
     return "Double bogey or worse", "t3g-result-badge t3g-result-double-bogey"
 
 
-def _score_button(player_id, hole):
+def _score_button(player_id, hole, par):
     strokes = hole.get("strokes")
     return html.Button(
         str(strokes) if strokes is not None else "Enter Score",
         id={"type": "live-round-score-button", "player": player_id, "hole": hole["hole_number"]},
-        className=_score_marking_class(strokes, _hole_par(hole)),
+        className=_score_marking_class(strokes, par),
         n_clicks=0,
     )
 
@@ -111,89 +111,117 @@ def _manual_input(owner_id, field_type, hole, min_val, max_val):
     )
 
 
-def _hole_row(player_id, hole, is_manual, can_edit_course_info):
-    if is_manual and can_edit_course_info:
-        yardage_cell = html.Td(_manual_input(player_id, "yardage", hole, 0, 1000))
-        si_cell = html.Td(_manual_input(player_id, "stroke_index", hole, 1, 18))
-        par_cell = html.Td(_manual_input(player_id, "par", hole, 3, 5))
-    else:
-        yardage_cell = html.Td(hole["yardage"] if hole.get("yardage") is not None else "-")
-        si_cell = html.Td(hole["stroke_index"] if hole.get("stroke_index") is not None else "-")
-        par_cell = html.Td(hole["par"] if hole.get("par") is not None else "-")
-
-    return html.Tr(
-        [
-            html.Td(hole["hole_number"], className="t3g-hole-number"),
-            yardage_cell,
-            si_cell,
-            par_cell,
-            html.Td(_score_button(player_id, hole)),
-        ]
-    )
-
-
 def _score_total_text(holes_subset):
     entered = [h["strokes"] for h in holes_subset if h.get("strokes") is not None]
     return str(sum(entered)) if entered else "-"
 
 
-def _summary_row(player_id, label, holes_subset, total_id_type):
-    yardage_total = sum(_hole_value(h, "yardage", "manual_yardage") or 0 for h in holes_subset)
-    par_total = sum(_hole_value(h, "par", "manual_par") or 0 for h in holes_subset)
+def _summary_row(label, hole_numbers, reference_holes, players, holes_by_player, total_id_type):
+    """OUT/IN/TOTAL row for the merged table -- yardage/par totals are
+    shared (same course info for everyone), but the score total is
+    per-player, one cell per player in the same column order as the rest
+    of the table."""
+    ref_subset = [reference_holes.get(n, {"hole_number": n}) for n in hole_numbers]
+    yardage_total = sum(_hole_value(h, "yardage", "manual_yardage") or 0 for h in ref_subset)
+    par_total = sum(_hole_par(h) or 0 for h in ref_subset)
+
+    score_cells = [
+        html.Td(
+            html.Span(
+                _score_total_text([holes_by_player[p["player_id"]].get(n, {}) for n in hole_numbers]),
+                id={"type": total_id_type, "player": p["player_id"]},
+            )
+        )
+        for p in players
+    ]
+
     return html.Tr(
         className="t3g-scorecard-summary-row",
-        children=[
-            html.Td(label),
-            html.Td(yardage_total),
-            html.Td("-"),
-            html.Td(par_total),
-            html.Td(
-                html.Span(
-                    _score_total_text(holes_subset),
-                    id={"type": total_id_type, "player": player_id},
-                )
-            ),
-        ],
+        children=[html.Td(label), html.Td(yardage_total), html.Td("-"), html.Td(par_total), *score_cells],
     )
 
 
-def _player_scorecard_block(player, is_manual, is_owner_of_round):
-    """One participant's full scorecard table -- everyone gets one, but
-    only the round's owner ever sees editable par/yardage/SI inputs for a
-    manual round (those describe the course, not any one player's
-    performance, so there's exactly one authoritative source of truth
-    instead of every player entering their own copy)."""
-    player_id = player["player_id"]
-    holes = player["holes"]
-    front_nine = [h for h in holes if h["hole_number"] <= 9]
-    back_nine = [h for h in holes if h["hole_number"] >= 10]
-    can_edit_course_info = is_owner_of_round and player.get("is_owner")
+def _scorecard_table(players, owner_player, is_manual, is_owner_of_round):
+    """One shared scorecard table for the whole group, instead of a
+    separate full scorecard stacked per player -- Hole/Yards/S.I./Par are
+    common to everyone (sourced from the round owner's holes, since that's
+    the only place manual-round course info ever gets entered -- other
+    players' own rows never carry it), with one Score column per player
+    under a shared "Score" header so the group can compare a hole at a
+    glance instead of scrolling through separate cards."""
+    reference_player = owner_player or players[0]
+    reference_holes = {h["hole_number"]: h for h in reference_player["holes"]}
+    holes_by_player = {p["player_id"]: {h["hole_number"]: h for h in p["holes"]} for p in players}
+    can_edit_course_info = is_owner_of_round
 
-    table_rows = (
-        [_hole_row(player_id, h, is_manual, can_edit_course_info) for h in front_nine]
-        + [_summary_row(player_id, "OUT", front_nine, "live-round-out-total")]
-        + [_hole_row(player_id, h, is_manual, can_edit_course_info) for h in back_nine]
-        + [_summary_row(player_id, "IN", back_nine, "live-round-in-total")]
-        + [_summary_row(player_id, "TOTAL", holes, "live-round-total-total")]
+    header = html.Thead(
+        [
+            html.Tr(
+                [
+                    html.Th("Hole", rowSpan=2),
+                    html.Th("Yards", rowSpan=2),
+                    html.Th("S.I.", rowSpan=2),
+                    html.Th("Par", rowSpan=2),
+                    html.Th("Score", colSpan=len(players), className="t3g-scorecard-score-group"),
+                ]
+            ),
+            html.Tr(
+                [
+                    html.Th(
+                        _player_display_name(p) + (" (you)" if p.get("is_viewer") else ""),
+                        className="t3g-scorecard-player-col",
+                    )
+                    for p in players
+                ]
+            ),
+        ]
+    )
+
+    def _score_row(hole_number):
+        ref_hole = reference_holes.get(hole_number, {"hole_number": hole_number})
+
+        if is_manual and can_edit_course_info:
+            yardage_cell = html.Td(_manual_input(None, "yardage", ref_hole, 0, 1000))
+            si_cell = html.Td(_manual_input(None, "stroke_index", ref_hole, 1, 18))
+            par_cell = html.Td(_manual_input(None, "par", ref_hole, 3, 5))
+        else:
+            yardage_val = _hole_value(ref_hole, "yardage", "manual_yardage")
+            si_val = _hole_value(ref_hole, "stroke_index", "manual_stroke_index")
+            par_val = _hole_par(ref_hole)
+            yardage_cell = html.Td(yardage_val if yardage_val is not None else "-")
+            si_cell = html.Td(si_val if si_val is not None else "-")
+            par_cell = html.Td(par_val if par_val is not None else "-")
+
+        par = _hole_par(ref_hole)
+        score_cells = [
+            html.Td(
+                _score_button(
+                    p["player_id"],
+                    holes_by_player[p["player_id"]].get(hole_number, {"hole_number": hole_number}),
+                    par,
+                )
+            )
+            for p in players
+        ]
+
+        return html.Tr(
+            [html.Td(hole_number, className="t3g-hole-number"), yardage_cell, si_cell, par_cell, *score_cells]
+        )
+
+    front_nine_rows = [_score_row(n) for n in range(1, 10)]
+    back_nine_rows = [_score_row(n) for n in range(10, 19)]
+
+    body = html.Tbody(
+        front_nine_rows
+        + [_summary_row("OUT", range(1, 10), reference_holes, players, holes_by_player, "live-round-out-total")]
+        + back_nine_rows
+        + [_summary_row("IN", range(10, 19), reference_holes, players, holes_by_player, "live-round-in-total")]
+        + [_summary_row("TOTAL", range(1, 19), reference_holes, players, holes_by_player, "live-round-total-total")]
     )
 
     return html.Div(
         className="t3g-player-scorecard",
-        children=[
-            html.H4(
-                _player_display_name(player) + (" (you)" if player.get("is_viewer") else ""),
-                className="t3g-player-scorecard-name",
-            ),
-            html.Table(
-                className="t3g-scorecard-table",
-                children=[
-                    html.Thead(
-                        html.Tr([html.Th("Hole"), html.Th("Yards"), html.Th("S.I."), html.Th("Par"), html.Th("Score")])
-                    ),
-                    html.Tbody(table_rows),
-                ],
-            ),
-        ],
+        children=html.Table(className="t3g-scorecard-table t3g-scorecard-table--multi", children=[header, body]),
     )
 
 
@@ -313,12 +341,9 @@ def layout(**kwargs):
                             if is_manual
                             else None,
                             pending_note,
-                            html.Div(
-                                className="t3g-player-scorecards",
-                                children=[
-                                    _player_scorecard_block(p, is_manual, is_owner_of_round) for p in players
-                                ],
-                            ),
+                            _scorecard_table(players, owner_player, is_manual, is_owner_of_round)
+                            if players
+                            else None,
                             html.Div(id="live-round-error", className="text-danger mt-2"),
                         ],
                     ),
@@ -657,27 +682,30 @@ def save_score(n_clicks, active_hole, round_id, shots, putts, fairway_radio, par
 )
 def refresh_scorecard(players):
     # Fires on load too (no prevent_initial_call) so a resumed round shows
-    # correct labels/marks/totals immediately. Iterates players in the
-    # store's list order, then holes 1-18 within each player -- the exact
-    # same order the layout rendered the matching components in, which is
-    # what lets Dash pair these flat return lists back up to the right
-    # button/total for each (player, hole) despite the wildcard match.
+    # correct labels/marks/totals immediately. The merged table lays out
+    # DOM-order hole-major (one row per hole, one score button per player
+    # in it), so the label/class lists below have to be built the same
+    # way -- hole outer, player inner -- for Dash to pair this flat list
+    # back up to the right button for each (hole, player).
     players = players or []
 
-    labels, classes = [], []
-    out_totals, in_totals, total_totals = [], [], []
+    owner = next((p for p in players if p.get("is_owner")), None)
+    reference_holes = (owner or (players[0] if players else {})).get("holes") or {}
 
-    for player in players:
-        holes_by_number = player.get("holes") or {}
-        holes_in_order = []
-        for hole_number in range(1, 19):
-            hole = holes_by_number.get(str(hole_number), {})
-            holes_in_order.append(hole)
+    labels, classes = [], []
+    for hole_number in range(1, 19):
+        ref_hole = reference_holes.get(str(hole_number), {})
+        par = _hole_par(ref_hole)
+        for player in players:
+            hole = (player.get("holes") or {}).get(str(hole_number), {})
             strokes = hole.get("strokes")
-            par = _hole_par(hole)
             labels.append(str(strokes) if strokes is not None else "Enter Score")
             classes.append(_score_marking_class(strokes, par))
 
+    out_totals, in_totals, total_totals = [], [], []
+    for player in players:
+        holes_by_number = player.get("holes") or {}
+        holes_in_order = [holes_by_number.get(str(n), {}) for n in range(1, 19)]
         out_totals.append(_score_total_text(holes_in_order[:9]))
         in_totals.append(_score_total_text(holes_in_order[9:]))
         total_totals.append(_score_total_text(holes_in_order))

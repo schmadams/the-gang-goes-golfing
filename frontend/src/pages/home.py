@@ -224,16 +224,18 @@ def layout(**kwargs):
         rounds_resp = requests.get(f"{API_BASE_URL}/rounds/player/{player_id}")
     rounds_history = rounds_resp.json() if rounds_resp.status_code == 200 else []
 
-    # The live round (if any) is always the most useful thing to see, so
-    # it's pinned above pagination rather than counted as part of it --
-    # pagination only applies to completed rounds, which is what "flick
-    # through older ones" actually means.
+    # Live rounds no longer show in Rounds History at all -- they get
+    # their own panel up top instead (built below, alongside
+    # round_invites_section), the same treatment as a round invite,
+    # since "a round that's happening right now" is a different kind of
+    # thing from "a round that already happened".
     live_round = next((r for r in rounds_history if r.get("status") == "in_progress"), None)
     completed_rounds = [r for r in rounds_history if r.get("status") != "in_progress"]
 
+    # Only needed for the scorecard's avatar/name -- skip the call
+    # entirely when there's nothing (live or completed) to render one for.
+    player_info = {"initial": "Y", "label": "You"}
     if rounds_history:
-        # Only needed for the scorecard's avatar/name -- skip the call
-        # entirely when there's no history to render.
         with _timed(f"GET /players/{player_id}"):
             player_resp = requests.get(f"{API_BASE_URL}/players/{player_id}")
         player = player_resp.json() if player_resp.status_code == 200 else {}
@@ -241,31 +243,49 @@ def layout(**kwargs):
         player_initial = player_label[0].upper() if player_label else "Y"
         player_info = {"initial": player_initial, "label": player_label}
 
-        live_round_section = (
-            _round_scorecard_card(live_round, player_initial, player_label) if live_round else None
-        )
-
-        rounds_section = html.Div(
+    live_round_section = None
+    if live_round:
+        live_round_section = html.Div(
+            className="t3g-panel",
             children=[
-                live_round_section,
-                dcc.Store(id="home-rounds-store", data=completed_rounds),
-                dcc.Store(id="home-rounds-player-store", data=player_info),
-                dcc.Store(id="home-rounds-page", data=0),
-                html.Div(id="home-rounds-page-list", className="t3g-rounds-list"),
+                build_panel_navbar(
+                    "Live Round",
+                    action=dcc.Link(
+                        "Continue Round",
+                        href="/live-round",
+                        className="t3g-panel-action-button",
+                        style={"textDecoration": "none"},
+                    ),
+                ),
                 html.Div(
-                    className="t3g-rounds-pagination",
-                    children=[
-                        html.Button("‹ Newer", id="home-rounds-prev", n_clicks=0, className="t3g-pagination-button"),
-                        html.Span(id="home-rounds-page-label", className="t3g-pagination-label"),
-                        html.Button("Older ›", id="home-rounds-next", n_clicks=0, className="t3g-pagination-button"),
-                    ],
-                ) if completed_rounds else None,
+                    _round_scorecard_card(live_round, player_info["initial"], player_info["label"]),
+                    className="t3g-panel-body",
+                ),
             ],
         )
-    else:
-        rounds_section = html.P(
-            "No rounds recorded yet.", className="t3g-empty-state"
-        )
+
+    # The Stores and pagination controls always render, even with zero
+    # completed rounds -- change_rounds_page/render_rounds_page target
+    # these ids unconditionally, and Dash throws a runtime "nonexistent
+    # object... in an Output" error if they're ever left out of the DOM
+    # entirely rather than just having nothing to page through.
+    # render_rounds_page swaps in a "no rounds" placeholder itself.
+    rounds_section = html.Div(
+        children=[
+            dcc.Store(id="home-rounds-store", data=completed_rounds),
+            dcc.Store(id="home-rounds-player-store", data=player_info),
+            dcc.Store(id="home-rounds-page", data=0),
+            html.Div(id="home-rounds-page-list", className="t3g-rounds-list"),
+            html.Div(
+                className="t3g-rounds-pagination",
+                children=[
+                    html.Button("‹ Newer", id="home-rounds-prev", n_clicks=0, className="t3g-pagination-button"),
+                    html.Span(id="home-rounds-page-label", className="t3g-pagination-label"),
+                    html.Button("Older ›", id="home-rounds-next", n_clicks=0, className="t3g-pagination-button"),
+                ],
+            ),
+        ],
+    )
 
     round_invites_section = None
     if round_invites:
@@ -320,6 +340,7 @@ def layout(**kwargs):
         className="t3g-page",
         children=[
             dcc.Location(id="round-invite-refresh", refresh=True),
+            live_round_section,
             round_invites_section,
             html.Div(
                 className="t3g-panel-grid",
@@ -469,6 +490,25 @@ def layout(**kwargs):
                                         id="upload-round-manual-tee",
                                         placeholder="Tee name (e.g. White)",
                                         className="mb-2",
+                                    ),
+                                    dbc.Input(
+                                        id="upload-round-manual-rating",
+                                        placeholder="Course Rating (optional, e.g. 71.4)",
+                                        type="number",
+                                        className="mb-2",
+                                    ),
+                                    dbc.Input(
+                                        id="upload-round-manual-slope",
+                                        placeholder="Slope Rating (optional, e.g. 125)",
+                                        type="number",
+                                        className="mb-2",
+                                    ),
+                                    html.P(
+                                        "Course/Slope Rating are usually printed on the "
+                                        "scorecard next to the tee colour. They're optional, "
+                                        "but without them this round can't count toward "
+                                        "anyone's handicap.",
+                                        className="t3g-empty-state",
                                     ),
                                     html.P(
                                         "You'll enter par, length, and stroke index for each "
@@ -752,10 +792,15 @@ def toggle_continue_button(course_id, tee_id, is_manual, manual_club, manual_tee
     State("upload-round-manual-mode", "data"),
     State("upload-round-manual-club", "value"),
     State("upload-round-manual-tee", "value"),
+    State("upload-round-manual-rating", "value"),
+    State("upload-round-manual-slope", "value"),
     State("upload-round-friends", "value"),
     prevent_initial_call=True,
 )
-def handle_continue_round(n_clicks, course_id, tee_id, is_manual, manual_club, manual_tee, invited_player_ids):
+def handle_continue_round(
+    n_clicks, course_id, tee_id, is_manual, manual_club, manual_tee,
+    manual_rating, manual_slope, invited_player_ids,
+):
     player_id = session.get("player_id")
     invited_player_ids = invited_player_ids or []
 
@@ -779,6 +824,10 @@ def handle_continue_round(n_clicks, course_id, tee_id, is_manual, manual_club, m
             )
         payload["manual_club_name"] = manual_club
         payload["manual_tee_name"] = manual_tee
+        # Both optional -- rating/slope only matter for the WHS handicap
+        # calculation, not for playing or scoring the round itself.
+        payload["manual_course_rating"] = manual_rating
+        payload["manual_slope_rating"] = manual_slope
     else:
         if not course_id or not tee_id:
             return (
@@ -836,6 +885,10 @@ def render_rounds_page(page, completed_rounds, player_info):
     completed_rounds = completed_rounds or []
     player_info = player_info or {}
     page = page or 0
+
+    if not completed_rounds:
+        placeholder = html.P("No rounds to show yet.", className="t3g-empty-state")
+        return placeholder, True, True, ""
 
     total_pages = max(1, -(-len(completed_rounds) // _ROUNDS_PER_PAGE))  # ceil div
     start = page * _ROUNDS_PER_PAGE

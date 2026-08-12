@@ -13,6 +13,13 @@ class RoundStartRequest(BaseModel):
     is_manual: bool = False
     manual_club_name: Optional[str] = None
     manual_tee_name: Optional[str] = None
+    # Optional -- without these, a manual round can still be played and
+    # scored, but it can never contribute a WHS Score Differential (no
+    # slope/rating means no differential formula), so it just won't count
+    # toward the player's Handicap Index. Typically found printed on the
+    # scorecard next to the tee colour.
+    manual_course_rating: Optional[float] = None
+    manual_slope_rating: Optional[int] = None
     # Up to 3 confirmed friends invited into the round alongside you --
     # each gets a round_players row with status='invited' and has to
     # accept before their scorecard exists (see backend/services/rounds.py
