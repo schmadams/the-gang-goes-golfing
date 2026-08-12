@@ -197,7 +197,7 @@ def _player_scorecard_block(player, is_manual, is_owner_of_round):
     )
 
 
-def layout():
+def layout(**kwargs):
     player_id = session.get("player_id")
 
     if not session.get("logged_in") or not player_id:

@@ -55,7 +55,7 @@ def _build_figure(points, raw_field, avg_field, y_title, hover_suffix=""):
     return fig
 
 
-def layout():
+def layout(**kwargs):
     player_id = session.get("player_id")
 
     if not session.get("logged_in") or not player_id:

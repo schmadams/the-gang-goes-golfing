@@ -235,7 +235,7 @@ def _round_scorecard_card(round_data, player_initial, player_label):
     )
 
 
-def layout():
+def layout(**kwargs):
     player_id = session.get("player_id")
 
     if not session.get("logged_in") or not player_id:

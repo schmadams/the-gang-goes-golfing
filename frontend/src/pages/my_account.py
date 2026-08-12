@@ -42,7 +42,7 @@ def _course_label(course):
     return f"{label} ({location})" if location else label
 
 
-def layout():
+def layout(**kwargs):
     player_id = session.get("player_id")
 
     if not session.get("logged_in") or not player_id:
