@@ -1,47 +1,48 @@
+# target path: backend/routers/club_players.py (new file -- replaces backend/routers/group_players.py, which should be deleted)
 from fastapi import APIRouter, HTTPException, status
 
 from backend.models.club_player import (
-    GroupPlayerCreate,
-    GroupPlayerDelete,
-    GroupPlayerResponse,
+    ClubPlayerCreate,
+    ClubPlayerDelete,
+    ClubPlayerResponse,
 )
 from backend.services.club_players import (
-    add_player_to_group,
-    list_groups_for_player,
-    list_players_in_group,
-    remove_player_from_group,
+    add_player_to_club,
+    list_clubs_for_player,
+    list_players_in_club,
+    remove_player_from_club,
 )
 
 
 router = APIRouter(
-    prefix="/group-players",
-    tags=["group players"],
+    prefix="/club-players",
+    tags=["club players"],
 )
 
 
-@router.post("/", response_model=GroupPlayerResponse, status_code=status.HTTP_201_CREATED)
-def add_player_to_group_route(group_player: GroupPlayerCreate):
-    return add_player_to_group(group_player)
+@router.post("/", response_model=ClubPlayerResponse, status_code=status.HTTP_201_CREATED)
+def add_player_to_club_route(club_player: ClubPlayerCreate):
+    return add_player_to_club(club_player)
 
 
-@router.get("/group/{group_id}")
-def list_players_in_group_route(group_id: str):
-    return list_players_in_group(group_id)
+@router.get("/club/{club_id}")
+def list_players_in_club_route(club_id: str):
+    return list_players_in_club(club_id)
 
 
 @router.get("/player/{player_id}")
-def list_groups_for_player_route(player_id: str):
-    return list_groups_for_player(player_id)
+def list_clubs_for_player_route(player_id: str):
+    return list_clubs_for_player(player_id)
 
 
-@router.delete("/", response_model=GroupPlayerResponse)
-def remove_player_from_group_route(group_player: GroupPlayerDelete):
-    removed_group_player = remove_player_from_group(group_player)
+@router.delete("/", response_model=ClubPlayerResponse)
+def remove_player_from_club_route(club_player: ClubPlayerDelete):
+    removed_club_player = remove_player_from_club(club_player)
 
-    if not removed_group_player:
+    if not removed_club_player:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Player is not in that group",
+            detail="Player is not in that club",
         )
 
-    return removed_group_player
+    return removed_club_player

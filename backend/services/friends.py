@@ -27,6 +27,30 @@ class NotRequestRecipientError(Exception):
     sent to them."""
 
 
+class NotRequestSenderError(Exception):
+    """Raised if a player tries to cancel a request they didn't send --
+    the recipient already has Accept/Decline for that."""
+
+
+class PlayerNotFoundError(Exception):
+    """Raised when recipient_id doesn't match any player. Worth
+    distinguishing from a generic DB error now that requests are sent by
+    typing in a Player ID directly rather than picking from a list --
+    a typo'd ID should say so clearly instead of failing some other way."""
+
+
+def _get_player(player_id: str) -> dict | None:
+    response = (
+        supabase
+        .table("players")
+        .select("id, first_name, surname, nickname")
+        .eq("id", player_id)
+        .maybe_single()
+        .execute()
+    )
+    return response.data if response is not None else None
+
+
 def _existing_request(player_a: str, player_b: str) -> dict | None:
     response = (
         supabase
@@ -46,6 +70,10 @@ def send_friend_request(requester_id: str, recipient_id: str) -> dict:
     if requester_id == recipient_id:
         raise SelfFriendRequestError("You can't send a friend request to yourself.")
 
+    recipient = _get_player(recipient_id)
+    if not recipient:
+        raise PlayerNotFoundError("No player found with that ID.")
+
     if _existing_request(requester_id, recipient_id):
         raise AlreadyFriendsOrPendingError(
             "You're already friends, or there's already a pending request between you."
@@ -57,7 +85,11 @@ def send_friend_request(requester_id: str, recipient_id: str) -> dict:
         .insert({"requester_id": requester_id, "recipient_id": recipient_id})
         .execute()
     )
-    return response.data[0]
+    # Attaches the recipient's name to the response -- requests are now
+    # sent by typing a Player ID rather than picking a name off a list, so
+    # without this the confirmation modal that follows would have no name
+    # to show, only the ID that was just typed in.
+    return {**response.data[0], "recipient": recipient}
 
 
 def list_pending_requests(player_id: str) -> dict:
@@ -127,3 +159,22 @@ def respond_to_friend_request(request_id: str, player_id: str, accept: bool) -> 
         .execute()
     )
     return update_response.data[0] if update_response.data else None
+
+
+def cancel_friend_request(request_id: str, player_id: str) -> bool:
+    """Deletes a still-pending outgoing request -- only the player who
+    sent it can cancel it. Returns False (rather than raising) if the
+    request is already gone or has already been responded to, since
+    either way there's nothing left to cancel."""
+    response = supabase.table("friend_requests").select("*").eq("id", request_id).maybe_single().execute()
+    row = response.data if response is not None else None
+
+    if not row:
+        return False
+    if row["requester_id"] != player_id:
+        raise NotRequestSenderError("Only the player who sent this request can cancel it.")
+    if row["status"] != "pending":
+        return False
+
+    delete_response = supabase.table("friend_requests").delete().eq("id", request_id).execute()
+    return bool(delete_response.data)

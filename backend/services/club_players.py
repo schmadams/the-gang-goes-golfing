@@ -1,48 +1,61 @@
-# target path: backend/routers/club_players.py (new file -- replaces backend/routers/group_players.py, which should be deleted)
-from fastapi import APIRouter, HTTPException, status
-
-from backend.models.club_player import (
-    ClubPlayerCreate,
-    ClubPlayerDelete,
-    ClubPlayerResponse,
-)
-from backend.services.club_players import (
-    add_player_to_club,
-    list_clubs_for_player,
-    list_players_in_club,
-    remove_player_from_club,
-)
+# target path: backend/services/club_players.py (new file -- replaces backend/services/group_players.py, which should be deleted)
+from backend.database import supabase
+from backend.models.club_player import ClubPlayerCreate, ClubPlayerDelete
 
 
-router = APIRouter(
-    prefix="/club-players",
-    tags=["club players"],
-)
+def add_player_to_club(club_player: ClubPlayerCreate) -> dict:
+    payload = {
+        "club_id": str(club_player.club_id),
+        "player_id": str(club_player.player_id),
+    }
+
+    response = (
+        supabase
+        .table("club_players")
+        .insert(payload)
+        .execute()
+    )
+
+    return response.data[0]
 
 
-@router.post("/", response_model=ClubPlayerResponse, status_code=status.HTTP_201_CREATED)
-def add_player_to_club_route(club_player: ClubPlayerCreate):
-    return add_player_to_club(club_player)
+def list_players_in_club(club_id: str) -> list[dict]:
+    response = (
+        supabase
+        .table("club_players")
+        .select("club_id, player_id, created_at, players(*)")
+        .eq("club_id", club_id)
+        .order("created_at")
+        .execute()
+    )
+
+    return response.data
 
 
-@router.get("/club/{club_id}")
-def list_players_in_club_route(club_id: str):
-    return list_players_in_club(club_id)
+def list_clubs_for_player(player_id: str) -> list[dict]:
+    response = (
+        supabase
+        .table("club_players")
+        .select("club_id, player_id, created_at, clubs(*)")
+        .eq("player_id", player_id)
+        .order("created_at")
+        .execute()
+    )
+
+    return response.data
 
 
-@router.get("/player/{player_id}")
-def list_clubs_for_player_route(player_id: str):
-    return list_clubs_for_player(player_id)
+def remove_player_from_club(club_player: ClubPlayerDelete) -> dict | None:
+    response = (
+        supabase
+        .table("club_players")
+        .delete()
+        .eq("club_id", str(club_player.club_id))
+        .eq("player_id", str(club_player.player_id))
+        .execute()
+    )
 
+    if not response.data:
+        return None
 
-@router.delete("/", response_model=ClubPlayerResponse)
-def remove_player_from_club_route(club_player: ClubPlayerDelete):
-    removed_club_player = remove_player_from_club(club_player)
-
-    if not removed_club_player:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Player is not in that club",
-        )
-
-    return removed_club_player
+    return response.data[0]

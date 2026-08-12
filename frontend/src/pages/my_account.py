@@ -102,6 +102,37 @@ def layout():
             html.Div(
                 className="t3g-panel",
                 children=[
+                    build_panel_navbar("Your Player ID"),
+                    html.Div(
+                        className="t3g-panel-body t3g-player-id-panel-body",
+                        children=[
+                            html.P(
+                                "Share this with friends so they can send you a friend request.",
+                                className="t3g-empty-state mb-2",
+                            ),
+                            html.Div(
+                                className="t3g-player-id-row",
+                                children=[
+                                    html.Code(
+                                        player_id,
+                                        id="account-player-id-value",
+                                        className="t3g-player-id-value",
+                                    ),
+                                    html.Button(
+                                        "Copy",
+                                        id="account-player-id-copy",
+                                        className="t3g-panel-action-button t3g-panel-action-button--secondary",
+                                        n_clicks=0,
+                                    ),
+                                ],
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+            html.Div(
+                className="t3g-panel",
+                children=[
                     build_panel_navbar("Profile Picture"),
                     html.Div(
                         className="t3g-panel-body t3g-photo-panel-body",
@@ -255,6 +286,23 @@ def layout():
             ),
         ],
     )
+
+
+dash.clientside_callback(
+    """
+    function(n_clicks, player_id) {
+        if (!n_clicks) {
+            return window.dash_clientside.no_update;
+        }
+        navigator.clipboard.writeText(player_id);
+        return "Copied!";
+    }
+    """,
+    Output("account-player-id-copy", "children"),
+    Input("account-player-id-copy", "n_clicks"),
+    State("account-player-id-value", "children"),
+    prevent_initial_call=True,
+)
 
 
 @callback(

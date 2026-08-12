@@ -1,5 +1,8 @@
-# target path: frontend/src/pages/friends.py (new file)
+# target path: frontend/src/pages/friends.py (full replacement)
+import time
+
 import dash
+import dash_bootstrap_components as dbc
 import requests
 from dash import ALL, Input, Output, State, callback, dcc, html
 from flask import session
@@ -10,11 +13,21 @@ from layouts.panel_navbar import build_panel_navbar
 dash.register_page(__name__, path="/friends", name="Friends")
 
 
+def _refresh_href():
+    # dcc.Location only actually reloads the browser when the value it's
+    # given differs from what's already loaded -- outputting the same
+    # "/friends" pathname while already sitting on /friends is a no-op, so
+    # nothing visibly happens even though refresh=True is set. Appending a
+    # cache-busting query string guarantees the value always changes,
+    # which is what actually makes the refresh fire every time.
+    return f"/friends?_r={time.time()}"
+
+
 def _player_label(player):
     return player.get("nickname") or f"{player.get('first_name', '')} {player.get('surname', '')}".strip()
 
 
-def _request_row(request_row, other_player, action_children):
+def _request_row(other_player, action_children):
     return html.Div(
         className="t3g-friend-request-row",
         children=[
@@ -31,9 +44,6 @@ def layout():
         session.clear()
         return dcc.Location(pathname="/signin", id="friends-redirect-signin", refresh=True)
 
-    players_resp = requests.get(f"{API_BASE_URL}/players/")
-    all_players = players_resp.json() if players_resp.status_code == 200 else []
-
     requests_resp = requests.get(f"{API_BASE_URL}/friends/requests/{player_id}")
     pending = requests_resp.json() if requests_resp.status_code == 200 else {"incoming": [], "outgoing": []}
     incoming = pending.get("incoming", [])
@@ -42,26 +52,12 @@ def layout():
     friends_resp = requests.get(f"{API_BASE_URL}/friends/player/{player_id}")
     friends = friends_resp.json() if friends_resp.status_code == 200 else []
 
-    # Nobody you're already friends with, already have a pending request
-    # with (either direction), or yourself -- sending one of those would
-    # just bounce off the backend's duplicate check anyway.
-    excluded_ids = {player_id}
-    excluded_ids.update(f["player_id"] for f in friends)
-    excluded_ids.update(r["requester_id"] for r in incoming)
-    excluded_ids.update(r["recipient_id"] for r in outgoing)
-
-    friend_options = [
-        {"label": _player_label(p), "value": p["id"]}
-        for p in all_players
-        if p["id"] not in excluded_ids
-    ]
-
     if incoming:
-        requests_section = html.Div(
+        received_section = html.Div(
             className="t3g-friend-request-list",
             children=[
                 _request_row(
-                    r, r["requester"],
+                    r["requester"],
                     [
                         html.Button(
                             "Accept",
@@ -81,19 +77,26 @@ def layout():
             ],
         )
     else:
-        requests_section = html.P("No pending friend requests.", className="t3g-empty-state")
+        received_section = html.P("No requests received.", className="t3g-empty-state")
 
-    outgoing_section = (
-        html.Div(
+    if outgoing:
+        sent_section = html.Div(
             className="t3g-friend-request-list",
             children=[
-                _request_row(r, r["recipient"], html.Span("Pending", className="t3g-friend-request-pending"))
+                _request_row(
+                    r["recipient"],
+                    html.Button(
+                        "Cancel",
+                        id={"type": "friend-request-cancel", "request_id": r["id"]},
+                        className="t3g-panel-action-button t3g-panel-action-button--secondary",
+                        n_clicks=0,
+                    ),
+                )
                 for r in outgoing
             ],
         )
-        if outgoing
-        else None
-    )
+    else:
+        sent_section = html.P("No requests sent.", className="t3g-empty-state")
 
     if friends:
         friends_section = html.Div(
@@ -114,13 +117,15 @@ def layout():
                     html.Div(
                         className="t3g-panel-body",
                         children=[
-                            dcc.Dropdown(
-                                id="friend-request-player",
-                                placeholder="Search for a player",
-                                options=friend_options,
-                                searchable=True,
-                                clearable=True,
-                                className="mb-2 t3g-course-dropdown",
+                            html.P(
+                                "Ask your friend for their Player ID -- it's on their My Account page.",
+                                className="t3g-empty-state mb-2",
+                            ),
+                            dbc.Input(
+                                id="friend-request-player-id",
+                                placeholder="Player ID",
+                                type="text",
+                                className="mb-2",
                             ),
                             html.Div(id="friend-request-error", className="text-danger mt-2"),
                             html.Button(
@@ -137,7 +142,15 @@ def layout():
                 className="t3g-panel",
                 children=[
                     build_panel_navbar("Friend Requests"),
-                    html.Div(className="t3g-panel-body", children=[requests_section, outgoing_section]),
+                    html.Div(
+                        className="t3g-panel-body",
+                        children=[
+                            html.H5("Received", className="t3g-friend-subheading"),
+                            received_section,
+                            html.H5("Sent", className="t3g-friend-subheading t3g-friend-subheading--spaced"),
+                            sent_section,
+                        ],
+                    ),
                 ],
             ),
             html.Div(
@@ -147,39 +160,78 @@ def layout():
                     html.Div(friends_section, className="t3g-panel-body"),
                 ],
             ),
+            dbc.Modal(
+                id="friend-request-sent-modal",
+                is_open=False,
+                children=[
+                    dbc.ModalHeader(dbc.ModalTitle("Friend Request Sent")),
+                    dbc.ModalBody(id="friend-request-sent-modal-body"),
+                    dbc.ModalFooter(
+                        dbc.Button("OK", id="friend-request-sent-ok", color="primary"),
+                    ),
+                ],
+            ),
         ],
     )
 
 
 @callback(
     Output("friend-request-error", "children"),
-    Output("friends-refresh", "pathname"),
+    Output("friend-request-sent-modal", "is_open"),
+    Output("friend-request-sent-modal-body", "children"),
     Input("friend-request-send", "n_clicks"),
-    State("friend-request-player", "value"),
+    State("friend-request-player-id", "value"),
     prevent_initial_call=True,
 )
 def send_friend_request(n_clicks, recipient_id):
-    if not recipient_id:
-        return "Pick a player first.", dash.no_update
+    if not recipient_id or not recipient_id.strip():
+        return "Enter a player ID.", False, dash.no_update
 
     player_id = session.get("player_id")
     response = requests.post(
         f"{API_BASE_URL}/friends/requests",
-        json={"requester_id": player_id, "recipient_id": recipient_id},
+        json={"requester_id": player_id, "recipient_id": recipient_id.strip()},
     )
 
     if response.status_code == 201:
-        return "", "/friends"
+        # Confirming who it went to (rather than just "Request sent") is
+        # what actually makes this feel like it worked, especially now
+        # that the input was a raw ID rather than a name picked off a
+        # list -- the backend attaches the recipient's name to the
+        # response for exactly this.
+        recipient = response.json().get("recipient") or {}
+        recipient_label = _player_label(recipient) or "that player"
+        return "", True, f"Your friend request to {recipient_label} has been sent."
 
     try:
-        detail = response.json().get("detail", "Couldn't send that friend request.")
+        payload = response.json()
+        detail = payload.get("detail", "Couldn't send that friend request.")
+        if not isinstance(detail, str):
+            # FastAPI's own validation errors (e.g. a malformed/non-UUID
+            # ID) put a list of error objects in "detail", not a string --
+            # rendering that directly as Dash children would error.
+            detail = "That doesn't look like a valid player ID."
     except ValueError:
         detail = "Couldn't send that friend request."
-    return detail, dash.no_update
+    return detail, False, dash.no_update
 
 
 @callback(
-    Output("friends-refresh", "pathname", allow_duplicate=True),
+    Output("friend-request-sent-modal", "is_open", allow_duplicate=True),
+    Output("friends-refresh", "href"),
+    Input("friend-request-sent-ok", "n_clicks"),
+    prevent_initial_call=True,
+)
+def close_friend_request_sent_modal(n_clicks):
+    # The page only actually refreshes once the person has acknowledged
+    # the confirmation -- refreshing immediately on send (the old
+    # behavior) swapped the whole page out right as the button was
+    # clicked, which is exactly why it wasn't clear anything had happened.
+    return False, _refresh_href()
+
+
+@callback(
+    Output("friends-refresh", "href", allow_duplicate=True),
     Input({"type": "friend-request-accept", "request_id": ALL}, "n_clicks"),
     prevent_initial_call=True,
 )
@@ -193,11 +245,11 @@ def accept_friend_request(n_clicks_list):
         f"{API_BASE_URL}/friends/requests/{triggered_id['request_id']}/accept",
         params={"player_id": player_id},
     )
-    return "/friends"
+    return _refresh_href()
 
 
 @callback(
-    Output("friends-refresh", "pathname", allow_duplicate=True),
+    Output("friends-refresh", "href", allow_duplicate=True),
     Input({"type": "friend-request-decline", "request_id": ALL}, "n_clicks"),
     prevent_initial_call=True,
 )
@@ -211,4 +263,22 @@ def decline_friend_request(n_clicks_list):
         f"{API_BASE_URL}/friends/requests/{triggered_id['request_id']}/decline",
         params={"player_id": player_id},
     )
-    return "/friends"
+    return _refresh_href()
+
+
+@callback(
+    Output("friends-refresh", "href", allow_duplicate=True),
+    Input({"type": "friend-request-cancel", "request_id": ALL}, "n_clicks"),
+    prevent_initial_call=True,
+)
+def cancel_friend_request(n_clicks_list):
+    triggered_id = dash.ctx.triggered_id
+    if not triggered_id or not any(n_clicks_list):
+        return dash.no_update
+
+    player_id = session.get("player_id")
+    requests.delete(
+        f"{API_BASE_URL}/friends/requests/{triggered_id['request_id']}",
+        params={"player_id": player_id},
+    )
+    return _refresh_href()

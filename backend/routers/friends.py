@@ -5,7 +5,10 @@ from backend.models.friend import FriendRequestCreate
 from backend.services.friends import (
     AlreadyFriendsOrPendingError,
     NotRequestRecipientError,
+    NotRequestSenderError,
+    PlayerNotFoundError,
     SelfFriendRequestError,
+    cancel_friend_request,
     list_friends,
     list_pending_requests,
     respond_to_friend_request,
@@ -23,6 +26,18 @@ def send_friend_request_route(payload: FriendRequestCreate):
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
     except AlreadyFriendsOrPendingError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    except PlayerNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+@router.delete("/requests/{request_id}", status_code=status.HTTP_204_NO_CONTENT)
+def cancel_friend_request_route(request_id: str, player_id: str):
+    try:
+        cancelled = cancel_friend_request(request_id, player_id)
+    except NotRequestSenderError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
+    if not cancelled:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Friend request not found")
 
 
 @router.get("/requests/{player_id}")

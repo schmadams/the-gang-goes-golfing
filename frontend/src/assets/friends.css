@@ -33,3 +33,16 @@
     text-transform: uppercase;
     letter-spacing: 0.03em;
 }
+
+.t3g-friend-subheading {
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    font-size: 0.75rem;
+    font-weight: 700;
+    margin-bottom: 0.75rem;
+}
+
+.t3g-friend-subheading--spaced {
+    margin-top: 1.5rem;
+}
