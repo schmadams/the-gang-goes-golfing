@@ -37,7 +37,19 @@ def _request_row(other_player, action_children):
     )
 
 
-def layout():
+def _friend_row(friend):
+    return _request_row(
+        friend,
+        html.Button(
+            "Remove",
+            id={"type": "friend-remove", "friend_id": friend["player_id"]},
+            className="t3g-panel-action-button t3g-panel-action-button--secondary",
+            n_clicks=0,
+        ),
+    )
+
+
+def layout(**kwargs):
     player_id = session.get("player_id")
 
     if not session.get("logged_in") or not player_id:
@@ -100,8 +112,8 @@ def layout():
 
     if friends:
         friends_section = html.Div(
-            className="t3g-clubs-list",
-            children=[html.Div(_player_label(f), className="t3g-club-item") for f in friends],
+            className="t3g-friend-request-list",
+            children=[_friend_row(f) for f in friends],
         )
     else:
         friends_section = html.P("You haven't added any friends yet.", className="t3g-empty-state")
@@ -279,6 +291,24 @@ def cancel_friend_request(n_clicks_list):
     player_id = session.get("player_id")
     requests.delete(
         f"{API_BASE_URL}/friends/requests/{triggered_id['request_id']}",
+        params={"player_id": player_id},
+    )
+    return _refresh_href()
+
+
+@callback(
+    Output("friends-refresh", "href", allow_duplicate=True),
+    Input({"type": "friend-remove", "friend_id": ALL}, "n_clicks"),
+    prevent_initial_call=True,
+)
+def remove_friend(n_clicks_list):
+    triggered_id = dash.ctx.triggered_id
+    if not triggered_id or not any(n_clicks_list):
+        return dash.no_update
+
+    player_id = session.get("player_id")
+    requests.delete(
+        f"{API_BASE_URL}/friends/{triggered_id['friend_id']}",
         params={"player_id": player_id},
     )
     return _refresh_href()

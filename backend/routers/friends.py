@@ -11,6 +11,7 @@ from backend.services.friends import (
     cancel_friend_request,
     list_friends,
     list_pending_requests,
+    remove_friend,
     respond_to_friend_request,
     send_friend_request,
 )
@@ -70,3 +71,10 @@ def decline_friend_request_route(request_id: str, player_id: str):
 @router.get("/player/{player_id}")
 def list_friends_route(player_id: str):
     return list_friends(player_id)
+
+
+@router.delete("/{friend_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_friend_route(friend_id: str, player_id: str):
+    removed = remove_friend(player_id, friend_id)
+    if not removed:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Friendship not found")

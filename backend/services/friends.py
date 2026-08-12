@@ -138,6 +138,33 @@ def list_friends(player_id: str) -> list[dict]:
     return friends
 
 
+def remove_friend(player_id: str, friend_id: str) -> bool:
+    """Removes a confirmed friendship in either direction by deleting the
+    underlying accepted friend_requests row. Returns False if these two
+    players aren't currently friends. Deleting (rather than e.g. setting a
+    'removed' status, which the DB check constraint doesn't even allow)
+    mirrors cancel_friend_request -- it also means either player is free
+    to send a fresh request later without a stale row blocking it, since
+    _existing_request only guards against pending/accepted rows."""
+    response = (
+        supabase
+        .table("friend_requests")
+        .select("*")
+        .or_(
+            f"and(requester_id.eq.{player_id},recipient_id.eq.{friend_id}),"
+            f"and(requester_id.eq.{friend_id},recipient_id.eq.{player_id})"
+        )
+        .eq("status", "accepted")
+        .execute()
+    )
+    rows = response.data or []
+    if not rows:
+        return False
+
+    delete_response = supabase.table("friend_requests").delete().eq("id", rows[0]["id"]).execute()
+    return bool(delete_response.data)
+
+
 def respond_to_friend_request(request_id: str, player_id: str, accept: bool) -> dict | None:
     """Only the recipient can accept/decline -- the requester waits."""
     response = supabase.table("friend_requests").select("*").eq("id", request_id).maybe_single().execute()
