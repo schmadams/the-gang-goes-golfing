@@ -1,0 +1,22 @@
+/* target path: frontend/src/assets/club.css (new file) */
+
+.t3g-club-directory-table {
+    width: 100%;
+    margin: 0;
+}
+
+.t3g-club-directory-table th {
+    text-align: left;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    font-size: 0.75rem;
+    font-weight: 700;
+    padding: 0.5rem 0.75rem;
+    border-bottom: 2px solid #e2e4ea;
+}
+
+.t3g-club-directory-table td {
+    padding: 0.5rem 0.75rem;
+    color: #1e2a47;
+}

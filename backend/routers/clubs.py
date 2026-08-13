@@ -6,6 +6,7 @@ from backend.services.clubs import (
     DuplicateClubError,
     create_club,
     delete_club,
+    get_club_by_slug,
     list_clubs,
 )
 
@@ -19,6 +20,19 @@ router = APIRouter(
 @router.get("/", response_model=list[ClubResponse])
 def list_clubs_route():
     return list_clubs()
+
+
+@router.get("/slug/{slug}", response_model=ClubResponse)
+def get_club_by_slug_route(slug: str):
+    club = get_club_by_slug(slug)
+
+    if not club:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Club not found",
+        )
+
+    return club
 
 
 @router.post("/", response_model=ClubResponse, status_code=status.HTTP_201_CREATED)

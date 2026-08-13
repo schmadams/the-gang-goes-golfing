@@ -1,6 +1,7 @@
 # target path: backend/services/handicaps.py (full replacement)
 from backend.database import supabase
 from backend.models.handicap import HandicapCreate
+from backend.services.whs import get_player_handicap_breakdown
 
 
 def add_player_handicap(handicap: HandicapCreate) -> dict:
@@ -93,3 +94,11 @@ def list_latest_handicaps_for_club(club_id: str) -> list[dict]:
         )
 
     return results
+
+
+def get_handicap_breakdown(player_id: str) -> dict:
+    """Thin pass-through to the WHS engine -- kept here (rather than
+    having routers/handicaps.py import backend.services.whs directly) so
+    every other handicap read in the app goes through this one service
+    module, consistent with the rest of this file."""
+    return get_player_handicap_breakdown(player_id)

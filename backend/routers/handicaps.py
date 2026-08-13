@@ -5,6 +5,7 @@ from backend.models.handicap import HandicapCreate, HandicapResponse
 from backend.services.handicaps import (
     add_player_handicap,
     get_current_player_handicap,
+    get_handicap_breakdown,
     list_latest_handicaps_for_club,
     list_player_handicaps,
 )
@@ -42,3 +43,12 @@ def get_current_player_handicap_route(player_id: str):
 @router.get("/club/{club_id}/latest")
 def list_latest_handicaps_for_club_route(club_id: str):
     return list_latest_handicaps_for_club(club_id)
+
+
+@router.get("/player/{player_id}/breakdown")
+def get_handicap_breakdown_route(player_id: str):
+    """Full scoring-record breakdown behind the current Handicap Index --
+    every round in the most-recent-20 window, tagged with whether it's
+    one of the "lowest N" currently being averaged. Powers the home
+    page's "Contributing Rounds" view."""
+    return get_handicap_breakdown(player_id)

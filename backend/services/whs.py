@@ -86,13 +86,18 @@ class HoleInput:
 @dataclass
 class RoundInput:
     """One completed 18-hole round's worth of data, in the shape the WHS
-    engine needs. Gathering this from the DB is recalculate_and_store_handicap's
-    job, not this module's -- everything above this point is pure and has
-    no idea Supabase exists."""
+    engine needs. Gathering this from the DB is _gather_round_inputs's
+    job, not this module's core logic -- everything below this point up
+    to the "DB orchestration" section is pure and has no idea Supabase
+    exists. round_id is optional and unused by the calculation itself --
+    it's only carried through so the breakdown functions below can tell
+    the frontend which actual round each contributing differential came
+    from."""
     played_on: date
     course_rating: float
     slope_rating: int
     holes: list[HoleInput]
+    round_id: str | None = None
 
 
 def _strokes_received(stroke_index: int, course_handicap_value: int) -> int:
@@ -155,14 +160,14 @@ def score_differential(round_input: RoundInput, prior_handicap_index: float | No
     return round(raw, 1)
 
 
-def _handicap_index_from_scoring_record(scoring_record: list[float]) -> float | None:
+def _handicap_index_from_scoring_record(differentials: list[float]) -> float | None:
     """
-    Rule 5.2. `scoring_record` is a player's most recent (already
-    ESR-adjusted) differentials, capped by the caller at the most recent
-    20. Returns None if there aren't at least 3 yet -- WHS doesn't
+    Rule 5.2. `differentials` is a player's most recent (already
+    ESR-adjusted) Score Differentials, capped by the caller at the most
+    recent 20. Returns None if there aren't at least 3 yet -- WHS doesn't
     establish a Handicap Index before that.
     """
-    count = len(scoring_record)
+    count = len(differentials)
     if count < MIN_SCORES_FOR_INDEX:
         return None
 
@@ -171,40 +176,57 @@ def _handicap_index_from_scoring_record(scoring_record: list[float]) -> float | 
     else:
         num_to_average, adjustment = _FEWER_THAN_20_TABLE[count]
 
-    lowest = sorted(scoring_record)[:num_to_average]
+    lowest = sorted(differentials)[:num_to_average]
     index = sum(lowest) / len(lowest) + adjustment
     return round(min(index, MAX_HANDICAP_INDEX), 1)
 
 
-def calculate_handicap_index(rounds_chronological: list[RoundInput]) -> float | None:
-    """
-    Runs the full WHS algorithm over a player's entire completed-round
-    history, oldest to newest, and returns their current Handicap Index --
-    None if they don't have at least 3 qualifying scores yet.
+def _num_counting(scoring_record_size: int) -> int:
+    """How many of the current scoring record's differentials are
+    actually being averaged into the Handicap Index right now -- the
+    "lowest N" from the Rule 5.2a table below 20 scores, or the lowest 8
+    of the most recent 20 once established. 0 below 3 scores, matching
+    _handicap_index_from_scoring_record's own minimum."""
+    if scoring_record_size >= LOW_HI_SCORES_THRESHOLD:
+        return 8
+    return _FEWER_THAN_20_TABLE.get(scoring_record_size, (0, 0.0))[0]
 
-    This has to be a step-by-step simulation rather than one pass over the
-    final 20 differentials, because two rules depend on state *at the time
-    each round was played*, not on the final scoring record:
+
+def _simulate(rounds_chronological: list[RoundInput]) -> tuple[float | None, list[dict]]:
+    """
+    The actual step-by-step WHS algorithm, oldest round to newest. Shared
+    by calculate_handicap_index (which only needs the final number) and
+    get_handicap_breakdown (which also needs to know which specific
+    rounds are in the current scoring record). Returns
+    (final_handicap_index, final_scoring_record) -- each scoring_record
+    entry is a dict with round_id/played_on/gross_score/
+    adjusted_gross_score/slope_rating/course_rating/differential.
+
+    This has to be a simulation rather than one pass over the final 20
+    differentials, because two rules depend on state *at the time each
+    round was played*, not on the final scoring record:
 
       - Net Double Bogey (via adjusted_gross_score) needs the Handicap
         Index that was in effect *before* that round, not the final one.
       - Exceptional Score Reduction (Rule 5.9) compares each round's
         differential to the Handicap Index in effect when it was played,
         and -- when triggered -- retroactively adjusts every differential
-        that was in the most-recent-20 scoring record *at that time*.
+        currently in the scoring record.
 
     Soft cap / hard cap (Rule 5.8) apply on top of the result once a Low
-    Handicap Index exists -- the lowest *established* Handicap Index (i.e.
-    one calculated from 20+ scores) in the preceding 12 months.
+    Handicap Index exists -- the lowest *established* Handicap Index (one
+    calculated from 20+ scores) in the preceding 12 months.
     """
-    scoring_record: list[float] = []  # up to 20 ESR-adjusted differentials, oldest first
+    scoring_record: list[dict] = []  # up to 20 entries, oldest first
     handicap_index: float | None = None
     # (date, index) pairs -- only appended once the scoring record has
     # reached 20, since a Low HI "is not established" before that.
     established_index_history: list[tuple[date, float]] = []
 
     for round_input in rounds_chronological:
-        raw_diff = score_differential(round_input, handicap_index)
+        ags = adjusted_gross_score(round_input, handicap_index)
+        gross = sum(h.strokes for h in round_input.holes)
+        raw_diff = round((113 / round_input.slope_rating) * (ags - round_input.course_rating), 1)
 
         # Exceptional Score Reduction -- compares the new round to the
         # Handicap Index in effect *before* it's added, and retroactively
@@ -212,15 +234,25 @@ def calculate_handicap_index(rounds_chronological: list[RoundInput]) -> float | 
         if handicap_index is not None:
             better_by = handicap_index - raw_diff
             if better_by >= 10.0:
-                scoring_record = [d - 2.0 for d in scoring_record]
+                for entry in scoring_record:
+                    entry["differential"] = round(entry["differential"] - 2.0, 1)
             elif better_by >= 7.0:
-                scoring_record = [d - 1.0 for d in scoring_record]
+                for entry in scoring_record:
+                    entry["differential"] = round(entry["differential"] - 1.0, 1)
 
-        scoring_record.append(raw_diff)
+        scoring_record.append({
+            "round_id": round_input.round_id,
+            "played_on": round_input.played_on,
+            "gross_score": gross,
+            "adjusted_gross_score": ags,
+            "slope_rating": round_input.slope_rating,
+            "course_rating": round_input.course_rating,
+            "differential": raw_diff,
+        })
         if len(scoring_record) > LOW_HI_SCORES_THRESHOLD:
             scoring_record = scoring_record[-LOW_HI_SCORES_THRESHOLD:]
 
-        new_index = _handicap_index_from_scoring_record(scoring_record)
+        new_index = _handicap_index_from_scoring_record([e["differential"] for e in scoring_record])
 
         if new_index is not None and len(scoring_record) >= LOW_HI_SCORES_THRESHOLD:
             window_start = round_input.played_on - timedelta(days=LOW_HI_WINDOW_DAYS)
@@ -237,28 +269,57 @@ def calculate_handicap_index(rounds_chronological: list[RoundInput]) -> float | 
 
         handicap_index = new_index
 
+    return handicap_index, scoring_record
+
+
+def calculate_handicap_index(rounds_chronological: list[RoundInput]) -> float | None:
+    """Runs the full WHS algorithm over a player's entire completed-round
+    history and returns just their current Handicap Index -- None if they
+    don't have at least 3 qualifying scores yet. See _simulate for how."""
+    handicap_index, _ = _simulate(rounds_chronological)
     return handicap_index
+
+
+def get_handicap_breakdown(rounds_chronological: list[RoundInput]) -> dict:
+    """
+    Same simulation as calculate_handicap_index, but returns the full
+    scoring record too -- every round currently within the most-recent-20
+    window, each tagged with whether it's one of the "lowest N" actually
+    being averaged into the Handicap Index right now. This is what powers
+    the home page's "Contributing Rounds" view; most recent round first.
+    """
+    handicap_index, scoring_record = _simulate(rounds_chronological)
+
+    num_counting = _num_counting(len(scoring_record))
+    # Ties broken by recency (the more recent of two equal differentials
+    # counts) purely for a stable, deterministic display -- doesn't affect
+    # the Handicap Index number itself either way, only which rows get
+    # highlighted as "counting".
+    ranked = sorted(range(len(scoring_record)), key=lambda i: (scoring_record[i]["differential"], -i))
+    counting_indexes = set(ranked[:num_counting])
+
+    rounds_out = [
+        {**entry, "counting": i in counting_indexes}
+        for i, entry in enumerate(scoring_record)
+    ]
+    rounds_out.reverse()  # most recent first, for display
+
+    return {"handicap_index": handicap_index, "rounds": rounds_out}
 
 
 # ── DB orchestration ──────────────────────────────────────────────
 
-def recalculate_and_store_handicap(player_id: str) -> dict | None:
+def _gather_round_inputs(player_id: str) -> list[RoundInput]:
     """
-    Rebuilds a player's full Handicap Index from their entire completed-
-    round history (see calculate_handicap_index) and, if it's different
-    from what's currently on file (or this is their first-ever result),
-    inserts a new dated row into player_handicaps -- what every other
-    "current handicap" display in the app already reads from.
-
-    Called after every round finish (see finish_round in rounds.py). Safe
-    to call any time since it always recomputes from scratch rather than
-    incrementally patching a stored value -- there's no risk of drifting
-    from what the full history actually says.
+    Pulls every completed round this player belongs to (owner or accepted
+    participant), oldest to newest, and hydrates each into a RoundInput --
+    skipping any round that can't produce a valid differential (no
+    rating/slope on its tee, or an incomplete scorecard). Shared by
+    recalculate_and_store_handicap (writes the result) and
+    get_player_handicap_breakdown (just reads it) so the two can never
+    disagree about which rounds are eligible.
     """
-    # Local imports -- avoids a circular import with backend.services.rounds,
-    # which needs to call *this* module from finish_round.
     from backend.database import supabase
-    from backend.services.handicaps import get_current_player_handicap
 
     rp_response = (
         supabase.table("round_players")
@@ -269,7 +330,7 @@ def recalculate_and_store_handicap(player_id: str) -> dict | None:
     )
     round_ids = [r["round_id"] for r in (rp_response.data or [])]
     if not round_ids:
-        return None
+        return []
 
     rounds_response = (
         supabase.table("rounds")
@@ -338,12 +399,35 @@ def recalculate_and_store_handicap(player_id: str) -> dict | None:
         played_on = date.fromisoformat(completed_at[:10]) if completed_at else date.today()
 
         round_inputs.append(RoundInput(
+            round_id=round_row["id"],
             played_on=played_on,
             course_rating=tee["course_rating"],
             slope_rating=tee["slope_rating"],
             holes=holes,
         ))
 
+    return round_inputs
+
+
+def recalculate_and_store_handicap(player_id: str) -> dict | None:
+    """
+    Rebuilds a player's full Handicap Index from their entire completed-
+    round history and, if it's different from what's currently on file
+    (or this is their first-ever result), inserts a new dated row into
+    player_handicaps -- what every other "current handicap" display in
+    the app already reads from.
+
+    Called after every round finish (see finish_round in rounds.py). Safe
+    to call any time since it always recomputes from scratch rather than
+    incrementally patching a stored value -- there's no risk of drifting
+    from what the full history actually says.
+    """
+    # Local import -- avoids a circular import with backend.services.rounds,
+    # which needs to call *this* module from finish_round.
+    from backend.database import supabase
+    from backend.services.handicaps import get_current_player_handicap
+
+    round_inputs = _gather_round_inputs(player_id)
     if not round_inputs:
         return None
 
@@ -361,3 +445,13 @@ def recalculate_and_store_handicap(player_id: str) -> dict | None:
         .execute()
     )
     return response.data[0] if response.data else None
+
+
+def get_player_handicap_breakdown(player_id: str) -> dict:
+    """Read-only counterpart to recalculate_and_store_handicap -- same
+    data, same calculation, but returns the full scoring-record breakdown
+    instead of writing anything. Used by the home page's handicap panel."""
+    round_inputs = _gather_round_inputs(player_id)
+    if not round_inputs:
+        return {"handicap_index": None, "rounds": []}
+    return get_handicap_breakdown(round_inputs)

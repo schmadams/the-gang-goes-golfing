@@ -28,6 +28,18 @@ def list_clubs() -> list[dict]:
     return response.data
 
 
+def get_club_by_slug(slug: str) -> dict | None:
+    response = (
+        supabase
+        .table("clubs")
+        .select("*")
+        .eq("slug", slug)
+        .maybe_single()
+        .execute()
+    )
+    return response.data if response is not None else None
+
+
 def create_club(club: ClubCreate) -> dict:
     slug = club.slug or _slugify(club.name)
     code = club.code or slug

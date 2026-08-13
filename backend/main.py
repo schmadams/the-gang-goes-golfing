@@ -1,7 +1,7 @@
 # target path: backend/main.py (full replacement)
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from backend.routers import players, clubs, club_players, handicaps, player_accounts, courses, rounds, friends
+from backend.routers import players, clubs, club_players, club_invites, handicaps, player_accounts, courses, rounds, friends
 
 app = FastAPI(title="The Gang Goes Golfing API")
 
@@ -15,6 +15,7 @@ app.add_middleware(
 app.include_router(players.router)
 app.include_router(clubs.router)
 app.include_router(club_players.router)
+app.include_router(club_invites.router)
 app.include_router(handicaps.router)
 app.include_router(player_accounts.router)
 app.include_router(courses.router)

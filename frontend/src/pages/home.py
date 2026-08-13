@@ -4,6 +4,7 @@ from contextlib import contextmanager
 
 import dash
 import dash_bootstrap_components as dbc
+import plotly.graph_objects as go
 import requests
 from dash import ALL, Input, Output, State, callback, dcc, html
 from flask import session
@@ -164,6 +165,270 @@ def _round_scorecard_card(round_data, player_initial, player_label):
     )
 
 
+# Rule 5.2a exactly as USGA publishes it -- (scores on record, differentials
+# used, adjustment). See backend/services/whs.py's _FEWER_THAN_20_TABLE,
+# which this mirrors for display.
+_HANDICAP_TABLE_ROWS = [
+    ("3", "Lowest 1", "-2.0"),
+    ("4", "Lowest 1", "-1.0"),
+    ("5", "Lowest 1", "0"),
+    ("6", "Average of lowest 2", "-1.0"),
+    ("7 or 8", "Average of lowest 2", "0"),
+    ("9 to 11", "Average of lowest 3", "0"),
+    ("12 to 14", "Average of lowest 4", "0"),
+    ("15 or 16", "Average of lowest 5", "0"),
+    ("17 or 18", "Average of lowest 6", "0"),
+    ("19", "Average of lowest 7", "0"),
+    ("20+", "Average of lowest 8", "0"),
+]
+
+_HANDICAP_INFO_TEXT = [
+    html.P(
+        "Your Handicap Index is calculated automatically from your completed rounds, "
+        "using the same method golf clubs worldwide use (the World Handicap System)."
+    ),
+    html.P(
+        "Each card in \"Contributing Rounds\" packs four numbers into one shape, with "
+        "no labels -- here's what they mean:"
+    ),
+    html.Div(
+        className="t3g-handicap-annotated-example",
+        children=[
+            html.Div(
+                className="t3g-handicap-annotation t3g-handicap-annotation--gross",
+                children=["Gross score", html.Span("\u2192", className="t3g-handicap-annotation-arrow")],
+            ),
+            html.Div(
+                className="t3g-handicap-annotation t3g-handicap-annotation--adjusted",
+                children=[
+                    html.Span("\u2199", className="t3g-handicap-annotation-arrow"),
+                    "Adjusted score (after WHS capping)",
+                ],
+            ),
+            html.Div(
+                className="t3g-handicap-annotation t3g-handicap-annotation--slope",
+                children=[html.Span("\u2196", className="t3g-handicap-annotation-arrow"), "Course slope rating"],
+            ),
+            html.Div(
+                className="t3g-handicap-annotation t3g-handicap-annotation--date",
+                children=[html.Span("\u2191", className="t3g-handicap-annotation-arrow"), "Date played"],
+            ),
+            html.Div(
+                className="t3g-handicap-round-card t3g-handicap-round-card--counting t3g-handicap-example-card",
+                children=[
+                    html.Div(
+                        className="t3g-handicap-round-number",
+                        children=[
+                            html.Span("68", className="t3g-handicap-round-gross"),
+                            html.Span("68", className="t3g-handicap-round-adjusted"),
+                            html.Span("131", className="t3g-handicap-round-slope"),
+                        ],
+                    ),
+                    html.Div("2026-08-12", className="t3g-handicap-round-date"),
+                ],
+            ),
+        ],
+    ),
+    html.P(
+        "For each round, we work out a Score Differential -- a single number that "
+        "adjusts your score for how hard the course was (its Course Rating and Slope "
+        "Rating), so a round on a tough course and an easy course can be compared "
+        "fairly:"
+    ),
+    html.Div(
+        className="t3g-handicap-example",
+        children=[
+            html.Div(
+                "Score Differential = (113 / Slope) x (Adjusted Score - Course Rating)",
+                className="t3g-handicap-example-formula",
+            ),
+            html.Div(
+                className="t3g-handicap-example-body",
+                children=[
+                    html.Div("Worked example", className="t3g-handicap-example-label"),
+                    html.Div(
+                        "You shoot 90 (your Adjusted Score, after capping any blow-up "
+                        "holes) on a course with Slope 125 and Course Rating 71.2:"
+                    ),
+                    html.Div(
+                        "(113 / 125) x (90 - 71.2) = 0.904 x 18.8 = 17.0",
+                        className="t3g-handicap-example-result",
+                    ),
+                ],
+            ),
+        ],
+    ),
+    html.P(
+        "Your Handicap Index is then the average of your best few Score Differentials "
+        "from your most recent rounds (up to your last 20) -- so a couple of rough days "
+        "out don't drag it up, but a great round pulls it down. Exactly how many "
+        "differentials count, and any adjustment applied, depends on how many rounds "
+        "you've got on record:"
+    ),
+    dbc.Table(
+        [
+            html.Thead(
+                html.Tr([html.Th("Scores on record"), html.Th("Differentials used"), html.Th("Adjustment")])
+            ),
+            html.Tbody(
+                [
+                    html.Tr([html.Td(count), html.Td(used), html.Td(adj)])
+                    for count, used, adj in _HANDICAP_TABLE_ROWS
+                ]
+            ),
+        ],
+        className="t3g-handicap-info-table",
+        bordered=False,
+        size="sm",
+    ),
+    html.P(
+        "A few notes: a manually-entered round only counts once a Course Rating and "
+        "Slope Rating are added when you start it. We don't apply the official "
+        "day-to-day weather adjustment (it needs a lot of scores on the same course on "
+        "the same day to work, which isn't realistic for a small group) -- everything "
+        "else, including score capping and the yearly limit on how fast your handicap "
+        "can rise, follows the official rules.",
+        className="t3g-empty-state mt-2",
+    ),
+]
+
+
+def _handicap_trend_figure(history):
+    ordered = list(reversed(history))  # API returns most-recent-first; chart wants chronological
+    dates = [h["valid_from"] for h in ordered]
+    values = [h["handicap"] for h in ordered]
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=dates,
+        y=values,
+        mode="lines+markers",
+        line=dict(color="#c21861", width=3),
+        marker=dict(color="#c21861", size=7),
+        hovertemplate="%{x}<br>Handicap %{y}<extra></extra>",
+    ))
+    fig.update_layout(
+        margin=dict(l=45, r=20, t=10, b=40),
+        height=280,
+        yaxis_title="Handicap Index",
+        plot_bgcolor="#ffffff",
+        paper_bgcolor="#ffffff",
+        font=dict(color="#1e2a47"),
+        hovermode="x unified",
+    )
+    fig.update_xaxes(showgrid=False)
+    fig.update_yaxes(showgrid=True, gridcolor="#f0f1f5", zeroline=False)
+    return fig
+
+
+def _handicap_trend_view(history):
+    if len(history) < 2:
+        return html.P(
+            "Not enough handicap history yet -- play and finish a few more rounds to see a trend.",
+            className="t3g-empty-state",
+        )
+    return dcc.Graph(figure=_handicap_trend_figure(history), config={"displayModeBar": False})
+
+
+def _handicap_round_card(r):
+    """One round as a compact stat card -- gross score as the big central
+    number, adjusted score sitting top-right of it like an exponent,
+    slope rating sitting bottom-right like a subscript, date underneath.
+    Deliberately unlabeled (no "Score"/"Slope" captions) -- position
+    conveys what each number is once you've seen the info modal once."""
+    card_class = "t3g-handicap-round-card"
+    if r["counting"]:
+        card_class += " t3g-handicap-round-card--counting"
+
+    return html.Div(
+        className=card_class,
+        children=[
+            html.Div(
+                className="t3g-handicap-round-number",
+                children=[
+                    html.Span(r["gross_score"], className="t3g-handicap-round-gross"),
+                    html.Span(r["adjusted_gross_score"], className="t3g-handicap-round-adjusted"),
+                    html.Span(r["slope_rating"], className="t3g-handicap-round-slope"),
+                ],
+            ),
+            html.Div(r["played_on"], className="t3g-handicap-round-date"),
+        ],
+    )
+
+
+def _handicap_rounds_view(breakdown):
+    rounds = breakdown.get("rounds") or []
+    if not rounds:
+        return html.P(
+            "No rounds counting toward your handicap yet -- rounds need a Course Rating "
+            "and Slope Rating (automatic for courses in our database, optional for "
+            "manually-entered rounds).",
+            className="t3g-empty-state",
+        )
+
+    return html.Div(
+        [
+            html.Div([_handicap_round_card(r) for r in rounds], className="t3g-handicap-rounds-grid"),
+            html.P(
+                "Highlighted cards are currently counting toward your handicap. "
+                "Top-right is your adjusted score, bottom-right is the course's slope rating.",
+                className="t3g-empty-state mt-2",
+            ),
+        ]
+    )
+
+
+def _handicap_panel(current_handicap, history, breakdown):
+    handicap_display = f"{current_handicap}" if current_handicap is not None else "Not set"
+
+    return html.Div(
+        className="t3g-panel",
+        children=[
+            html.Div(
+                className="t3g-panel-navbar",
+                children=[
+                    html.Div(
+                        [
+                            html.H3("Handicap", className="t3g-panel-navbar-title"),
+                            html.Span(handicap_display, className="t3g-handicap-panel-value"),
+                        ],
+                        className="t3g-handicap-panel-header",
+                    ),
+                    html.Div(
+                        html.Button("i", id="handicap-info-button", className="t3g-info-button", n_clicks=0),
+                        className="t3g-panel-navbar-action",
+                    ),
+                ],
+            ),
+            html.Div(
+                className="t3g-panel-body",
+                children=[
+                    html.Div(
+                        className="t3g-handicap-toggle",
+                        children=[
+                            html.Button(
+                                "Trend",
+                                id="handicap-view-trend",
+                                className="t3g-handicap-toggle-button t3g-handicap-toggle-button--active",
+                                n_clicks=0,
+                            ),
+                            html.Button(
+                                "Contributing Rounds",
+                                id="handicap-view-rounds",
+                                className="t3g-handicap-toggle-button",
+                                n_clicks=0,
+                            ),
+                        ],
+                    ),
+                    dcc.Store(id="handicap-history-store", data=history),
+                    dcc.Store(id="handicap-breakdown-store", data=breakdown),
+                    html.Div(id="handicap-panel-content", children=_handicap_trend_view(history)),
+                ],
+            ),
+        ],
+    )
+
+
 def layout(**kwargs):
     player_id = session.get("player_id")
 
@@ -184,8 +449,6 @@ def layout(**kwargs):
         clubs_section = html.Div(
             className="t3g-clubs-list",
             children=[
-                # NOTE: /clubs/<slug> doesn't exist yet — placeholder link
-                # for the club home page we haven't built.
                 dcc.Link(
                     club["name"],
                     href=f"/clubs/{club['slug']}",
@@ -219,6 +482,28 @@ def layout(**kwargs):
     with _timed(f"GET /rounds/invites/{player_id}"):
         round_invites_resp = requests.get(f"{API_BASE_URL}/rounds/invites/{player_id}")
     round_invites = round_invites_resp.json() if round_invites_resp.status_code == 200 else []
+
+    with _timed(f"GET /club-invites/player/{player_id}"):
+        club_invites_resp = requests.get(f"{API_BASE_URL}/club-invites/player/{player_id}")
+    club_invites = club_invites_resp.json() if club_invites_resp.status_code == 200 else []
+
+    with _timed(f"GET /handicaps/player/{player_id}/current"):
+        current_handicap_resp = requests.get(f"{API_BASE_URL}/handicaps/player/{player_id}/current")
+    current_handicap = (
+        current_handicap_resp.json().get("handicap") if current_handicap_resp.status_code == 200 else None
+    )
+
+    with _timed(f"GET /handicaps/player/{player_id}"):
+        handicap_history_resp = requests.get(f"{API_BASE_URL}/handicaps/player/{player_id}")
+    handicap_history = handicap_history_resp.json() if handicap_history_resp.status_code == 200 else []
+
+    with _timed(f"GET /handicaps/player/{player_id}/breakdown"):
+        handicap_breakdown_resp = requests.get(f"{API_BASE_URL}/handicaps/player/{player_id}/breakdown")
+    handicap_breakdown = (
+        handicap_breakdown_resp.json()
+        if handicap_breakdown_resp.status_code == 200
+        else {"handicap_index": None, "rounds": []}
+    )
 
     with _timed(f"GET /rounds/player/{player_id}"):
         rounds_resp = requests.get(f"{API_BASE_URL}/rounds/player/{player_id}")
@@ -287,6 +572,55 @@ def layout(**kwargs):
         ],
     )
 
+    club_invites_section = None
+    if club_invites:
+        club_invites_section = html.Div(
+            className="t3g-panel",
+            children=[
+                build_panel_navbar("Club Invites"),
+                html.Div(
+                    className="t3g-panel-body",
+                    children=[
+                        html.Div(id="club-invite-error", className="text-danger mb-2"),
+                        html.Div(
+                            className="t3g-friend-request-list",
+                            children=[
+                                html.Div(
+                                    className="t3g-friend-request-row",
+                                    children=[
+                                        html.Span(
+                                            f"{invite.get('inviter', {}).get('first_name', '')} "
+                                            f"{invite.get('inviter', {}).get('surname', '')} invited you to join "
+                                            f"{invite.get('clubs', {}).get('name', 'a club')}",
+                                            className="t3g-friend-request-name",
+                                        ),
+                                        html.Div(
+                                            [
+                                                html.Button(
+                                                    "Accept",
+                                                    id={"type": "club-invite-accept", "invite_id": invite["id"]},
+                                                    className="t3g-panel-action-button",
+                                                    n_clicks=0,
+                                                ),
+                                                html.Button(
+                                                    "Decline",
+                                                    id={"type": "club-invite-decline", "invite_id": invite["id"]},
+                                                    className="t3g-panel-action-button t3g-panel-action-button--secondary",
+                                                    n_clicks=0,
+                                                ),
+                                            ],
+                                            className="t3g-friend-request-actions",
+                                        ),
+                                    ],
+                                )
+                                for invite in club_invites
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        )
+
     round_invites_section = None
     if round_invites:
         round_invites_section = html.Div(
@@ -340,8 +674,11 @@ def layout(**kwargs):
         className="t3g-page",
         children=[
             dcc.Location(id="round-invite-refresh", refresh=True),
+            dcc.Location(id="club-invite-refresh", refresh=True),
             live_round_section,
             round_invites_section,
+            club_invites_section,
+            _handicap_panel(current_handicap, handicap_history, handicap_breakdown),
             html.Div(
                 className="t3g-panel-grid",
                 children=[
@@ -350,18 +687,11 @@ def layout(**kwargs):
                         children=[
                             build_panel_navbar(
                                 "Your Clubs",
-                                action=[
-                                    html.Button(
-                                        "Join Club",
-                                        id="join-club-button",
-                                        className="t3g-panel-action-button t3g-panel-action-button--secondary",
-                                    ),
-                                    html.Button(
-                                        "Create Club",
-                                        id="create-club-button",
-                                        className="t3g-panel-action-button",
-                                    ),
-                                ],
+                                action=html.Button(
+                                    "Create Club",
+                                    id="create-club-button",
+                                    className="t3g-panel-action-button",
+                                ),
                             ),
                             html.Div(clubs_section, className="t3g-panel-body"),
                         ],
@@ -382,34 +712,6 @@ def layout(**kwargs):
                     ),
                 ],
             ),
-            dbc.Modal(
-                id="join-club-modal",
-                is_open=False,
-                children=[
-                    dbc.ModalHeader(dbc.ModalTitle("Join a Club")),
-                    dbc.ModalBody(
-                        [
-                            dbc.Input(
-                                id="join-club-uuid-input",
-                                placeholder="Club ID (UUID)",
-                                type="text",
-                            ),
-                            html.Div(
-                                id="join-club-error", className="text-danger mt-2"
-                            ),
-                        ]
-                    ),
-                    dbc.ModalFooter(
-                        [
-                            dbc.Button(
-                                "Cancel", id="join-club-cancel", color="secondary"
-                            ),
-                            dbc.Button("Join", id="join-club-submit", color="primary"),
-                        ]
-                    ),
-                ],
-            ),
-            dcc.Location(id="join-club-redirect", refresh=True),
             dbc.Modal(
                 id="create-club-modal",
                 is_open=False,
@@ -557,55 +859,17 @@ def layout(**kwargs):
                 ],
             ),
             dcc.Location(id="upload-round-redirect", refresh=True),
+            dbc.Modal(
+                id="handicap-info-modal",
+                is_open=False,
+                children=[
+                    dbc.ModalHeader(dbc.ModalTitle("How your handicap is calculated")),
+                    dbc.ModalBody(_HANDICAP_INFO_TEXT),
+                    dbc.ModalFooter(dbc.Button("Got it", id="handicap-info-close", color="primary")),
+                ],
+            ),
         ],
     )
-
-
-@callback(
-    Output("join-club-modal", "is_open"),
-    Output("join-club-error", "children"),
-    Output("join-club-redirect", "pathname"),
-    Input("join-club-button", "n_clicks"),
-    Input("join-club-cancel", "n_clicks"),
-    Input("join-club-submit", "n_clicks"),
-    State("join-club-uuid-input", "value"),
-    prevent_initial_call=True,
-)
-def handle_join_club(open_clicks, cancel_clicks, submit_clicks, club_uuid):
-    triggered_id = dash.ctx.triggered_id
-
-    if triggered_id == "join-club-button":
-        return True, "", dash.no_update
-
-    if triggered_id == "join-club-cancel":
-        return False, "", dash.no_update
-
-    if triggered_id == "join-club-submit":
-        if not club_uuid:
-            return True, "Enter a club ID.", dash.no_update
-
-        player_id = session.get("player_id")
-        with _timed("POST /club-players/"):
-            response = requests.post(
-                f"{API_BASE_URL}/club-players/",
-                json={"club_id": club_uuid, "player_id": player_id},
-            )
-
-        if response.status_code == 201:
-            return False, "", "/"
-
-        if response.status_code == 422:
-            return True, "That doesn't look like a valid club ID.", dash.no_update
-
-        # NOTE: the backend doesn't yet distinguish "club not found" from
-        # "already a member" — both currently surface as a generic error.
-        return (
-            True,
-            "Couldn't join that club. Check the ID, or you may already be a member.",
-            dash.no_update,
-        )
-
-    return dash.no_update, dash.no_update, dash.no_update
 
 
 @callback(
@@ -943,5 +1207,83 @@ def decline_round_invite(n_clicks_list):
     player_id = session.get("player_id")
     with _timed(f"POST /rounds/{triggered_id['round_id']}/invites/{player_id}/decline"):
         requests.post(f"{API_BASE_URL}/rounds/{triggered_id['round_id']}/invites/{player_id}/decline")
+
+    return "/"
+
+@callback(
+    Output("handicap-panel-content", "children"),
+    Output("handicap-view-trend", "className"),
+    Output("handicap-view-rounds", "className"),
+    Input("handicap-view-trend", "n_clicks"),
+    Input("handicap-view-rounds", "n_clicks"),
+    State("handicap-history-store", "data"),
+    State("handicap-breakdown-store", "data"),
+    prevent_initial_call=True,
+)
+def render_handicap_view(trend_clicks, rounds_clicks, history, breakdown):
+    triggered_id = dash.ctx.triggered_id
+    base_class = "t3g-handicap-toggle-button"
+    active_class = f"{base_class} t3g-handicap-toggle-button--active"
+
+    if triggered_id == "handicap-view-rounds":
+        return _handicap_rounds_view(breakdown or {}), base_class, active_class
+
+    return _handicap_trend_view(history or []), active_class, base_class
+
+
+@callback(
+    Output("handicap-info-modal", "is_open"),
+    Input("handicap-info-button", "n_clicks"),
+    Input("handicap-info-close", "n_clicks"),
+    prevent_initial_call=True,
+)
+def toggle_handicap_info_modal(open_clicks, close_clicks):
+    return dash.ctx.triggered_id == "handicap-info-button"
+
+
+@callback(
+    Output("club-invite-refresh", "pathname"),
+    Output("club-invite-error", "children"),
+    Input({"type": "club-invite-accept", "invite_id": ALL}, "n_clicks"),
+    prevent_initial_call=True,
+)
+def accept_club_invite(n_clicks_list):
+    triggered_id = dash.ctx.triggered_id
+    if not triggered_id or not any(n_clicks_list):
+        return dash.no_update, dash.no_update
+
+    player_id = session.get("player_id")
+    with _timed(f"POST /club-invites/{triggered_id['invite_id']}/accept"):
+        response = requests.post(
+            f"{API_BASE_URL}/club-invites/{triggered_id['invite_id']}/accept",
+            params={"player_id": player_id},
+        )
+
+    if response.status_code == 200:
+        return "/", ""
+
+    try:
+        detail = response.json().get("detail", "Couldn't accept that invite.")
+    except ValueError:
+        detail = "Couldn't accept that invite."
+    return dash.no_update, detail
+
+
+@callback(
+    Output("club-invite-refresh", "pathname", allow_duplicate=True),
+    Input({"type": "club-invite-decline", "invite_id": ALL}, "n_clicks"),
+    prevent_initial_call=True,
+)
+def decline_club_invite(n_clicks_list):
+    triggered_id = dash.ctx.triggered_id
+    if not triggered_id or not any(n_clicks_list):
+        return dash.no_update
+
+    player_id = session.get("player_id")
+    with _timed(f"POST /club-invites/{triggered_id['invite_id']}/decline"):
+        requests.post(
+            f"{API_BASE_URL}/club-invites/{triggered_id['invite_id']}/decline",
+            params={"player_id": player_id},
+        )
 
     return "/"
