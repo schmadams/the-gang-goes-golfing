@@ -1,4 +1,4 @@
-# target path: backend/services/club_players.py (new file -- replaces backend/services/group_players.py, which should be deleted)
+# target path: backend/services/club_players.py (replaces backend/services/group_players.py, which should be deleted)
 from backend.database import supabase
 from backend.models.club_player import ClubPlayerCreate, ClubPlayerDelete
 
@@ -15,8 +15,29 @@ def add_player_to_club(club_player: ClubPlayerCreate) -> dict:
         .insert(payload)
         .execute()
     )
+    row = response.data[0]
 
-    return response.data[0]
+    # A club with no admin can never gain new members through the normal
+    # invite flow (only the admin can send invites -- see
+    # club_invites.send_club_invite), so it'd be permanently stuck. If this
+    # club doesn't have one yet, whoever just joined becomes it -- covers
+    # both "the creator becomes admin" (create_club's auto-join call) and
+    # legacy/seed data that predates every path setting one (e.g. a club
+    # created with a single member and no admin assigned, like Spam vs
+    # Chiggim).
+    club_response = (
+        supabase
+        .table("clubs")
+        .select("club_admin")
+        .eq("id", payload["club_id"])
+        .maybe_single()
+        .execute()
+    )
+    club = club_response.data if club_response is not None else None
+    if club and club.get("club_admin") is None:
+        supabase.table("clubs").update({"club_admin": payload["player_id"]}).eq("id", payload["club_id"]).execute()
+
+    return row
 
 
 def list_players_in_club(club_id: str) -> list[dict]:

@@ -33,7 +33,14 @@ def serve_layout():
 
     if session.get("logged_in"):
         children.append(build_navbar())
-        children.append(build_subnav())
+        # The subnav itself (not just whether it shows at all) is decided
+        # reactively in layouts/subnav.py's render_subnav callback, keyed
+        # off Dash Pages' own pathname tracker (_pages_location) -- this
+        # function only runs once per hard page load, but navigating
+        # between pages via dcc.Link is client-side and never re-runs it,
+        # so a pathname check here alone couldn't hide the subnav again
+        # once you'd left "/".
+        children.append(html.Div(id="subnav-container"))
 
     children.append(dash.page_container)
 

@@ -511,7 +511,7 @@ def layout(**kwargs):
 
     # Live rounds no longer show in Rounds History at all -- they get
     # their own panel up top instead (built below, alongside
-    # round_invites_section), the same treatment as a round invite,
+    # invites_section), the same treatment as a round invite,
     # since "a round that's happening right now" is a different kind of
     # thing from "a round that already happened".
     live_round = next((r for r in rounds_history if r.get("status") == "in_progress"), None)
@@ -572,98 +572,90 @@ def layout(**kwargs):
         ],
     )
 
-    club_invites_section = None
-    if club_invites:
-        club_invites_section = html.Div(
-            className="t3g-panel",
-            children=[
-                build_panel_navbar("Club Invites"),
-                html.Div(
-                    className="t3g-panel-body",
-                    children=[
-                        html.Div(id="club-invite-error", className="text-danger mb-2"),
-                        html.Div(
-                            className="t3g-friend-request-list",
-                            children=[
-                                html.Div(
-                                    className="t3g-friend-request-row",
-                                    children=[
-                                        html.Span(
-                                            f"{invite.get('inviter', {}).get('first_name', '')} "
-                                            f"{invite.get('inviter', {}).get('surname', '')} invited you to join "
-                                            f"{invite.get('clubs', {}).get('name', 'a club')}",
-                                            className="t3g-friend-request-name",
-                                        ),
-                                        html.Div(
-                                            [
-                                                html.Button(
-                                                    "Accept",
-                                                    id={"type": "club-invite-accept", "invite_id": invite["id"]},
-                                                    className="t3g-panel-action-button",
-                                                    n_clicks=0,
-                                                ),
-                                                html.Button(
-                                                    "Decline",
-                                                    id={"type": "club-invite-decline", "invite_id": invite["id"]},
-                                                    className="t3g-panel-action-button t3g-panel-action-button--secondary",
-                                                    n_clicks=0,
-                                                ),
-                                            ],
-                                            className="t3g-friend-request-actions",
-                                        ),
-                                    ],
-                                )
-                                for invite in club_invites
-                            ],
-                        ),
-                    ],
-                ),
-            ],
-        )
+    # Round invites and club invites used to be two separate panels --
+    # bucketed into one "Invites" panel now, round invites first then club
+    # invites. Both error placeholders always render together (rather than
+    # only the one matching whichever list is non-empty) so accepting/
+    # declining either type never targets a Dash Output that isn't in the
+    # DOM -- same defensive pattern as the rounds-history pagination fix.
+    invites_section = None
+    if round_invites or club_invites:
+        round_invite_rows = [
+            html.Div(
+                className="t3g-friend-request-row",
+                children=[
+                    html.Span(
+                        f"{invite.get('owner_first_name', '')} {invite.get('owner_surname', '')} "
+                        f"invited you to a round"
+                        + (f" at {invite['club_name']}" if invite.get("club_name") else ""),
+                        className="t3g-friend-request-name",
+                    ),
+                    html.Div(
+                        [
+                            html.Button(
+                                "Accept",
+                                id={"type": "round-invite-accept", "round_id": invite["round_id"]},
+                                className="t3g-panel-action-button",
+                                n_clicks=0,
+                            ),
+                            html.Button(
+                                "Decline",
+                                id={"type": "round-invite-decline", "round_id": invite["round_id"]},
+                                className="t3g-panel-action-button t3g-panel-action-button--secondary",
+                                n_clicks=0,
+                            ),
+                        ],
+                        className="t3g-friend-request-actions",
+                    ),
+                ],
+            )
+            for invite in round_invites
+        ]
 
-    round_invites_section = None
-    if round_invites:
-        round_invites_section = html.Div(
+        club_invite_rows = [
+            html.Div(
+                className="t3g-friend-request-row",
+                children=[
+                    html.Span(
+                        f"{invite.get('inviter', {}).get('first_name', '')} "
+                        f"{invite.get('inviter', {}).get('surname', '')} invited you to join "
+                        f"{invite.get('clubs', {}).get('name', 'a club')}",
+                        className="t3g-friend-request-name",
+                    ),
+                    html.Div(
+                        [
+                            html.Button(
+                                "Accept",
+                                id={"type": "club-invite-accept", "invite_id": invite["id"]},
+                                className="t3g-panel-action-button",
+                                n_clicks=0,
+                            ),
+                            html.Button(
+                                "Decline",
+                                id={"type": "club-invite-decline", "invite_id": invite["id"]},
+                                className="t3g-panel-action-button t3g-panel-action-button--secondary",
+                                n_clicks=0,
+                            ),
+                        ],
+                        className="t3g-friend-request-actions",
+                    ),
+                ],
+            )
+            for invite in club_invites
+        ]
+
+        invites_section = html.Div(
             className="t3g-panel",
             children=[
-                build_panel_navbar("Round Invites"),
+                build_panel_navbar("Invites"),
                 html.Div(
                     className="t3g-panel-body",
                     children=[
                         html.Div(id="round-invite-error", className="text-danger mb-2"),
+                        html.Div(id="club-invite-error", className="text-danger mb-2"),
                         html.Div(
                             className="t3g-friend-request-list",
-                            children=[
-                                html.Div(
-                                    className="t3g-friend-request-row",
-                                    children=[
-                                        html.Span(
-                                            f"{invite.get('owner_first_name', '')} {invite.get('owner_surname', '')} "
-                                            f"invited you to a round"
-                                            + (f" at {invite['club_name']}" if invite.get("club_name") else ""),
-                                            className="t3g-friend-request-name",
-                                        ),
-                                        html.Div(
-                                            [
-                                                html.Button(
-                                                    "Accept",
-                                                    id={"type": "round-invite-accept", "round_id": invite["round_id"]},
-                                                    className="t3g-panel-action-button",
-                                                    n_clicks=0,
-                                                ),
-                                                html.Button(
-                                                    "Decline",
-                                                    id={"type": "round-invite-decline", "round_id": invite["round_id"]},
-                                                    className="t3g-panel-action-button t3g-panel-action-button--secondary",
-                                                    n_clicks=0,
-                                                ),
-                                            ],
-                                            className="t3g-friend-request-actions",
-                                        ),
-                                    ],
-                                )
-                                for invite in round_invites
-                            ],
+                            children=round_invite_rows + club_invite_rows,
                         ),
                     ],
                 ),
@@ -676,8 +668,7 @@ def layout(**kwargs):
             dcc.Location(id="round-invite-refresh", refresh=True),
             dcc.Location(id="club-invite-refresh", refresh=True),
             live_round_section,
-            round_invites_section,
-            club_invites_section,
+            invites_section,
             _handicap_panel(current_handicap, handicap_history, handicap_breakdown),
             html.Div(
                 className="t3g-panel-grid",

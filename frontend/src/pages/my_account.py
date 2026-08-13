@@ -16,6 +16,17 @@ from layouts.panel_navbar import build_panel_navbar
 dash.register_page(__name__, path="/my-account", name="My Account")
 
 
+def _refresh_href():
+    # dcc.Location only actually reloads the browser when the value it's
+    # given differs from what's already loaded -- outputting the same
+    # "/my-account" pathname while already sitting on /my-account is a
+    # no-op, so Save/Add Handicap Entry looked like they did nothing.
+    # Appending a cache-busting query string guarantees the value always
+    # changes, which is what actually makes the refresh fire -- same fix
+    # as friends.py's _refresh_href().
+    return f"/my-account?_r={time.time()}"
+
+
 @contextmanager
 def _timed(label: str):
     """
@@ -457,7 +468,7 @@ def handle_save_profile(
         response = requests.patch(f"{API_BASE_URL}/players/{player_id}", json=payload)
 
     if response.status_code == 200:
-        return "", "/my-account"
+        return "", _refresh_href()
 
     return (
         html.Span("Couldn't save changes. Try again.", className="text-danger"),
@@ -487,7 +498,7 @@ def handle_add_handicap(n_clicks, handicap_value):
         )
 
     if response.status_code == 201:
-        return "", "/my-account"
+        return "", _refresh_href()
 
     return (
         html.Span("Couldn't update handicap. Try again.", className="text-danger"),

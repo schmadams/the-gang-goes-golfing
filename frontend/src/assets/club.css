@@ -20,3 +20,28 @@
     padding: 0.5rem 0.75rem;
     color: #1e2a47;
 }
+.t3g-club-heading {
+    margin: 0 0 1rem;
+    padding: 0 0.25rem;
+    font-size: 1.5rem;
+    font-weight: 800;
+    color: #1e2a47;
+}
+
+/* Admin status strip -- styled after layouts/subnav.py's full-width bar,
+   but red, and only ever rendered for the club's admin. */
+.t3g-club-admin-banner {
+    background: #dc2626;
+    border-radius: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+.t3g-club-admin-banner-inner {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0.6rem 1rem;
+    color: #ffffff;
+    font-weight: 700;
+    font-size: 0.9rem;
+    text-align: center;
+}

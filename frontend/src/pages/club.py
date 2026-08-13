@@ -1,4 +1,6 @@
-# target path: frontend/src/pages/club.py (new file)
+# target path: frontend/src/pages/club.py (replace entire file -- previous copy on disk has its whole
+# contents duplicated back-to-back, which is what's causing "Duplicate callback outputs" again; this
+# is a single clean copy, don't paste it on top of the old one)
 import dash
 import dash_bootstrap_components as dbc
 import requests
@@ -59,164 +61,20 @@ def _directory_table(directory, sort_by):
     )
 
 
-def _not_found_page():
+def _admin_banner(is_admin):
+    # Replaces the old bordered name/description panel's inline "ADMIN"
+    # pill -- this is its own slim, full-width strip (styled after
+    # layouts/subnav.py) so it reads as a status banner, not just a badge
+    # buried in a box. Renders nothing at all for non-admins.
+    if not is_admin:
+        return None
+
     return html.Div(
-        className="t3g-page",
+        className="t3g-club-admin-banner",
         children=html.Div(
-            className="t3g-panel",
-            children=html.Div(
-                html.P("Club not found.", className="t3g-empty-state"),
-                className="t3g-panel-body",
-            ),
+            "You're this club's admin",
+            className="t3g-club-admin-banner-inner",
         ),
-    )
-
-
-def layout(slug=None, **kwargs):
-    player_id = session.get("player_id")
-
-    if not session.get("logged_in") or not player_id:
-        session.clear()
-        return dcc.Location(pathname="/signin", id="club-redirect-signin", refresh=True)
-
-    if not slug:
-        return _not_found_page()
-
-    club_resp = requests.get(f"{API_BASE_URL}/clubs/slug/{slug}")
-    if club_resp.status_code != 200:
-        return _not_found_page()
-    club = club_resp.json()
-
-    directory_resp = requests.get(f"{API_BASE_URL}/handicaps/club/{club['id']}/latest")
-    directory = directory_resp.json() if directory_resp.status_code == 200 else []
-
-    return html.Div(
-        className="t3g-page",
-        children=[
-            html.Div(
-                className="t3g-panel",
-                children=[
-                    html.Div(
-                        className="t3g-panel-navbar",
-                        children=html.H3(club.get("name", "Club"), className="t3g-panel-navbar-title"),
-                    ),
-                    html.Div(
-                        club["description"],
-                        className="t3g-panel-body t3g-empty-state",
-                    )
-                    if club.get("description")
-                    else None,
-                ],
-            ),
-            html.Div(
-                className="t3g-panel",
-                children=[
-                    build_panel_navbar(
-                        "Player Directory",
-                        action=[
-                            html.Button(
-                                "Name",
-                                id="club-directory-sort-name",
-                                className=_SORT_BUTTON_ACTIVE,
-                                n_clicks=0,
-                            ),
-                            html.Button(
-                                "Handicap",
-                                id="club-directory-sort-handicap",
-                                className=_SORT_BUTTON_BASE,
-                                n_clicks=0,
-                            ),
-                        ],
-                    ),
-                    dcc.Store(id="club-directory-store", data=directory),
-                    html.Div(
-                        id="club-directory-content",
-                        className="t3g-panel-body",
-                        children=_directory_table(directory, "name"),
-                    ),
-                ],
-            ),
-            # Previous Tournaments and Upcoming Tournament panels come in a
-            # later pass -- there's no tournaments table/API yet (see the
-            # backlog). This page is just the player directory for now.
-        ],
-    )
-
-
-@callback(
-    Output("club-directory-content", "children"),
-    Output("club-directory-sort-name", "className"),
-    Output("club-directory-sort-handicap", "className"),
-    Input("club-directory-sort-name", "n_clicks"),
-    Input("club-directory-sort-handicap", "n_clicks"),
-    State("club-directory-store", "data"),
-    prevent_initial_call=True,
-)
-def sort_club_directory(name_clicks, handicap_clicks, directory):
-    triggered_id = dash.ctx.triggered_id
-    sort_by = "handicap" if triggered_id == "club-directory-sort-handicap" else "name"
-    table = _directory_table(directory or [], sort_by)
-
-    if sort_by == "handicap":
-        return table, _SORT_BUTTON_BASE, _SORT_BUTTON_ACTIVE
-    return table, _SORT_BUTTON_ACTIVE, _SORT_BUTTON_BASE# target path: frontend/src/pages/club.py (new file)
-import dash
-import dash_bootstrap_components as dbc
-import requests
-from dash import Input, Output, State, callback, dcc, html
-from flask import session
-
-from config import API_BASE_URL
-from layouts.panel_navbar import build_panel_navbar
-
-dash.register_page(__name__, path_template="/clubs/<slug>", name="Club")
-
-_SORT_BUTTON_BASE = "t3g-panel-action-button t3g-panel-action-button--secondary"
-_SORT_BUTTON_ACTIVE = "t3g-panel-action-button"
-
-
-def _player_label(row):
-    return f"{row.get('first_name', '')} {row.get('surname', '')}".strip() or "Unknown player"
-
-
-def _handicap_value(row):
-    latest = row.get("latest_handicap")
-    return latest["handicap"] if latest else None
-
-
-def _format_handicap(row):
-    value = _handicap_value(row)
-    return f"{value}" if value is not None else "Not set"
-
-
-def _sort_directory(directory, sort_by):
-    if sort_by == "handicap":
-        # Players with no handicap set sort to the bottom regardless of
-        # direction, rather than landing at 0/first -- "Not set" isn't a
-        # real handicap value and shouldn't look like the best one.
-        return sorted(directory, key=lambda row: (_handicap_value(row) is None, _handicap_value(row) or 0))
-    return sorted(directory, key=lambda row: _player_label(row).lower())
-
-
-def _directory_table(directory, sort_by):
-    ordered = _sort_directory(directory, sort_by)
-
-    if not ordered:
-        return html.P("No players in this club yet.", className="t3g-empty-state")
-
-    rows = [
-        html.Tr([html.Td(_player_label(row)), html.Td(_format_handicap(row))])
-        for row in ordered
-    ]
-
-    return dbc.Table(
-        [
-            html.Thead(html.Tr([html.Th("Name"), html.Th("Handicap")])),
-            html.Tbody(rows),
-        ],
-        className="t3g-club-directory-table",
-        bordered=False,
-        hover=True,
     )
 
 
@@ -285,6 +143,8 @@ def layout(slug=None, **kwargs):
         return _not_found_page()
     club = club_resp.json()
 
+    is_admin = bool(player_id) and str(club.get("club_admin")) == player_id
+
     directory_resp = requests.get(f"{API_BASE_URL}/handicaps/club/{club['id']}/latest")
     directory = directory_resp.json() if directory_resp.status_code == 200 else []
 
@@ -292,21 +152,8 @@ def layout(slug=None, **kwargs):
         className="t3g-page",
         children=[
             dcc.Store(id="club-id-store", data=club["id"]),
-            html.Div(
-                className="t3g-panel",
-                children=[
-                    html.Div(
-                        className="t3g-panel-navbar",
-                        children=html.H3(club.get("name", "Club"), className="t3g-panel-navbar-title"),
-                    ),
-                    html.Div(
-                        club["description"],
-                        className="t3g-panel-body t3g-empty-state",
-                    )
-                    if club.get("description")
-                    else None,
-                ],
-            ),
+            _admin_banner(is_admin),
+            html.H2(club.get("name", "Club"), className="t3g-club-heading"),
             _invite_panel(club, player_id),
             html.Div(
                 className="t3g-panel",
