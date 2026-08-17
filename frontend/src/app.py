@@ -40,7 +40,11 @@ server.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")  # requ
 dash.page_registry = dict(
     sorted(
         dash.page_registry.items(),
-        key=lambda item: item[1]["path_template"].count("/"),
+        # Pages registered with a static `path` (e.g. home.py's "/") instead
+        # of a `path_template` have path_template=None -- they have no <var>
+        # segments to be greedy about, so they're never the ambiguous side
+        # of a collision and can safely sort last.
+        key=lambda item: (item[1]["path_template"] or "").count("/"),
         reverse=True,
     )
 )

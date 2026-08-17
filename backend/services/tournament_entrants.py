@@ -183,3 +183,73 @@ def approve_entrant(tournament_id: str, player_id: str, admin_id: str) -> dict |
 
 def reject_entrant(tournament_id: str, player_id: str, admin_id: str) -> dict | None:
     return _respond_to_entrant(tournament_id, player_id, admin_id, "rejected")
+
+
+def admin_add_entrant(tournament_id: str, player_id: str, admin_id: str) -> dict:
+    """Admin adds a player directly as a confirmed entrant -- bypasses
+    entry_mode/handicap checks entirely, since those exist to gate
+    self-service applications, not an admin's own judgement call about who
+    should be in their tournament."""
+    tournament = _get_tournament(tournament_id)
+    if not tournament:
+        raise TournamentNotFoundError("Tournament not found.")
+
+    club = _get_club(tournament["club_id"])
+    if not club or str(club.get("club_admin")) != admin_id:
+        raise NotClubAdminError("Only this club's admin can add entrants.")
+
+    existing_response = (
+        supabase
+        .table("tournament_entrants")
+        .select("*")
+        .eq("tournament_id", tournament_id)
+        .eq("player_id", player_id)
+        .maybe_single()
+        .execute()
+    )
+    existing = existing_response.data if existing_response is not None else None
+    if existing and existing["status"] in ("pending", "confirmed"):
+        raise AlreadyEnteredError("Player has already entered this tournament.")
+
+    handicap_row = get_current_player_handicap(player_id)
+    handicap = handicap_row["handicap"] if handicap_row else None
+
+    payload = {
+        "tournament_id": tournament_id,
+        "player_id": player_id,
+        "status": "confirmed",
+        "handicap_at_entry": handicap,
+        "responded_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    if existing:
+        # A previous withdrawal/rejection left a row behind -- update it in
+        # place, same as enter_tournament does, so this doesn't hit the
+        # one-entry-per-player unique constraint with a fresh insert.
+        response = (
+            supabase
+            .table("tournament_entrants")
+            .update(payload)
+            .eq("id", existing["id"])
+            .execute()
+        )
+    else:
+        response = supabase.table("tournament_entrants").insert(payload).execute()
+
+    return response.data[0]
+
+
+def admin_remove_entrant(tournament_id: str, player_id: str, admin_id: str) -> dict | None:
+    """Admin-initiated removal of any entrant (pending or confirmed) --
+    unlike withdraw_entrant (which the player calls on themselves with no
+    separate auth check), this targets an arbitrary player_id, so it needs
+    its own admin check before reusing the same withdraw semantics."""
+    tournament = _get_tournament(tournament_id)
+    if not tournament:
+        raise TournamentNotFoundError("Tournament not found.")
+
+    club = _get_club(tournament["club_id"])
+    if not club or str(club.get("club_admin")) != admin_id:
+        raise NotClubAdminError("Only this club's admin can remove entrants.")
+
+    return withdraw_entrant(tournament_id, player_id)

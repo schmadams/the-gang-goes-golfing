@@ -1,6 +1,6 @@
 # target path: backend/services/tournaments.py (full replacement)
 from backend.database import supabase
-from backend.models.tournament import VALID_ENTRY_MODES, VALID_TOURNAMENT_FORMATS, TournamentCreate
+from backend.models.tournament import VALID_ENTRY_MODES, VALID_TOURNAMENT_FORMATS, TournamentCreate, TournamentUpdate
 
 _PLAYER_EMBED = "players(id, first_name, surname, nickname)"
 
@@ -159,6 +159,69 @@ def create_tournament(payload: TournamentCreate) -> dict:
     rounds_response = supabase.table("tournament_rounds").insert(round_rows).execute()
 
     return {**tournament, "rounds": _attach_course_names(rounds_response.data or []), "entrants": []}
+
+
+def update_tournament(tournament_id: str, payload: TournamentUpdate) -> dict:
+    existing_response = supabase.table("tournaments").select("*").eq("id", tournament_id).maybe_single().execute()
+    tournament = existing_response.data if existing_response is not None else None
+    if not tournament:
+        raise TournamentNotFoundError("Tournament not found.")
+
+    club = _get_club(tournament["club_id"])
+    if not club or str(club.get("club_admin")) != str(payload.admin_id):
+        raise NotClubAdminError("Only this club's admin can edit tournaments.")
+    if payload.format not in VALID_TOURNAMENT_FORMATS:
+        raise InvalidFormatError(f"Format must be one of: {', '.join(sorted(VALID_TOURNAMENT_FORMATS))}.")
+    if payload.entry_mode not in VALID_ENTRY_MODES:
+        raise InvalidEntryModeError(f"Entry mode must be one of: {', '.join(sorted(VALID_ENTRY_MODES))}.")
+    if not payload.rounds:
+        raise NoRoundsError("A tournament needs at least one round.")
+
+    tournament_response = (
+        supabase
+        .table("tournaments")
+        .update({
+            "name": payload.name,
+            "format": payload.format,
+            "entry_mode": payload.entry_mode,
+            "min_handicap": payload.min_handicap,
+            "max_handicap": payload.max_handicap,
+        })
+        .eq("id", tournament_id)
+        .execute()
+    )
+    updated_tournament = tournament_response.data[0]
+
+    # Rounds are replaced wholesale rather than diffed against the existing
+    # rows -- the edit form resubmits its entire round list every time
+    # (same shape create_tournament accepts), so delete-then-reinsert keeps
+    # round_number/order in sync with whatever the form now says without
+    # matching old rows to new ones by id. Safe today because nothing
+    # references tournament_rounds.id yet (no round-to-tournament scoring
+    # link exists -- see tournament.py's leaderboard placeholder); that
+    # assumption will need revisiting once scoring links actual played
+    # rounds to a specific tournament_rounds row.
+    supabase.table("tournament_rounds").delete().eq("tournament_id", tournament_id).execute()
+
+    round_rows = [
+        {
+            "tournament_id": tournament_id,
+            "round_number": index + 1,
+            "round_date": r.round_date.isoformat(),
+            "course_id": str(r.course_id),
+            "tee_id": str(r.tee_id),
+        }
+        for index, r in enumerate(payload.rounds)
+    ]
+    rounds_response = supabase.table("tournament_rounds").insert(round_rows).execute()
+
+    entrants_by_tournament = _fetch_entrants_by_tournament([tournament_id])
+
+    return {
+        **updated_tournament,
+        "rounds": _attach_course_names(rounds_response.data or []),
+        "entrants": entrants_by_tournament.get(tournament_id, []),
+    }
 
 
 def list_tournaments_for_club(club_id: str) -> list[dict]:

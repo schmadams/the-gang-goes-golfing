@@ -144,6 +144,47 @@
     margin-bottom: 0.15rem;
 }
 
+/* Create/Edit Tournament modals -- each logical group of fields (name +
+   format, who can enter, handicap range, rounds) sits in its own shaded
+   rounded section instead of running together as one long stack, same
+   "panelling" feel as the rest of the app. Sections stack with a gap;
+   the last one in the modal body sits flush against the footer, so it
+   skips the bottom margin. */
+.t3g-modal-section {
+    background: #f4f5f9;
+    border-radius: 12px;
+    padding: 1rem 1.1rem;
+    margin-bottom: 1rem;
+}
+
+.t3g-modal-section:last-of-type {
+    margin-bottom: 0;
+}
+
+/* Who-can-enter and Handicap range sit side by side inside one of these
+   rather than each taking a full-width section of their own -- the row
+   carries the margin-bottom to the next section, so the two child
+   sections lose theirs (higher specificity than the bare :last-of-type
+   rule above, so this always wins regardless of which one happens to be
+   last inside the row). */
+.t3g-modal-section-row {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.t3g-modal-section-row .t3g-modal-section {
+    flex: 1;
+    margin-bottom: 0;
+    min-width: 0; /* lets content (e.g. the handicap inputs) shrink instead of overflowing its half of the row */
+}
+
+@media (max-width: 640px) {
+    .t3g-modal-section-row {
+        flex-direction: column;
+    }
+}
+
 /* Create Tournament modal. "Rounds" reads as a left-aligned section
    heading here rather than the centered label .t3g-modal-label is
    elsewhere -- the second class wins on specificity without touching
@@ -152,25 +193,39 @@
     text-align: left;
 }
 
-/* One grid row per round: date / course / tees / remove, each in its own
-   fixed-width column. A flex-wrap row here wrapped inconsistently between
-   rounds -- a longer course name left less room for the tee/remove
-   fields on that row than a shorter one did on the next, so rows didn't
-   line up with each other. Grid columns are sized independently of any
-   field's own content, so every row breaks (if it breaks at all, on
-   narrow screens) at exactly the same point. */
+/* Round rows (create + edit modals) -- each one is its own rounded tile,
+   same treatment as .t3g-tournament-item's tiles and the .t3g-score-button
+   fields on the live round page, rather than a bordered table row. White
+   (rather than the app's usual light-gray tile background) because these
+   now sit inside .t3g-modal-section's own gray background -- gray-on-gray
+   would flatten the tiles out. A numbered label ("Round 1", "Round 2"...)
+   sits in the first column instead of a separate header row above the
+   list, so each tile reads on its own. Columns stay CSS Grid (not
+   flex-wrap) -- a flex-wrap row here previously wrapped inconsistently
+   between rounds (a longer course name left less room for the tee/remove
+   fields on that row than a shorter one did on the next); grid columns
+   are sized independently of any field's own content, so that can't
+   happen. */
 .t3g-tournament-round-row {
     display: grid;
-    grid-template-columns: 130px minmax(0, 1.4fr) minmax(0, 1fr) auto;
+    grid-template-columns: 70px 130px minmax(0, 1.4fr) minmax(0, 1fr) auto;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.6rem;
+    background: #ffffff;
+    border: 1px solid #e2e4ea;
+    border-radius: 10px;
+    padding: 0.65rem 0.9rem;
     margin-bottom: 0.6rem;
-    padding-bottom: 0.6rem;
-    border-bottom: 1px solid #eef0f7;
 }
 
 .t3g-tournament-round-row:last-of-type {
-    border-bottom: none;
+    margin-bottom: 0;
+}
+
+.t3g-tournament-round-number {
+    font-weight: 800;
+    color: #1e2a47;
+    font-size: 0.82rem;
 }
 
 .t3g-tournament-round-date,
@@ -180,13 +235,22 @@
     width: 100%;
 }
 
+/* Remove stays the same pill as every other secondary action button
+   (+ Add Round, Cancel, etc.) -- just a touch smaller so it sits
+   comfortably inside the row tile instead of a full-size pill. */
 .t3g-tournament-round-remove {
+    padding: 0.4rem 0.85rem;
+    font-size: 0.7rem;
     white-space: nowrap;
 }
 
 @media (max-width: 640px) {
     .t3g-tournament-round-row {
         grid-template-columns: 1fr 1fr;
+    }
+
+    .t3g-tournament-round-number {
+        grid-column: 1 / -1;
     }
 
     .t3g-tournament-round-remove {
@@ -196,11 +260,14 @@
 }
 
 /* Who-can-enter radio + handicap range inputs, both in the Create
-   Tournament modal. */
+   Tournament modal. Side by side rather than stacked -- there are only
+   ever two options, and a wrap fallback keeps this from overflowing a
+   narrow modal. */
 .t3g-tournament-entry-mode {
     display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 0.4rem 1.75rem;
     color: #374151;
     font-size: 0.9rem;
 }
@@ -211,19 +278,71 @@
     gap: 0.4rem;
 }
 
-.t3g-tournament-handicap-range {
-    display: flex;
-    align-items: center;
+/* Still a real <input type="radio"> under the hood (only one of the two
+   can ever be selected, which is the correct behavior here), just reskinned
+   from a circular dot to a square tick box -- appearance:none strips the
+   native radio rendering so the border/background/checkmark below are the
+   only thing drawn. */
+.t3g-tournament-entry-mode input[type="radio"] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 18px;
+    height: 18px;
+    margin: 0;
+    border: 2px solid #c21861;
+    border-radius: 4px;
+    background: #ffffff;
+    position: relative;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.t3g-tournament-entry-mode input[type="radio"]:checked {
+    background: #c21861;
+}
+
+.t3g-tournament-entry-mode input[type="radio"]:checked::after {
+    content: "";
+    position: absolute;
+    left: 4px;
+    top: 0;
+    width: 5px;
+    height: 9px;
+    border: solid #ffffff;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+}
+
+/* Min/max handicap use the exact same +/- stepper as live_round.py's
+   Shots/Putts entry (.t3g-stepper-row/-col/-label/.t3g-stepper/-button/
+   -value, all reused unchanged), just laid out horizontally instead of
+   vertically -- minus / value / plus in a row inside a wide pill, instead
+   of plus / value / minus stacked in a tall one. Everything else about the
+   pill (colors, the circular buttons, the bold value) is inherited as-is
+   from live_round.css. */
+/* .t3g-stepper.t3g-stepper--horizontal (compound, not two separate
+   selectors) so this always outranks live_round.css's plain .t3g-stepper
+   rule regardless of which asset file Dash happens to load second --
+   assets/ files load alphabetically, so live_round.css's flex-direction:
+   column was landing after this one in the cascade and winning on equal
+   specificity, silently cancelling the horizontal override out. */
+.t3g-stepper.t3g-stepper--horizontal {
+    flex-direction: row;
+    width: auto;
+    padding: 0.4rem 0.6rem;
     gap: 0.6rem;
 }
 
-.t3g-tournament-handicap-range input {
-    width: 90px;
+.t3g-stepper--horizontal .t3g-stepper-button {
+    width: 38px;
+    height: 38px;
+    font-size: 1.1rem;
 }
 
-.t3g-tournament-handicap-range-sep {
-    color: #6b7280;
-    font-size: 0.85rem;
+.t3g-stepper--horizontal .t3g-stepper-value {
+    font-size: 1.5rem;
+    min-height: 0;
+    min-width: 2.2rem;
 }
 
 /* Enter/Apply/Withdraw buttons on the tournament detail page's Entrants
@@ -233,4 +352,65 @@
     align-items: center;
     flex-wrap: wrap;
     gap: 0.6rem;
+}
+
+/* Tournament detail page subnav -- Info/Leaderboard tabs (client-side,
+   toggled by switch_tournament_tab in tournament.py) plus a real link back
+   to the club. Same navy/pill visual language as the main .t3g-navbar,
+   sized down and rounded to sit inside the page instead of spanning full
+   width. */
+.t3g-tournament-subnav {
+    background: #1e2a47;
+    border-radius: 10px;
+    margin-bottom: 1.25rem;
+}
+
+.t3g-tournament-subnav-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    padding: 0.75rem 1.25rem;
+}
+
+.t3g-tournament-tabs {
+    display: flex;
+    gap: 1.75rem;
+}
+
+.t3g-tournament-tab {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: rgba(255, 255, 255, 0.65) !important;
+    font-weight: 700;
+    text-transform: uppercase;
+    font-size: 0.8rem;
+    letter-spacing: 0.03em;
+    text-decoration: none !important;
+    cursor: pointer;
+    padding: 0.35rem 0.1rem;
+    transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.t3g-tournament-tab:hover {
+    color: #ffffff !important;
+}
+
+.t3g-tournament-tab--active {
+    color: #ffffff !important;
+    border-bottom-color: #8dc63f;
+}
+
+.t3g-tournament-subnav-back {
+    color: rgba(255, 255, 255, 0.8) !important;
+    font-weight: 700;
+    font-size: 0.8rem;
+    text-decoration: none !important;
+    white-space: nowrap;
+}
+
+.t3g-tournament-subnav-back:hover {
+    color: #ffffff !important;
 }

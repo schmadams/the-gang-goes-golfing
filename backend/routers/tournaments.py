@@ -1,12 +1,14 @@
 # target path: backend/routers/tournaments.py (full replacement)
 from fastapi import APIRouter, HTTPException, status
 
-from backend.models.tournament import TournamentCreate, TournamentEntrantCreate
+from backend.models.tournament import TournamentCreate, TournamentEntrantCreate, TournamentUpdate
 from backend.services.tournament_entrants import (
     AlreadyEnteredError,
     HandicapOutOfRangeError,
     NotClubAdminError as EntrantNotClubAdminError,
     TournamentNotFoundError as EntrantTournamentNotFoundError,
+    admin_add_entrant,
+    admin_remove_entrant,
     approve_entrant,
     enter_tournament,
     list_entrants_for_tournament,
@@ -19,9 +21,11 @@ from backend.services.tournaments import (
     InvalidFormatError,
     NoRoundsError,
     NotClubAdminError,
+    TournamentNotFoundError,
     create_tournament,
     get_tournament,
     list_tournaments_for_club,
+    update_tournament,
 )
 
 router = APIRouter(prefix="/tournaments", tags=["tournaments"])
@@ -50,6 +54,18 @@ def get_tournament_route(tournament_id: str):
     if not tournament:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tournament not found")
     return tournament
+
+
+@router.patch("/{tournament_id}")
+def update_tournament_route(tournament_id: str, payload: TournamentUpdate):
+    try:
+        return update_tournament(tournament_id, payload)
+    except TournamentNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    except NotClubAdminError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
+    except (InvalidFormatError, InvalidEntryModeError, NoRoundsError) as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
 
 
 @router.get("/{tournament_id}/entrants")
@@ -98,6 +114,31 @@ def reject_entrant_route(tournament_id: str, player_id: str, admin_id: str):
 @router.delete("/{tournament_id}/entrants/{player_id}")
 def withdraw_entrant_route(tournament_id: str, player_id: str):
     updated = withdraw_entrant(tournament_id, player_id)
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Entrant not found")
+    return updated
+
+
+@router.post("/{tournament_id}/entrants/{player_id}/add")
+def admin_add_entrant_route(tournament_id: str, player_id: str, admin_id: str):
+    try:
+        return admin_add_entrant(tournament_id, player_id, admin_id)
+    except EntrantTournamentNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    except EntrantNotClubAdminError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
+    except AlreadyEnteredError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+
+
+@router.delete("/{tournament_id}/entrants/{player_id}/admin")
+def admin_remove_entrant_route(tournament_id: str, player_id: str, admin_id: str):
+    try:
+        updated = admin_remove_entrant(tournament_id, player_id, admin_id)
+    except EntrantTournamentNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    except EntrantNotClubAdminError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
     if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Entrant not found")
     return updated

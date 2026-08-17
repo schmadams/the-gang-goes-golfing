@@ -29,6 +29,16 @@ class TournamentCreate(BaseModel):
     max_handicap: float | None = None
 
 
+class TournamentUpdate(BaseModel):
+    admin_id: UUID  # must match clubs.club_admin -- enforced in the service layer
+    name: str
+    format: str
+    rounds: list[TournamentRoundCreate]
+    entry_mode: str = "self"
+    min_handicap: float | None = None
+    max_handicap: float | None = None
+
+
 class TournamentRoundResponse(BaseModel):
     id: UUID
     tournament_id: UUID

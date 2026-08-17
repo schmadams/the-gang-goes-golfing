@@ -29,6 +29,34 @@ _TOURNAMENT_ENTRY_MODE_OPTIONS = [
     {"label": "Applications need approval", "value": "approval"},
 ]
 
+# WHS caps Handicap Index at 54.0 (backend/services/whs.py's
+# MAX_HANDICAP_INDEX) -- duplicated as a plain int here since the frontend
+# talks to the backend over HTTP only and can't import its Python modules
+# directly. -10 is just a practical floor for the min-handicap stepper
+# (elite/plus handicaps go negative, but not meaningfully past this) --
+# decrementing past it clears the field back to "unset" instead of
+# continuing further negative.
+_MAX_HANDICAP_INDEX = 54
+_MIN_HANDICAP_FLOOR = -10
+
+
+def _adjust_handicap_stepper(triggered_id, plus_id, minus_id, current):
+    """Shared +/- logic for the min/max handicap steppers. Plus starts an
+    unset field at 0 and climbs from there (capped at _MAX_HANDICAP_INDEX).
+    Minus is NOT the mirror of that -- unlike live_round.py's shots/putts
+    (where negative is meaningless, so minus from unset does nothing),
+    handicaps go negative for scratch/plus players, so minus from unset
+    should reach -1 on its own first press rather than needing a plus
+    press first to "start" the field at 0. Once set, minus climbs down and
+    clears back to "unset" once it hits _MIN_HANDICAP_FLOOR rather than
+    continuing further negative."""
+    value = current
+    if triggered_id == plus_id:
+        value = 0 if value is None else min(value + 1, _MAX_HANDICAP_INDEX)
+    elif triggered_id == minus_id:
+        value = -1 if value is None else (value - 1 if value > _MIN_HANDICAP_FLOOR else None)
+    return value, str(value) if value is not None else "–"
+
 
 def _player_label(row):
     return f"{row.get('first_name', '')} {row.get('surname', '')}".strip() or "Unknown player"
@@ -141,16 +169,31 @@ def _course_label(course):
     return f"{label} ({location})" if location else label
 
 
-def _tournament_round_row(index, course_options):
+def _tournament_round_row(index):
     """One row of the Create Tournament modal's round list -- date, course,
     and tees, all keyed by a stable per-row index so add/remove and the
     course->tee cascade (edit_tournament_rounds / load_tournament_round_tees
     below) can address a specific row via pattern-matching ids without the
-    others."""
+    others. Styled as its own soft rounded tile (same treatment as the
+    .t3g-score-button fields on the live round page and .t3g-tournament-item
+    tiles elsewhere on this page) rather than a bordered table row -- a
+    numbered label replaces the column-header row that used to sit above
+    the list, so each tile is self-labelled instead of needing to line up
+    against headings above it.
+
+    The course field starts with empty options and fills in as you type
+    (search_tournament_round_course_options below) instead of being handed
+    a full course list -- this used to be preloaded once at page load via
+    a shared options store so every row (including ones added later) could
+    reuse it without a fresh API call per row, but that meant loading this
+    page at all paid for fetching the entire course catalog regardless of
+    whether the modal was even opened. Same fix home.py's round-upload
+    course picker already got for the same reason."""
     return html.Div(
         id={"type": "tournament-round-row", "index": index},
         className="t3g-tournament-round-row",
         children=[
+            html.Span(f"Round {index + 1}", className="t3g-tournament-round-number"),
             dcc.DatePickerSingle(
                 id={"type": "tournament-round-date", "index": index},
                 placeholder="Date",
@@ -159,8 +202,9 @@ def _tournament_round_row(index, course_options):
             ),
             dcc.Dropdown(
                 id={"type": "tournament-round-course", "index": index},
-                options=course_options,
-                placeholder="Course",
+                options=[],
+                placeholder="Search course...",
+                searchable=True,
                 className="t3g-tournament-round-course",
             ),
             dcc.Dropdown(
@@ -234,7 +278,33 @@ def _tournaments_panel(is_admin, tournaments, slug):
     )
 
 
-def _tournament_modal(course_options):
+def _handicap_stepper(id_prefix, label):
+    """Same +/- stepper live_round.py's Shots/Putts entry uses
+    (.t3g-stepper / -button / -value / -label / -row / -col, all defined
+    once in live_round.css and shared globally via Dash's assets/ folder --
+    nothing to redeclare here), laid out horizontally instead of
+    vertically via the .t3g-stepper--horizontal modifier in club.css.
+    adjust_tournament_min_handicap/adjust_tournament_max_handicap below
+    hold the actual value in {id_prefix}-store; the display div just
+    mirrors it as text."""
+    return html.Div(
+        className="t3g-stepper-col",
+        children=[
+            html.Div(label, className="t3g-stepper-label"),
+            html.Div(
+                className="t3g-stepper t3g-stepper--horizontal",
+                children=[
+                    html.Button("–", id=f"{id_prefix}-minus", className="t3g-stepper-button", n_clicks=0),
+                    html.Div("–", id=f"{id_prefix}-display", className="t3g-stepper-value"),
+                    html.Button("+", id=f"{id_prefix}-plus", className="t3g-stepper-button", n_clicks=0),
+                ],
+            ),
+            dcc.Store(id=f"{id_prefix}-store", data=None),
+        ],
+    )
+
+
+def _tournament_modal():
     return dbc.Modal(
         id="tournament-modal",
         is_open=False,
@@ -243,47 +313,69 @@ def _tournament_modal(course_options):
             dbc.ModalHeader(dbc.ModalTitle("Create Tournament")),
             dbc.ModalBody(
                 children=[
-                    dbc.Input(
-                        id="tournament-name-input",
-                        placeholder="Tournament name",
-                        type="text",
-                        className="mb-2",
-                    ),
-                    dcc.Dropdown(
-                        id="tournament-format-input",
-                        options=_TOURNAMENT_FORMAT_OPTIONS,
-                        placeholder="Format",
-                        className="mb-3",
-                    ),
-                    html.Label("Who can enter", className="t3g-modal-label t3g-tournament-rounds-label"),
-                    dcc.RadioItems(
-                        id="tournament-entry-mode-input",
-                        options=_TOURNAMENT_ENTRY_MODE_OPTIONS,
-                        value="self",
-                        className="t3g-tournament-entry-mode mb-3",
-                    ),
-                    html.Label(
-                        "Handicap range (optional)",
-                        className="t3g-modal-label t3g-tournament-rounds-label",
-                    ),
                     html.Div(
-                        className="t3g-tournament-handicap-range mb-3",
+                        className="t3g-modal-section",
                         children=[
-                            dbc.Input(id="tournament-min-handicap-input", type="number", placeholder="Min"),
-                            html.Span("to", className="t3g-tournament-handicap-range-sep"),
-                            dbc.Input(id="tournament-max-handicap-input", type="number", placeholder="Max"),
+                            dbc.Input(
+                                id="tournament-name-input",
+                                placeholder="Tournament name",
+                                type="text",
+                                className="mb-2",
+                            ),
+                            dcc.Dropdown(
+                                id="tournament-format-input",
+                                options=_TOURNAMENT_FORMAT_OPTIONS,
+                                placeholder="Format",
+                            ),
                         ],
                     ),
-                    html.Label("Rounds", className="t3g-modal-label t3g-tournament-rounds-label"),
                     html.Div(
-                        id="tournament-rounds-container",
-                        children=[_tournament_round_row(0, course_options)],
+                        className="t3g-modal-section-row",
+                        children=[
+                            html.Div(
+                                className="t3g-modal-section",
+                                children=[
+                                    html.Label(
+                                        "Who can enter", className="t3g-modal-label t3g-tournament-rounds-label"
+                                    ),
+                                    dcc.RadioItems(
+                                        id="tournament-entry-mode-input",
+                                        options=_TOURNAMENT_ENTRY_MODE_OPTIONS,
+                                        value="self",
+                                        className="t3g-tournament-entry-mode",
+                                    ),
+                                ],
+                            ),
+                            html.Div(
+                                className="t3g-modal-section",
+                                children=[
+                                    html.Label("Handicap range (optional)", className="t3g-modal-label"),
+                                    html.Div(
+                                        className="t3g-stepper-row",
+                                        children=[
+                                            _handicap_stepper("tournament-min-handicap", "Min"),
+                                            _handicap_stepper("tournament-max-handicap", "Max"),
+                                        ],
+                                    ),
+                                ],
+                            ),
+                        ],
                     ),
-                    html.Button(
-                        "+ Add Round",
-                        id="tournament-add-round",
-                        className="t3g-panel-action-button t3g-panel-action-button--secondary mt-2",
-                        n_clicks=0,
+                    html.Div(
+                        className="t3g-modal-section",
+                        children=[
+                            html.Label("Rounds", className="t3g-modal-label t3g-tournament-rounds-label"),
+                            html.Div(
+                                id="tournament-rounds-container",
+                                children=[_tournament_round_row(0)],
+                            ),
+                            html.Button(
+                                "+ Add Round",
+                                id="tournament-add-round",
+                                className="t3g-panel-action-button t3g-panel-action-button--secondary mt-2",
+                                n_clicks=0,
+                            ),
+                        ],
                     ),
                     html.Div(id="tournament-error", className="text-danger mt-3"),
                 ],
@@ -334,14 +426,6 @@ def layout(slug=None, **kwargs):
     tournaments_resp = requests.get(f"{API_BASE_URL}/tournaments/club/{club['id']}")
     tournaments = tournaments_resp.json() if tournaments_resp.status_code == 200 else []
 
-    # Preloaded once here (same approach as home.py's round-creation modal)
-    # so every round row in the tournament modal, including ones added
-    # later via "+ Add Round", can populate its course dropdown from the
-    # tournament-course-options-store without a fresh API call per row.
-    courses_resp = requests.get(f"{API_BASE_URL}/courses/")
-    courses = courses_resp.json() if courses_resp.status_code == 200 else []
-    course_options = [{"label": _course_label(c), "value": c["id"]} for c in courses]
-
     return html.Div(
         # t3g-club-page scopes the more compact panel spacing in club.css
         # -- .t3g-panel/-navbar/-body are shared with every other page, so
@@ -350,7 +434,6 @@ def layout(slug=None, **kwargs):
         className="t3g-page t3g-club-page",
         children=[
             dcc.Store(id="club-id-store", data=club["id"]),
-            dcc.Store(id="tournament-course-options-store", data=course_options),
             _admin_banner(is_admin),
             _invite_panel(club, player_id),
             html.Div(
@@ -387,7 +470,7 @@ def layout(slug=None, **kwargs):
                     _tournaments_panel(is_admin, tournaments, slug),
                 ],
             ),
-            _tournament_modal(course_options),
+            _tournament_modal(),
             dcc.Location(id="tournament-redirect", refresh=True),
             dbc.Modal(
                 id="club-invite-sent-modal",
@@ -474,16 +557,15 @@ def close_club_invite_sent_modal(n_clicks):
     Input("tournament-add-round", "n_clicks"),
     Input({"type": "tournament-round-remove", "index": ALL}, "n_clicks"),
     State("tournament-rounds-container", "children"),
-    State("tournament-course-options-store", "data"),
     prevent_initial_call=True,
 )
-def edit_tournament_rounds(add_clicks, remove_clicks_list, current_rows, course_options):
+def edit_tournament_rounds(add_clicks, remove_clicks_list, current_rows):
     triggered_id = dash.ctx.triggered_id
     current_rows = current_rows or []
 
     if triggered_id == "tournament-add-round":
         next_index = max((row["props"]["id"]["index"] for row in current_rows), default=-1) + 1
-        return current_rows + [_tournament_round_row(next_index, course_options)]
+        return current_rows + [_tournament_round_row(next_index)]
 
     # A brand-new remove button (from a row just added above) can make
     # Dash re-fire this callback on its own, with triggered_id pointing at
@@ -504,6 +586,35 @@ def edit_tournament_rounds(add_clicks, remove_clicks_list, current_rows, course_
         return [row for row in current_rows if row["props"]["id"]["index"] != removed_index]
 
     return dash.no_update
+
+
+@callback(
+    Output({"type": "tournament-round-course", "index": MATCH}, "options"),
+    Input({"type": "tournament-round-course", "index": MATCH}, "search_value"),
+    Input({"type": "tournament-round-course", "index": MATCH}, "value"),
+    State({"type": "tournament-round-course", "index": MATCH}, "options"),
+    prevent_initial_call=True,
+)
+def search_tournament_round_course_options(search_value, selected_course_id, current_options):
+    # Same fix, same reasoning, as home.py's search_course_options -- see
+    # that function's docstring. MATCH keeps each round row's search bound
+    # only to its own course field, never another row's.
+    selected_option = next(
+        (opt for opt in (current_options or []) if opt["value"] == selected_course_id),
+        None,
+    )
+
+    if not search_value or len(search_value) < 2:
+        return [selected_option] if selected_option else []
+
+    response = requests.get(f"{API_BASE_URL}/courses/", params={"search": search_value})
+    courses = response.json() if response.status_code == 200 else []
+    options = [{"label": _course_label(c), "value": c["id"]} for c in courses]
+
+    if selected_option and not any(opt["value"] == selected_option["value"] for opt in options):
+        options.append(selected_option)
+
+    return options
 
 
 @callback(
@@ -539,47 +650,76 @@ def load_tournament_round_tees(course_id):
 
 
 @callback(
+    Output("tournament-min-handicap-store", "data"),
+    Output("tournament-min-handicap-display", "children"),
+    Input("tournament-min-handicap-plus", "n_clicks"),
+    Input("tournament-min-handicap-minus", "n_clicks"),
+    State("tournament-min-handicap-store", "data"),
+    prevent_initial_call=True,
+)
+def adjust_tournament_min_handicap(plus_clicks, minus_clicks, current):
+    return _adjust_handicap_stepper(
+        dash.ctx.triggered_id, "tournament-min-handicap-plus", "tournament-min-handicap-minus", current
+    )
+
+
+@callback(
+    Output("tournament-max-handicap-store", "data"),
+    Output("tournament-max-handicap-display", "children"),
+    Input("tournament-max-handicap-plus", "n_clicks"),
+    Input("tournament-max-handicap-minus", "n_clicks"),
+    State("tournament-max-handicap-store", "data"),
+    prevent_initial_call=True,
+)
+def adjust_tournament_max_handicap(plus_clicks, minus_clicks, current):
+    return _adjust_handicap_stepper(
+        dash.ctx.triggered_id, "tournament-max-handicap-plus", "tournament-max-handicap-minus", current
+    )
+
+
+@callback(
     Output("tournament-modal", "is_open"),
     Output("tournament-error", "children"),
-    Output("tournament-redirect", "pathname"),
+    Output("tournament-redirect", "href"),
     Output("tournament-rounds-container", "children", allow_duplicate=True),
     Output("tournament-name-input", "value"),
     Output("tournament-format-input", "value"),
     Output("tournament-entry-mode-input", "value"),
-    Output("tournament-min-handicap-input", "value"),
-    Output("tournament-max-handicap-input", "value"),
+    Output("tournament-min-handicap-store", "data", allow_duplicate=True),
+    Output("tournament-min-handicap-display", "children", allow_duplicate=True),
+    Output("tournament-max-handicap-store", "data", allow_duplicate=True),
+    Output("tournament-max-handicap-display", "children", allow_duplicate=True),
     Input("tournament-create-button", "n_clicks"),
     Input("tournament-cancel", "n_clicks"),
     Input("tournament-submit", "n_clicks"),
     State("tournament-name-input", "value"),
     State("tournament-format-input", "value"),
     State("tournament-entry-mode-input", "value"),
-    State("tournament-min-handicap-input", "value"),
-    State("tournament-max-handicap-input", "value"),
+    State("tournament-min-handicap-store", "data"),
+    State("tournament-max-handicap-store", "data"),
     State({"type": "tournament-round-date", "index": ALL}, "date"),
     State({"type": "tournament-round-course", "index": ALL}, "value"),
     State({"type": "tournament-round-tee", "index": ALL}, "value"),
     State("club-id-store", "data"),
     State("_pages_location", "pathname"),
-    State("tournament-course-options-store", "data"),
     prevent_initial_call=True,
 )
 def handle_tournament_modal(
     open_clicks, cancel_clicks, submit_clicks,
     name, format_value, entry_mode, min_handicap, max_handicap,
     round_dates, round_courses, round_tees,
-    club_id, current_pathname, course_options,
+    club_id, current_pathname,
 ):
     triggered_id = dash.ctx.triggered_id
-    no_update_rest = (dash.no_update,) * 6
+    no_update_rest = (dash.no_update,) * 8
 
     if triggered_id == "tournament-create-button":
         # Fresh modal every time it's opened -- one blank round row, no
-        # leftover name/format/entry settings from a previous cancelled
-        # attempt.
+        # leftover name/format/entry/handicap-range settings from a
+        # previous cancelled attempt.
         return (
-            True, "", dash.no_update, [_tournament_round_row(0, course_options)],
-            None, None, "self", None, None,
+            True, "", dash.no_update, [_tournament_round_row(0)],
+            None, None, "self", None, "–", None, "–",
         )
 
     if triggered_id == "tournament-cancel":

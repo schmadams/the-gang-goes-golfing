@@ -407,7 +407,7 @@ def select_external_course(n_clicks_list, candidates):
 
 @callback(
     Output("account-photo-error", "children"),
-    Output("account-photo-redirect", "pathname"),
+    Output("account-photo-redirect", "href"),
     Input("account-photo-upload", "contents"),
     State("account-photo-upload", "filename"),
     prevent_initial_call=True,
@@ -431,13 +431,16 @@ def handle_photo_upload(contents, filename):
     if response.status_code != 200:
         return "Couldn't upload that photo. Try again.", dash.no_update
 
-    # Reload the page so the new photo, freshly fetched, shows up.
-    return "", "/my-account"
+    # Reload the page so the new photo, freshly fetched, shows up. Cache-bust
+    # via _refresh_href() rather than the plain "/my-account" path -- if
+    # you're already sitting on /my-account (the normal case here),
+    # dcc.Location only reloads when the value actually changes.
+    return "", _refresh_href()
 
 
 @callback(
     Output("account-save-message", "children"),
-    Output("account-save-redirect", "pathname"),
+    Output("account-save-redirect", "href"),
     Input("account-save-button", "n_clicks"),
     State("account-first-name", "value"),
     State("account-surname", "value"),
@@ -478,7 +481,7 @@ def handle_save_profile(
 
 @callback(
     Output("account-handicap-message", "children"),
-    Output("account-handicap-redirect", "pathname"),
+    Output("account-handicap-redirect", "href"),
     Input("account-handicap-submit", "n_clicks"),
     State("account-handicap-input", "value"),
     prevent_initial_call=True,
