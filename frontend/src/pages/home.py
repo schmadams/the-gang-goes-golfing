@@ -44,14 +44,21 @@ def _course_label(course):
     return f"{label} ({location})" if location else label
 
 
-def _round_scorecard_card(round_data, player_initial, player_label):
-    """Renders one completed round as a mini traditional scorecard: hole
-    numbers across the top, a par row, and a scores row with the same
+def _round_scorecard_card(round_data, player_rows):
+    """Renders one round as a mini traditional scorecard: hole numbers
+    across the top, a par row, and one player row per entry in
+    player_rows (a single row for a solo/completed round, one row per
+    participant for a live round with other people in it), with the same
     birdie/bogey marks used on the live round page, plus OUT/IN/TOT/HCP/NET
-    summary columns."""
-    holes_by_number = {h["hole_number"]: h for h in (round_data.get("holes") or [])}
-    front9 = [holes_by_number.get(n, {"hole_number": n}) for n in range(1, 10)]
-    back9 = [holes_by_number.get(n, {"hole_number": n}) for n in range(10, 19)]
+    summary columns per row.
+
+    Each entry in player_rows is {"initial", "label", "holes", "handicap"}
+    -- "holes" is that player's own list of HoleScoreResponse-shaped dicts,
+    par/yardage included. Par (for the shared par row) is read off the
+    first row, since everyone in the same round shares the same course."""
+    reference_holes = {h["hole_number"]: h for h in (player_rows[0]["holes"] if player_rows else [])}
+    front9 = [reference_holes.get(n, {"hole_number": n}) for n in range(1, 10)]
+    back9 = [reference_holes.get(n, {"hole_number": n}) for n in range(10, 19)]
 
     def _sum_par(hole_subset):
         pars = [h.get("par") for h in hole_subset if h.get("par") is not None]
@@ -63,12 +70,6 @@ def _round_scorecard_card(round_data, player_initial, player_label):
 
     out_par, in_par = _sum_par(front9), _sum_par(back9)
     tot_par = out_par + in_par if out_par is not None and in_par is not None else None
-    out_strokes, in_strokes = _sum_strokes(front9), _sum_strokes(back9)
-    total_strokes = round_data.get("total_strokes")
-
-    handicap = round_data.get("handicap")
-    hcp_display = format_handicap(handicap)
-    net_display = round(total_strokes - handicap) if (handicap is not None and total_strokes is not None) else "—"
 
     def _hole_number_cells(hole_subset):
         return [html.Th(str(h["hole_number"])) for h in hole_subset]
@@ -111,31 +112,46 @@ def _round_scorecard_card(round_data, player_initial, player_label):
         ),
     )
 
-    player_row = html.Tr(
-        className="t3g-history-player-row",
-        children=(
-            [
-                html.Td(
-                    html.Div(
-                        [
-                            html.Div(player_initial, className="t3g-history-player-avatar"),
-                            html.Span(player_label),
-                        ],
-                        className="t3g-history-player-cell",
+    def _build_player_row(row):
+        holes_by_number = {h["hole_number"]: h for h in row["holes"]}
+        row_front9 = [holes_by_number.get(n, {"hole_number": n}) for n in range(1, 10)]
+        row_back9 = [holes_by_number.get(n, {"hole_number": n}) for n in range(10, 19)]
+        out_strokes, in_strokes = _sum_strokes(row_front9), _sum_strokes(row_back9)
+        total_strokes = (
+            out_strokes + in_strokes
+            if out_strokes is not None and in_strokes is not None
+            else None
+        )
+
+        handicap = row.get("handicap")
+        hcp_display = format_handicap(handicap)
+        net_display = round(total_strokes - handicap) if (handicap is not None and total_strokes is not None) else "—"
+
+        return html.Tr(
+            className="t3g-history-player-row",
+            children=(
+                [
+                    html.Td(
+                        html.Div(
+                            [
+                                html.Div(row["initial"], className="t3g-history-player-avatar"),
+                                html.Span(row["label"]),
+                            ],
+                            className="t3g-history-player-cell",
+                        )
                     )
-                )
-            ]
-            + _score_cells(front9)
-            + [html.Td(out_strokes if out_strokes is not None else "—", className="t3g-history-summary-cell")]
-            + _score_cells(back9)
-            + [
-                html.Td(in_strokes if in_strokes is not None else "—", className="t3g-history-summary-cell"),
-                html.Td(total_strokes if total_strokes is not None else "—", className="t3g-history-summary-cell"),
-                html.Td(hcp_display, className="t3g-history-summary-cell"),
-                html.Td(net_display, className="t3g-history-summary-cell"),
-            ]
-        ),
-    )
+                ]
+                + _score_cells(row_front9)
+                + [html.Td(out_strokes if out_strokes is not None else "—", className="t3g-history-summary-cell")]
+                + _score_cells(row_back9)
+                + [
+                    html.Td(in_strokes if in_strokes is not None else "—", className="t3g-history-summary-cell"),
+                    html.Td(total_strokes if total_strokes is not None else "—", className="t3g-history-summary-cell"),
+                    html.Td(hcp_display, className="t3g-history-summary-cell"),
+                    html.Td(net_display, className="t3g-history-summary-cell"),
+                ]
+            ),
+        )
 
     is_live = round_data.get("status") == "in_progress"
     header_children = [html.Span(round_header_label(round_data), className="t3g-round-card-title")]
@@ -157,7 +173,7 @@ def _round_scorecard_card(round_data, player_initial, player_label):
                     className="t3g-history-scorecard-table",
                     children=[
                         html.Thead([header_row, par_row]),
-                        html.Tbody([player_row]),
+                        html.Tbody([_build_player_row(row) for row in player_rows]),
                     ],
                 ),
             ),
@@ -462,15 +478,6 @@ def layout(**kwargs):
             "You're not in any clubs yet.", className="t3g-empty-state"
         )
 
-    # Preload every cached club (a few hundred rows -- cheap) so the round
-    # course picker can filter client-side, same approach as My Account's
-    # home-course field. Value here is the internal course id (not just a
-    # display string), since we need it to look up/import tees.
-    with _timed("GET /courses/"):
-        courses_resp = requests.get(f"{API_BASE_URL}/courses/")
-    courses = courses_resp.json() if courses_resp.status_code == 200 else []
-    course_options = [{"label": _course_label(c), "value": c["id"]} for c in courses]
-
     with _timed(f"GET /friends/player/{player_id}"):
         friends_resp = requests.get(f"{API_BASE_URL}/friends/player/{player_id}")
     friends = friends_resp.json() if friends_resp.status_code == 200 else []
@@ -530,6 +537,59 @@ def layout(**kwargs):
 
     live_round_section = None
     if live_round:
+        # The Rounds History endpoint only ever returns *your* scorecard
+        # (RoundSummaryResponse is deliberately single-player -- see its
+        # docstring), so a round with other people in it needs the full
+        # detail lookup (RoundDetailResponse) to get everyone's holes.
+        with _timed(f"GET /rounds/{live_round['id']}"):
+            live_round_detail_resp = requests.get(f"{API_BASE_URL}/rounds/{live_round['id']}")
+        live_round_detail = live_round_detail_resp.json() if live_round_detail_resp.status_code == 200 else None
+
+        if live_round_detail and live_round_detail.get("players"):
+            live_round_player_rows = []
+            for participant in live_round_detail["players"]:
+                participant_id = str(participant.get("player_id"))
+                label = (
+                    participant.get("nickname")
+                    or f"{participant.get('first_name', '')} {participant.get('surname', '')}".strip()
+                    or "Player"
+                )
+                if participant_id == player_id:
+                    # Already fetched above for the Handicap panel -- no
+                    # need for a second lookup for your own row.
+                    label = f"{label} (you)"
+                    participant_handicap = current_handicap
+                else:
+                    with _timed(f"GET /handicaps/player/{participant_id}/current"):
+                        participant_handicap_resp = requests.get(
+                            f"{API_BASE_URL}/handicaps/player/{participant_id}/current"
+                        )
+                    participant_handicap = (
+                        participant_handicap_resp.json().get("handicap")
+                        if participant_handicap_resp.status_code == 200
+                        else None
+                    )
+                live_round_player_rows.append(
+                    {
+                        "initial": label[0].upper() if label else "?",
+                        "label": label,
+                        "holes": participant.get("holes") or [],
+                        "handicap": participant_handicap,
+                    }
+                )
+        else:
+            # Detail lookup failed for some reason -- fall back to just
+            # your own row from the summary data already in hand, same as
+            # this panel behaved before it became multiplayer-aware.
+            live_round_player_rows = [
+                {
+                    "initial": player_info["initial"],
+                    "label": player_info["label"],
+                    "holes": live_round.get("holes") or [],
+                    "handicap": live_round.get("handicap"),
+                }
+            ]
+
         live_round_section = html.Div(
             className="t3g-panel",
             children=[
@@ -543,7 +603,7 @@ def layout(**kwargs):
                     ),
                 ),
                 html.Div(
-                    _round_scorecard_card(live_round, player_info["initial"], player_info["label"]),
+                    _round_scorecard_card(live_round_detail or live_round, live_round_player_rows),
                     className="t3g-panel-body",
                 ),
             ],
@@ -747,8 +807,15 @@ def layout(**kwargs):
                         [
                             dcc.Dropdown(
                                 id="upload-round-course",
-                                placeholder="Search for the course you played",
-                                options=course_options,
+                                placeholder="Type to search for the course you played",
+                                # No options preloaded -- used to eagerly fetch
+                                # every cached course (thousands of rows once
+                                # the regions crawl finished) on every home
+                                # page load just in case this modal got
+                                # opened, which is what made it feel slow to
+                                # open. search_course_options below fills
+                                # this in live as you type instead.
+                                options=[],
                                 searchable=True,
                                 clearable=True,
                                 className="mb-2 t3g-course-dropdown",
@@ -979,6 +1046,49 @@ def toggle_manual_entry(n_clicks, is_manual):
 
 
 @callback(
+    Output("upload-round-course", "options"),
+    Input("upload-round-course", "search_value"),
+    Input("upload-round-course", "value"),
+    State("upload-round-course", "options"),
+    prevent_initial_call=True,
+)
+def search_course_options(search_value, selected_course_id, current_options):
+    # Replaces preloading every cached course at page load -- this fires
+    # per keystroke instead, but each call is a targeted ILIKE query
+    # against our own DB (search_local_courses), not the external API, so
+    # it's fast even though it runs more often. Requiring 2+ characters
+    # avoids firing on the first keystroke, when the result set would be
+    # huge and least useful anyway.
+    #
+    # Picking an option clears search_value (the dropdown closes), which
+    # used to wipe `options` back to [] on the very next call -- with no
+    # entry left for the id you just picked, the dropdown had no label to
+    # show and rendered blank even though `value` was set correctly. Since
+    # search_value and value change together on selection, both are
+    # Inputs here so they land in the same callback call, and
+    # current_options (State, still holding the pre-change list) still has
+    # the just-picked course's label -- pin that one back into whatever
+    # this call returns so the selection keeps showing.
+    selected_option = next(
+        (opt for opt in (current_options or []) if opt["value"] == selected_course_id),
+        None,
+    )
+
+    if not search_value or len(search_value) < 2:
+        return [selected_option] if selected_option else []
+
+    with _timed(f"GET /courses/?search={search_value}"):
+        response = requests.get(f"{API_BASE_URL}/courses/", params={"search": search_value})
+    courses = response.json() if response.status_code == 200 else []
+    options = [{"label": _course_label(c), "value": c["id"]} for c in courses]
+
+    if selected_option and not any(opt["value"] == selected_option["value"] for opt in options):
+        options.append(selected_option)
+
+    return options
+
+
+@callback(
     Output("upload-round-tee", "options"),
     Output("upload-round-tee", "disabled"),
     Output("upload-round-tee-status", "children"),
@@ -1150,7 +1260,17 @@ def render_rounds_page(page, completed_rounds, player_info):
     page_rounds = completed_rounds[start:start + _ROUNDS_PER_PAGE]
 
     cards = [
-        _round_scorecard_card(r, player_info.get("initial", "Y"), player_info.get("label", "You"))
+        _round_scorecard_card(
+            r,
+            [
+                {
+                    "initial": player_info.get("initial", "Y"),
+                    "label": player_info.get("label", "You"),
+                    "holes": r.get("holes") or [],
+                    "handicap": r.get("handicap"),
+                }
+            ],
+        )
         for r in page_rounds
     ]
 

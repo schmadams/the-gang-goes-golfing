@@ -24,6 +24,29 @@ app = dash.Dash(
 server = app.server  # exposed so gunicorn/wsgi can target `app:server` in prod
 server.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")  # required for Flask sessions
 
+# Dash Pages matches a URL against every registered path_template in
+# page_registry order and returns the FIRST match -- it does not prefer the
+# most specific one. Its matching also isn't slash-aware: <var> compiles to
+# a greedy (.*), so a short template like /clubs/<slug> also matches a
+# longer path like /clubs/<slug>/tournaments/<tournament_id>. Since pages
+# are registered in file-import order (roughly alphabetical -- club.py
+# before tournament.py), every visit to a tournament page was matching
+# club.py's route first, with the whole "tournaments/<id>" tail folded into
+# slug, which then 404'd against the clubs API and rendered "Club not
+# found." Re-sorting the registry so templates with more path segments
+# (i.e. more specific/nested routes) are tried first fixes this for any
+# current or future nested route under /clubs/<slug>/... -- shorter,
+# less-specific templates still match correctly once nothing deeper does.
+dash.page_registry = dict(
+    sorted(
+        dash.page_registry.items(),
+        key=lambda item: item[1]["path_template"].count("/"),
+        reverse=True,
+    )
+)
+dash._pages.PAGE_REGISTRY.clear()
+dash._pages.PAGE_REGISTRY.update(dash.page_registry)
+
 
 def serve_layout():
     # A function (not a static value) so this re-evaluates on every fresh

@@ -342,20 +342,54 @@ def _gather_round_inputs(player_id: str) -> list[RoundInput]:
     )
     completed_rounds = rounds_response.data or []
 
+    # Batched instead of 3 queries *per round* (tee, its holes, this
+    # player's scores) -- with a handful of completed rounds that was
+    # already 15+ sequential round trips, and the handicap breakdown is
+    # recomputed on every home page load, so it was the single slowest
+    # thing on that page. Same fix as rounds.py's
+    # _batch_fetch_round_hydration for the same reason.
+    completed_round_ids = [r["id"] for r in completed_rounds]
+    tee_ids = list({r["tee_id"] for r in completed_rounds if r.get("tee_id")})
+
+    tee_by_id: dict[str, dict] = {}
+    holes_by_tee_id: dict[str, dict[int, dict]] = {}
+    if tee_ids:
+        tees_response = (
+            supabase.table("course_tees")
+            .select("id, course_rating, slope_rating")
+            .in_("id", tee_ids)
+            .execute()
+        )
+        tee_by_id = {t["id"]: t for t in (tees_response.data or [])}
+
+        holes_response = (
+            supabase.table("course_holes")
+            .select("tee_id, hole_number, par, stroke_index")
+            .in_("tee_id", tee_ids)
+            .execute()
+        )
+        for hole in (holes_response.data or []):
+            holes_by_tee_id.setdefault(hole["tee_id"], {})[hole["hole_number"]] = hole
+
+    scores_by_round_id: dict[str, dict[int, dict]] = {}
+    if completed_round_ids:
+        scores_response = (
+            supabase.table("round_scores")
+            .select("round_id, hole_number, strokes")
+            .in_("round_id", completed_round_ids)
+            .eq("player_id", player_id)
+            .execute()
+        )
+        for score in (scores_response.data or []):
+            scores_by_round_id.setdefault(score["round_id"], {})[score["hole_number"]] = score
+
     round_inputs: list[RoundInput] = []
     for round_row in completed_rounds:
         tee_id = round_row.get("tee_id")
         if not tee_id:
             continue
 
-        tee_response = (
-            supabase.table("course_tees")
-            .select("course_rating, slope_rating")
-            .eq("id", tee_id)
-            .maybe_single()
-            .execute()
-        )
-        tee = tee_response.data if tee_response is not None else None
+        tee = tee_by_id.get(tee_id)
         if not tee or tee.get("course_rating") is None or tee.get("slope_rating") is None:
             # No rating/slope for this tee -- e.g. a manually-entered
             # round where the owner skipped the optional rating fields,
@@ -363,22 +397,10 @@ def _gather_round_inputs(player_id: str) -> list[RoundInput]:
             # for. This round just doesn't contribute a differential.
             continue
 
-        holes_response = (
-            supabase.table("course_holes")
-            .select("hole_number, par, stroke_index")
-            .eq("tee_id", tee_id)
-            .execute()
-        )
-        holes_by_number = {h["hole_number"]: h for h in (holes_response.data or [])}
-
-        scores_response = (
-            supabase.table("round_scores")
-            .select("hole_number, strokes")
-            .eq("round_id", round_row["id"])
-            .eq("player_id", player_id)
-            .execute()
-        )
-        strokes_by_number = {s["hole_number"]: s.get("strokes") for s in (scores_response.data or [])}
+        holes_by_number = holes_by_tee_id.get(tee_id, {})
+        strokes_by_number = {
+            n: s.get("strokes") for n, s in scores_by_round_id.get(round_row["id"], {}).items()
+        }
 
         holes: list[HoleInput] = []
         complete = True

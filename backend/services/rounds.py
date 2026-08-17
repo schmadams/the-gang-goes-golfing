@@ -397,7 +397,71 @@ def respond_to_round_invite(round_id: str, player_id: str, accept: bool) -> dict
     return get_round(round_id, viewer_player_id=player_id)
 
 
-def _build_round_summary(round_row: dict, player_id: str, handicap: float | None) -> dict:
+def _batch_fetch_round_hydration(rounds: list[dict], player_id: str) -> tuple[dict, dict, dict]:
+    """
+    Prefetches everything _build_round_summary needs for a whole batch of
+    rounds in 3 queries total, instead of the 2-3 queries *per round* it
+    used to run (list_player_rounds' home page load went from ~15
+    sequential round trips for 5 rounds to 3 -- worse the more rounds
+    share the same tee, since each repeat used to refetch identical tee/
+    course_holes data). Returns (tee_by_id, holes_by_tee_id,
+    scores_by_round_id) -- each a plain in-memory lookup, safe to reuse
+    across every round in the batch.
+    """
+    tee_ids = list({r["tee_id"] for r in rounds if r.get("tee_id")})
+    round_ids = [r["id"] for r in rounds]
+
+    tee_by_id: dict[str, dict] = {}
+    holes_by_tee_id: dict[str, dict[int, dict]] = {}
+    if tee_ids:
+        with _timed(f"fetch {len(tee_ids)} tee(s) (+courses) for round batch"):
+            tees_response = (
+                supabase
+                .table("course_tees")
+                .select("*, courses(club_name, course_name)")
+                .in_("id", tee_ids)
+                .execute()
+            )
+        tee_by_id = {t["id"]: t for t in (tees_response.data or [])}
+
+        with _timed(f"fetch course_holes for {len(tee_ids)} tee(s) in round batch"):
+            holes_response = (
+                supabase
+                .table("course_holes")
+                .select("*")
+                .in_("tee_id", tee_ids)
+                .order("hole_number")
+                .execute()
+            )
+        for hole in (holes_response.data or []):
+            holes_by_tee_id.setdefault(hole["tee_id"], {})[hole["hole_number"]] = hole
+
+    scores_by_round_id: dict[str, dict[int, dict]] = {}
+    if round_ids:
+        with _timed(f"fetch round_scores for {len(round_ids)} round(s) player {player_id}"):
+            scores_response = (
+                supabase
+                .table("round_scores")
+                .select("round_id, hole_number, strokes, putts, fairway_hit")
+                .in_("round_id", round_ids)
+                .eq("player_id", player_id)
+                .order("hole_number")
+                .execute()
+            )
+        for score in (scores_response.data or []):
+            scores_by_round_id.setdefault(score["round_id"], {})[score["hole_number"]] = score
+
+    return tee_by_id, holes_by_tee_id, scores_by_round_id
+
+
+def _build_round_summary(
+    round_row: dict,
+    player_id: str,
+    handicap: float | None,
+    tee_by_id: dict,
+    holes_by_tee_id: dict,
+    scores_by_round_id: dict,
+) -> dict:
     """
     Shared by list_player_rounds (Rounds History / Scoring History) and
     get_player_analysis (Player Analysis charts) -- both need the same
@@ -405,53 +469,25 @@ def _build_round_summary(round_row: dict, player_id: str, handicap: float | None
     course_holes, and handicap-adjusted net strokes / Stableford points
     per hole) for one specific player's own scorecard within a round they
     belong to (owner or accepted participant), not everyone's.
+
+    Takes the batch-prefetched lookups from _batch_fetch_round_hydration
+    instead of querying itself -- callers run that once per batch, not
+    once per round.
     """
     club_name = round_row.get("manual_club_name")
     course_name = None
     tee_name = round_row.get("manual_tee_name")
     course_holes_by_number = {}
 
-    if round_row.get("tee_id"):
-        with _timed(f"fetch tee {round_row['tee_id']} (+course) for round {round_row['id']}"):
-            tee_response = (
-                supabase
-                .table("course_tees")
-                .select("*, courses(club_name, course_name)")
-                .eq("id", round_row["tee_id"])
-                .maybe_single()
-                .execute()
-            )
-        tee = tee_response.data if tee_response is not None else None
-        if tee:
-            tee_name = tee["name"]
-            course_info = tee.get("courses") or {}
-            club_name = course_info.get("club_name") or club_name
-            course_name = course_info.get("course_name")
+    tee = tee_by_id.get(round_row.get("tee_id"))
+    if tee:
+        tee_name = tee["name"]
+        course_info = tee.get("courses") or {}
+        club_name = course_info.get("club_name") or club_name
+        course_name = course_info.get("course_name")
+        course_holes_by_number = holes_by_tee_id.get(tee["id"], {})
 
-            with _timed(f"fetch course_holes for tee {tee['id']}"):
-                holes_response = (
-                    supabase
-                    .table("course_holes")
-                    .select("*")
-                    .eq("tee_id", tee["id"])
-                    .order("hole_number")
-                    .execute()
-                )
-            course_holes_by_number = {
-                h["hole_number"]: h for h in (holes_response.data or [])
-            }
-
-    with _timed(f"fetch round_scores for round {round_row['id']} player {player_id}"):
-        scores_response = (
-            supabase
-            .table("round_scores")
-            .select("hole_number, strokes, putts, fairway_hit")
-            .eq("round_id", round_row["id"])
-            .eq("player_id", player_id)
-            .order("hole_number")
-            .execute()
-        )
-    scores_by_hole = {s["hole_number"]: s for s in (scores_response.data or [])}
+    scores_by_hole = scores_by_round_id.get(round_row["id"], {})
 
     holes = []
     for hole_number in range(1, 19):
@@ -547,7 +583,11 @@ def list_player_rounds(player_id: str, limit: int = 20) -> list[dict]:
         handicap_row = get_current_player_handicap(player_id)
     handicap = handicap_row["handicap"] if handicap_row else None
 
-    return [_build_round_summary(round_row, player_id, handicap) for round_row in rounds]
+    tee_by_id, holes_by_tee_id, scores_by_round_id = _batch_fetch_round_hydration(rounds, player_id)
+    return [
+        _build_round_summary(round_row, player_id, handicap, tee_by_id, holes_by_tee_id, scores_by_round_id)
+        for round_row in rounds
+    ]
 
 
 def get_player_analysis(player_id: str, window: int = 5) -> list[dict]:
@@ -586,9 +626,13 @@ def get_player_analysis(player_id: str, window: int = 5) -> list[dict]:
         )
     completed_rounds = response.data or []
 
+    tee_by_id, holes_by_tee_id, scores_by_round_id = _batch_fetch_round_hydration(completed_rounds, player_id)
+
     points = []
     for round_row in completed_rounds:
-        summary = _build_round_summary(round_row, player_id, handicap=None)
+        summary = _build_round_summary(
+            round_row, player_id, None, tee_by_id, holes_by_tee_id, scores_by_round_id
+        )
         putts_total, fairway_pct = _round_putts_and_fairway_pct(summary["holes"])
         points.append({
             "date": (round_row.get("completed_at") or "")[:10],

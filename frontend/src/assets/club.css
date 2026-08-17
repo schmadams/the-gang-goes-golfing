@@ -20,12 +20,20 @@
     padding: 0.5rem 0.75rem;
     color: #1e2a47;
 }
-.t3g-club-heading {
-    margin: 0 0 1rem;
-    padding: 0 0.25rem;
-    font-size: 1.5rem;
-    font-weight: 800;
-    color: #1e2a47;
+/* Tighter panel spacing for this page only -- .t3g-panel/-navbar/-body
+   are shared globally, so these overrides are scoped under
+   .t3g-club-page (set on the page's root div) rather than changing them
+   everywhere. */
+.t3g-club-page .t3g-panel {
+    margin-bottom: 1.25rem;
+}
+
+.t3g-club-page .t3g-panel-navbar {
+    padding: 0.75rem 1.1rem;
+}
+
+.t3g-club-page .t3g-panel-body {
+    padding: 1rem 1.1rem;
 }
 
 /* Admin status strip -- styled after layouts/subnav.py's full-width bar,
@@ -44,4 +52,185 @@
     font-weight: 700;
     font-size: 0.9rem;
     text-align: center;
+}
+
+/* Tournaments panel body on the club page -- one solid tile per
+   tournament, same treatment as Your Clubs' .t3g-clubs-list/.t3g-club-item
+   on the home page (light background, rounded, hover lift). The
+   !important overrides matter here for the same reason they're on
+   .t3g-club-item: this is a dcc.Link (an <a> tag), and without them the
+   browser/Bootstrap default link color and underline win out over a
+   plain (non-!important) override. */
+.t3g-tournament-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.t3g-tournament-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    background: #f4f5f9;
+    border-radius: 10px;
+    padding: 1rem 1.25rem;
+    color: #1e2a47 !important;
+    text-decoration: none !important;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.t3g-tournament-item:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
+}
+
+.t3g-tournament-item-title-group {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    min-width: 0;
+}
+
+.t3g-tournament-item-title {
+    font-weight: 700;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.t3g-tournament-item-meta {
+    color: #6b7280;
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+/* Tournament Info panel on the tournament detail page -- same visual
+   language the old Tournaments-panel card used, reused here instead of
+   the row layout above. */
+.t3g-tournament-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.5rem;
+}
+
+.t3g-tournament-card-title {
+    font-weight: 700;
+    color: #1e2a47;
+    font-size: 1.05rem;
+}
+
+.t3g-tournament-format-badge {
+    background: #eef0f7;
+    color: #1e2a47;
+    border-radius: 999px;
+    padding: 0.2rem 0.65rem;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+}
+
+.t3g-tournament-round-list {
+    margin: 0;
+    padding-left: 1.1rem;
+    color: #374151;
+    font-size: 0.9rem;
+}
+
+.t3g-tournament-round-list li {
+    margin-bottom: 0.15rem;
+}
+
+/* Create Tournament modal. "Rounds" reads as a left-aligned section
+   heading here rather than the centered label .t3g-modal-label is
+   elsewhere -- the second class wins on specificity without touching
+   that shared rule's other uses. */
+.t3g-tournament-rounds-label {
+    text-align: left;
+}
+
+/* One grid row per round: date / course / tees / remove, each in its own
+   fixed-width column. A flex-wrap row here wrapped inconsistently between
+   rounds -- a longer course name left less room for the tee/remove
+   fields on that row than a shorter one did on the next, so rows didn't
+   line up with each other. Grid columns are sized independently of any
+   field's own content, so every row breaks (if it breaks at all, on
+   narrow screens) at exactly the same point. */
+.t3g-tournament-round-row {
+    display: grid;
+    grid-template-columns: 130px minmax(0, 1.4fr) minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.6rem;
+    padding-bottom: 0.6rem;
+    border-bottom: 1px solid #eef0f7;
+}
+
+.t3g-tournament-round-row:last-of-type {
+    border-bottom: none;
+}
+
+.t3g-tournament-round-date,
+.t3g-tournament-round-course,
+.t3g-tournament-round-tee {
+    min-width: 0; /* lets a dropdown/date field shrink inside its grid column instead of forcing the row to overflow */
+    width: 100%;
+}
+
+.t3g-tournament-round-remove {
+    white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+    .t3g-tournament-round-row {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .t3g-tournament-round-remove {
+        grid-column: 1 / -1;
+        justify-self: start;
+    }
+}
+
+/* Who-can-enter radio + handicap range inputs, both in the Create
+   Tournament modal. */
+.t3g-tournament-entry-mode {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    color: #374151;
+    font-size: 0.9rem;
+}
+
+.t3g-tournament-entry-mode label {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.t3g-tournament-handicap-range {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+}
+
+.t3g-tournament-handicap-range input {
+    width: 90px;
+}
+
+.t3g-tournament-handicap-range-sep {
+    color: #6b7280;
+    font-size: 0.85rem;
+}
+
+/* Enter/Apply/Withdraw buttons on the tournament detail page's Entrants
+   panel. */
+.t3g-tournament-my-entry {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.6rem;
 }
