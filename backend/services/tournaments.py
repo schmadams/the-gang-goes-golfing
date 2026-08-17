@@ -1,6 +1,13 @@
 # target path: backend/services/tournaments.py (full replacement)
 from backend.database import supabase
-from backend.models.tournament import VALID_ENTRY_MODES, VALID_TOURNAMENT_FORMATS, TournamentCreate, TournamentUpdate
+from backend.models.tournament import (
+    VALID_ENTRY_MODES,
+    VALID_GROUPING_METHODS,
+    VALID_TOURNAMENT_FORMATS,
+    TournamentCreate,
+    TournamentUpdate,
+)
+from backend.services.tournament_tee_times import fetch_tee_times_by_round
 
 _PLAYER_EMBED = "players(id, first_name, surname, nickname)"
 
@@ -20,6 +27,10 @@ class InvalidFormatError(Exception):
 
 class InvalidEntryModeError(Exception):
     """Raised when entry_mode isn't one of VALID_ENTRY_MODES."""
+
+
+class InvalidGroupingMethodError(Exception):
+    """Raised when grouping_method isn't one of VALID_GROUPING_METHODS."""
 
 
 class NoRoundsError(Exception):
@@ -81,6 +92,10 @@ def _fetch_rounds_by_tournament(tournament_ids: list[str]) -> dict[str, list[dic
     )
     enriched = _attach_course_names(rounds_response.data or [])
 
+    tee_times_by_round = fetch_tee_times_by_round([r["id"] for r in enriched])
+    for r in enriched:
+        r["tee_times"] = tee_times_by_round.get(r["id"], [])
+
     grouped: dict[str, list[dict]] = {}
     for r in enriched:
         grouped.setdefault(r["tournament_id"], []).append(r)
@@ -127,6 +142,10 @@ def create_tournament(payload: TournamentCreate) -> dict:
         raise InvalidFormatError(f"Format must be one of: {', '.join(sorted(VALID_TOURNAMENT_FORMATS))}.")
     if payload.entry_mode not in VALID_ENTRY_MODES:
         raise InvalidEntryModeError(f"Entry mode must be one of: {', '.join(sorted(VALID_ENTRY_MODES))}.")
+    if payload.grouping_method not in VALID_GROUPING_METHODS:
+        raise InvalidGroupingMethodError(
+            f"Grouping method must be one of: {', '.join(sorted(VALID_GROUPING_METHODS))}."
+        )
     if not payload.rounds:
         raise NoRoundsError("A tournament needs at least one round.")
 
@@ -141,6 +160,7 @@ def create_tournament(payload: TournamentCreate) -> dict:
             "entry_mode": payload.entry_mode,
             "min_handicap": payload.min_handicap,
             "max_handicap": payload.max_handicap,
+            "grouping_method": payload.grouping_method,
         })
         .execute()
     )
@@ -153,12 +173,16 @@ def create_tournament(payload: TournamentCreate) -> dict:
             "round_date": r.round_date.isoformat(),
             "course_id": str(r.course_id),
             "tee_id": str(r.tee_id),
+            "group_size": r.group_size,
         }
         for index, r in enumerate(payload.rounds)
     ]
     rounds_response = supabase.table("tournament_rounds").insert(round_rows).execute()
+    rounds = _attach_course_names(rounds_response.data or [])
+    for r in rounds:
+        r["tee_times"] = []
 
-    return {**tournament, "rounds": _attach_course_names(rounds_response.data or []), "entrants": []}
+    return {**tournament, "rounds": rounds, "entrants": []}
 
 
 def update_tournament(tournament_id: str, payload: TournamentUpdate) -> dict:
@@ -174,6 +198,10 @@ def update_tournament(tournament_id: str, payload: TournamentUpdate) -> dict:
         raise InvalidFormatError(f"Format must be one of: {', '.join(sorted(VALID_TOURNAMENT_FORMATS))}.")
     if payload.entry_mode not in VALID_ENTRY_MODES:
         raise InvalidEntryModeError(f"Entry mode must be one of: {', '.join(sorted(VALID_ENTRY_MODES))}.")
+    if payload.grouping_method not in VALID_GROUPING_METHODS:
+        raise InvalidGroupingMethodError(
+            f"Grouping method must be one of: {', '.join(sorted(VALID_GROUPING_METHODS))}."
+        )
     if not payload.rounds:
         raise NoRoundsError("A tournament needs at least one round.")
 
@@ -186,6 +214,7 @@ def update_tournament(tournament_id: str, payload: TournamentUpdate) -> dict:
             "entry_mode": payload.entry_mode,
             "min_handicap": payload.min_handicap,
             "max_handicap": payload.max_handicap,
+            "grouping_method": payload.grouping_method,
         })
         .eq("id", tournament_id)
         .execute()
@@ -196,11 +225,12 @@ def update_tournament(tournament_id: str, payload: TournamentUpdate) -> dict:
     # rows -- the edit form resubmits its entire round list every time
     # (same shape create_tournament accepts), so delete-then-reinsert keeps
     # round_number/order in sync with whatever the form now says without
-    # matching old rows to new ones by id. Safe today because nothing
-    # references tournament_rounds.id yet (no round-to-tournament scoring
-    # link exists -- see tournament.py's leaderboard placeholder); that
-    # assumption will need revisiting once scoring links actual played
-    # rounds to a specific tournament_rounds row.
+    # matching old rows to new ones by id. This also means any tee times
+    # generated against the old rounds get cascade-deleted along with them
+    # (tournament_tee_times FKs to tournament_rounds.id) -- an edit that
+    # changes a round's date/course effectively invalidates its tee times
+    # anyway, so the admin re-running Generate afterward is the right
+    # prompt, not something to silently preserve.
     supabase.table("tournament_rounds").delete().eq("tournament_id", tournament_id).execute()
 
     round_rows = [
@@ -210,16 +240,20 @@ def update_tournament(tournament_id: str, payload: TournamentUpdate) -> dict:
             "round_date": r.round_date.isoformat(),
             "course_id": str(r.course_id),
             "tee_id": str(r.tee_id),
+            "group_size": r.group_size,
         }
         for index, r in enumerate(payload.rounds)
     ]
     rounds_response = supabase.table("tournament_rounds").insert(round_rows).execute()
+    rounds = _attach_course_names(rounds_response.data or [])
+    for r in rounds:
+        r["tee_times"] = []
 
     entrants_by_tournament = _fetch_entrants_by_tournament([tournament_id])
 
     return {
         **updated_tournament,
-        "rounds": _attach_course_names(rounds_response.data or []),
+        "rounds": rounds,
         "entrants": entrants_by_tournament.get(tournament_id, []),
     }
 

@@ -1,5 +1,5 @@
 # target path: backend/models/tournament.py (full replacement)
-from datetime import date, datetime
+from datetime import date, datetime, time
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -10,12 +10,20 @@ from pydantic import BaseModel
 # would just 422 with FastAPI's generic validation error instead.
 VALID_TOURNAMENT_FORMATS = {"scratch", "stableford", "net", "2bbb", "4bbb", "texas_scramble"}
 VALID_ENTRY_MODES = {"self", "approval"}
+# How confirmed entrants get sorted into tee time groups when they're
+# generated -- "random" shuffles the field, "handicap" sorts ascending by
+# handicap_at_entry (lowest/best first) before chunking into groups.
+VALID_GROUPING_METHODS = {"random", "handicap"}
 
 
 class TournamentRoundCreate(BaseModel):
     round_date: date
     course_id: UUID
     tee_id: UUID
+    # Players per tee time group for this round -- comp spec, set at
+    # creation/edit time. A comp might run 3-balls one week, 4-balls the
+    # next, so this lives per round rather than on the tournament itself.
+    group_size: int = 4
 
 
 class TournamentCreate(BaseModel):
@@ -27,6 +35,7 @@ class TournamentCreate(BaseModel):
     entry_mode: str = "self"  # "self" (join directly) or "approval" (admin reviews each application)
     min_handicap: float | None = None
     max_handicap: float | None = None
+    grouping_method: str = "random"
 
 
 class TournamentUpdate(BaseModel):
@@ -37,6 +46,12 @@ class TournamentUpdate(BaseModel):
     entry_mode: str = "self"
     min_handicap: float | None = None
     max_handicap: float | None = None
+    grouping_method: str = "random"
+
+
+class TeeTimeGenerateRequest(BaseModel):
+    admin_id: UUID  # must match clubs.club_admin -- enforced in the service layer
+    first_tee_time: time
 
 
 class TournamentRoundResponse(BaseModel):
@@ -46,6 +61,7 @@ class TournamentRoundResponse(BaseModel):
     round_date: date
     course_id: UUID
     tee_id: UUID
+    group_size: int = 4
     club_name: str | None = None
     course_name: str | None = None
     tee_name: str | None = None
@@ -77,6 +93,7 @@ class TournamentResponse(BaseModel):
     entry_mode: str
     min_handicap: float | None = None
     max_handicap: float | None = None
+    grouping_method: str = "random"
     created_by: UUID
     created_at: datetime
     rounds: list[TournamentRoundResponse] = []

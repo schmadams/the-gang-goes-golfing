@@ -1,7 +1,7 @@
 # target path: backend/routers/tournaments.py (full replacement)
 from fastapi import APIRouter, HTTPException, status
 
-from backend.models.tournament import TournamentCreate, TournamentEntrantCreate, TournamentUpdate
+from backend.models.tournament import TeeTimeGenerateRequest, TournamentCreate, TournamentEntrantCreate, TournamentUpdate
 from backend.services.tournament_entrants import (
     AlreadyEnteredError,
     HandicapOutOfRangeError,
@@ -15,10 +15,17 @@ from backend.services.tournament_entrants import (
     reject_entrant,
     withdraw_entrant,
 )
+from backend.services.tournament_tee_times import (
+    NoConfirmedEntrantsError,
+    NotClubAdminError as TeeTimeNotClubAdminError,
+    RoundNotFoundError,
+    generate_tee_times,
+)
 from backend.services.tournaments import (
     ClubNotFoundError,
     InvalidEntryModeError,
     InvalidFormatError,
+    InvalidGroupingMethodError,
     NoRoundsError,
     NotClubAdminError,
     TournamentNotFoundError,
@@ -39,7 +46,7 @@ def create_tournament_route(payload: TournamentCreate):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
     except NotClubAdminError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
-    except (InvalidFormatError, InvalidEntryModeError, NoRoundsError) as exc:
+    except (InvalidFormatError, InvalidEntryModeError, InvalidGroupingMethodError, NoRoundsError) as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
 
 
@@ -64,7 +71,22 @@ def update_tournament_route(tournament_id: str, payload: TournamentUpdate):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
     except NotClubAdminError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
-    except (InvalidFormatError, InvalidEntryModeError, NoRoundsError) as exc:
+    except (InvalidFormatError, InvalidEntryModeError, InvalidGroupingMethodError, NoRoundsError) as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+
+
+@router.post("/{tournament_id}/rounds/{round_id}/tee-times/generate")
+def generate_tee_times_route(tournament_id: str, round_id: str, payload: TeeTimeGenerateRequest):
+    # tournament_id in the path is purely for a consistent/readable URL --
+    # round_id alone is what the service looks up by (a round only ever
+    # belongs to one tournament).
+    try:
+        return generate_tee_times(round_id, payload)
+    except RoundNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    except TeeTimeNotClubAdminError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
+    except NoConfirmedEntrantsError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
 
 

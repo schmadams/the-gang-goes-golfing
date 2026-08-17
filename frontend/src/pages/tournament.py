@@ -48,6 +48,12 @@ _TOURNAMENT_ENTRY_MODE_OPTIONS = [
     {"label": "Anyone can join directly", "value": "self"},
     {"label": "Applications need approval", "value": "approval"},
 ]
+_TOURNAMENT_GROUPING_METHOD_OPTIONS = [
+    {"label": "Random", "value": "random"},
+    {"label": "By handicap", "value": "handicap"},
+]
+_GROUP_SIZE_OPTIONS = [{"label": f"{n} per group", "value": n} for n in range(2, 7)]
+_DEFAULT_GROUP_SIZE = 4
 
 # Same reasoning/values as club.py's copy -- see that module for why these
 # are duplicated as plain constants instead of imported from the backend.
@@ -103,6 +109,105 @@ def _not_found_page():
                 className="t3g-panel-body",
             ),
         ),
+    )
+
+
+def _format_tee_time(tee_time_str):
+    """"HH:MM:SS" (what Postgres' time column serializes to over the API)
+    -> "H:MM AM/PM". Built by hand rather than via strftime's %-I/%#I,
+    since which of those strips the leading zero is platform-dependent
+    (Unix vs Windows) and this needs to render the same regardless of
+    where the Dash server happens to be running."""
+    if not tee_time_str:
+        return ""
+    hour, minute = int(tee_time_str[:2]), int(tee_time_str[3:5])
+    period = "AM" if hour < 12 else "PM"
+    display_hour = hour % 12 or 12
+    return f"{display_hour}:{minute:02d} {period}"
+
+
+def _tee_times_panel(tournament, is_admin):
+    """Lives as its own panel card within the Tournament Info tab (next to
+    Tournament Info and Entrants) rather than a separate subnav tab -- one
+    section per round, each showing whatever groups have been generated
+    plus, for admins, a first-tee-time input and a Generate button.
+    Generating is always a full wholesale regenerate (see
+    generate_tee_times's docstring) -- no confirmation, since re-running it
+    after a withdrawal/late add is the expected, ordinary workflow, not a
+    destructive edge case."""
+    rounds = tournament.get("rounds", [])
+
+    round_sections = []
+    for r in rounds:
+        round_id = r["id"]
+        groups = r.get("tee_times", [])
+
+        course_label = r.get("club_name") or "Course TBC"
+        if r.get("course_name"):
+            course_label += f", {r['course_name']}"
+        round_heading = f"Round {r['round_number']} — {r.get('round_date', '')} ({course_label})"
+
+        if groups:
+            group_rows = [
+                html.Div(
+                    className="t3g-teetime-group",
+                    children=[
+                        html.Span(_format_tee_time(g.get("tee_time")), className="t3g-teetime-time"),
+                        html.Span(
+                            ", ".join(_entrant_label(p) for p in g.get("players", [])) or "No players",
+                            className="t3g-teetime-players",
+                        ),
+                    ],
+                )
+                for g in groups
+            ]
+        else:
+            group_rows = [html.P("No tee times generated yet.", className="t3g-empty-state mb-0")]
+
+        admin_controls = None
+        if is_admin:
+            admin_controls = html.Div(
+                className="t3g-teetime-generate-row",
+                children=[
+                    dcc.Input(
+                        id={"type": "tournament-teetime-first-time", "round_id": round_id},
+                        type="time",
+                        value="08:00",
+                        className="t3g-teetime-time-input",
+                    ),
+                    html.Button(
+                        "Generate Tee Times",
+                        id={"type": "tournament-teetime-generate", "round_id": round_id},
+                        className="t3g-panel-action-button t3g-panel-action-button--secondary",
+                        n_clicks=0,
+                    ),
+                ],
+            )
+
+        round_sections.append(
+            html.Div(
+                className="t3g-modal-section t3g-teetime-round-section",
+                children=[
+                    html.Div(round_heading, className="t3g-modal-label t3g-tournament-rounds-label"),
+                    admin_controls,
+                    html.Div(
+                        id={"type": "tournament-teetime-error", "round_id": round_id},
+                        className="text-danger mb-2",
+                    ),
+                    html.Div(group_rows, className="t3g-teetime-group-list"),
+                ],
+            )
+        )
+
+    if not round_sections:
+        round_sections = [html.P("No rounds set up yet.", className="t3g-empty-state")]
+
+    return html.Div(
+        className="t3g-panel",
+        children=[
+            build_panel_navbar("Tee Times"),
+            html.Div(round_sections, className="t3g-panel-body"),
+        ],
     )
 
 
@@ -385,6 +490,7 @@ def _edit_round_row(index, prefill=None):
     course_name = prefill.get("course_name")
     tee_id = prefill.get("tee_id")
     tee_name = prefill.get("tee_name")
+    group_size = prefill.get("group_size") or _DEFAULT_GROUP_SIZE
 
     course_label = club_name or course_name
     if club_name and course_name:
@@ -419,6 +525,13 @@ def _edit_round_row(index, prefill=None):
                 placeholder="Tees",
                 disabled=not tee_id,
                 className="t3g-tournament-round-tee",
+            ),
+            dcc.Dropdown(
+                id={"type": "tournament-edit-round-group-size", "index": index},
+                options=_GROUP_SIZE_OPTIONS,
+                value=group_size,
+                clearable=False,
+                className="t3g-tournament-round-group-size",
             ),
             html.Button(
                 "Remove",
@@ -519,6 +632,20 @@ def _tournament_edit_modal(tournament):
                                         ],
                                     ),
                                 ],
+                            ),
+                        ],
+                    ),
+                    html.Div(
+                        className="t3g-modal-section",
+                        children=[
+                            html.Label(
+                                "Tee time grouping", className="t3g-modal-label t3g-tournament-rounds-label"
+                            ),
+                            dcc.RadioItems(
+                                id="tournament-edit-grouping-method-input",
+                                options=_TOURNAMENT_GROUPING_METHOD_OPTIONS,
+                                value=tournament.get("grouping_method", "random"),
+                                className="t3g-tournament-entry-mode",
                             ),
                         ],
                     ),
@@ -662,6 +789,7 @@ def layout(slug=None, tournament_id=None, **kwargs):
                 children=[
                     _tournament_info_panel(tournament, is_admin),
                     _entrants_panel(tournament, entrants, my_entry, is_admin),
+                    _tee_times_panel(tournament, is_admin),
                 ],
             ),
             html.Div(
@@ -677,6 +805,7 @@ def layout(slug=None, tournament_id=None, **kwargs):
             dcc.Location(id="tournament-admin-action-redirect", refresh=True),
             dcc.Location(id="tournament-add-player-redirect", refresh=True),
             dcc.Location(id="tournament-remove-entrant-redirect", refresh=True),
+            dcc.Location(id="tournament-teetime-redirect", refresh=True),
             dcc.Location(id="tournament-edit-redirect", refresh=True),
         ],
     )
@@ -857,6 +986,44 @@ def handle_remove_entrant(remove_clicks, tournament_id, current_pathname):
 
 
 @callback(
+    Output({"type": "tournament-teetime-error", "round_id": MATCH}, "children"),
+    Output("tournament-teetime-redirect", "href"),
+    Input({"type": "tournament-teetime-generate", "round_id": MATCH}, "n_clicks"),
+    State({"type": "tournament-teetime-first-time", "round_id": MATCH}, "value"),
+    State("tournament-id-store", "data"),
+    State("_pages_location", "pathname"),
+    prevent_initial_call=True,
+)
+def handle_generate_tee_times(n_clicks, first_tee_time, tournament_id, current_pathname):
+    # MATCH (not ALL) here -- each round's Generate button only ever
+    # touches its own round, so there's no need for the ALL-based
+    # phantom-trigger guard the entrant approve/reject/remove callbacks
+    # use; a plain "was this actually clicked" check covers it.
+    if not n_clicks:
+        return dash.no_update, dash.no_update
+
+    if not first_tee_time:
+        return "Enter a first tee time.", dash.no_update
+
+    round_id = dash.ctx.triggered_id["round_id"]
+    admin_id = session.get("player_id")
+    response = requests.post(
+        f"{API_BASE_URL}/tournaments/{tournament_id}/rounds/{round_id}/tee-times/generate",
+        json={"admin_id": admin_id, "first_tee_time": first_tee_time},
+    )
+    if response.status_code == 200:
+        return "", f"{current_pathname}?_r={time.time()}"
+
+    try:
+        detail = response.json().get("detail", "Couldn't generate tee times.")
+        if not isinstance(detail, str):
+            detail = "Couldn't generate tee times."
+    except ValueError:
+        detail = "Couldn't generate tee times."
+    return detail, dash.no_update
+
+
+@callback(
     Output("tournament-edit-rounds-container", "children", allow_duplicate=True),
     Input("tournament-edit-add-round", "n_clicks"),
     Input({"type": "tournament-edit-round-remove", "index": ALL}, "n_clicks"),
@@ -983,6 +1150,7 @@ def adjust_tournament_edit_max_handicap(plus_clicks, minus_clicks, current):
     Output("tournament-edit-name-input", "value"),
     Output("tournament-edit-format-input", "value"),
     Output("tournament-edit-entry-mode-input", "value"),
+    Output("tournament-edit-grouping-method-input", "value"),
     Output("tournament-edit-min-handicap-store", "data", allow_duplicate=True),
     Output("tournament-edit-min-handicap-display", "children", allow_duplicate=True),
     Output("tournament-edit-max-handicap-store", "data", allow_duplicate=True),
@@ -993,11 +1161,13 @@ def adjust_tournament_edit_max_handicap(plus_clicks, minus_clicks, current):
     State("tournament-edit-name-input", "value"),
     State("tournament-edit-format-input", "value"),
     State("tournament-edit-entry-mode-input", "value"),
+    State("tournament-edit-grouping-method-input", "value"),
     State("tournament-edit-min-handicap-store", "data"),
     State("tournament-edit-max-handicap-store", "data"),
     State({"type": "tournament-edit-round-date", "index": ALL}, "date"),
     State({"type": "tournament-edit-round-course", "index": ALL}, "value"),
     State({"type": "tournament-edit-round-tee", "index": ALL}, "value"),
+    State({"type": "tournament-edit-round-group-size", "index": ALL}, "value"),
     State("tournament-id-store", "data"),
     State("_pages_location", "pathname"),
     State("tournament-edit-original-store", "data"),
@@ -1005,8 +1175,8 @@ def adjust_tournament_edit_max_handicap(plus_clicks, minus_clicks, current):
 )
 def handle_tournament_edit_modal(
     open_clicks, cancel_clicks, submit_clicks,
-    name, format_value, entry_mode, min_handicap, max_handicap,
-    round_dates, round_courses, round_tees,
+    name, format_value, entry_mode, grouping_method, min_handicap, max_handicap,
+    round_dates, round_courses, round_tees, round_group_sizes,
     tournament_id, current_pathname, original_tournament,
 ):
     """Same shape as club.py's handle_tournament_modal, PATCHing instead of
@@ -1017,7 +1187,7 @@ def handle_tournament_edit_modal(
     same "fresh modal every time it's opened" approach the create modal
     uses, just resetting to the saved tournament instead of to empty."""
     triggered_id = dash.ctx.triggered_id
-    no_update_rest = (dash.no_update,) * 8
+    no_update_rest = (dash.no_update,) * 9
 
     if triggered_id == "tournament-edit-button":
         original_tournament = original_tournament or {}
@@ -1030,6 +1200,7 @@ def handle_tournament_edit_modal(
             original_tournament.get("name"),
             original_tournament.get("format"),
             original_tournament.get("entry_mode", "self"),
+            original_tournament.get("grouping_method", "random"),
             original_min, str(original_min) if original_min is not None else "–",
             original_max, str(original_max) if original_max is not None else "–",
         )
@@ -1046,12 +1217,19 @@ def handle_tournament_edit_modal(
             return (True, "Min handicap can't be greater than max.", dash.no_update) + no_update_rest
 
         rounds_payload = []
-        for round_date, course_id, tee_id in zip(round_dates, round_courses, round_tees):
+        for round_date, course_id, tee_id, group_size in zip(
+            round_dates, round_courses, round_tees, round_group_sizes
+        ):
             if not round_date or not course_id or not tee_id:
                 return (
                     True, "Fill in the date, course, and tees for every round.", dash.no_update,
                 ) + no_update_rest
-            rounds_payload.append({"round_date": round_date, "course_id": course_id, "tee_id": tee_id})
+            rounds_payload.append({
+                "round_date": round_date,
+                "course_id": course_id,
+                "tee_id": tee_id,
+                "group_size": group_size or _DEFAULT_GROUP_SIZE,
+            })
 
         if not rounds_payload:
             return (True, "Add at least one round.", dash.no_update) + no_update_rest
@@ -1064,6 +1242,7 @@ def handle_tournament_edit_modal(
                 "name": name.strip(),
                 "format": format_value,
                 "entry_mode": entry_mode or "self",
+                "grouping_method": grouping_method or "random",
                 "min_handicap": min_handicap,
                 "max_handicap": max_handicap,
                 "rounds": rounds_payload,

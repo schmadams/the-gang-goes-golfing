@@ -28,6 +28,15 @@ _TOURNAMENT_ENTRY_MODE_OPTIONS = [
     {"label": "Anyone can join directly", "value": "self"},
     {"label": "Applications need approval", "value": "approval"},
 ]
+_TOURNAMENT_GROUPING_METHOD_OPTIONS = [
+    {"label": "Random", "value": "random"},
+    {"label": "By handicap", "value": "handicap"},
+]
+# Group size lives per round (a comp can run 3-balls one week, 4-balls the
+# next), so it's a small dropdown on each round row rather than a
+# tournament-wide setting like grouping method.
+_GROUP_SIZE_OPTIONS = [{"label": f"{n} per group", "value": n} for n in range(2, 7)]
+_DEFAULT_GROUP_SIZE = 4
 
 # WHS caps Handicap Index at 54.0 (backend/services/whs.py's
 # MAX_HANDICAP_INDEX) -- duplicated as a plain int here since the frontend
@@ -169,7 +178,7 @@ def _course_label(course):
     return f"{label} ({location})" if location else label
 
 
-def _tournament_round_row(index):
+def _tournament_round_row(index, group_size=_DEFAULT_GROUP_SIZE):
     """One row of the Create Tournament modal's round list -- date, course,
     and tees, all keyed by a stable per-row index so add/remove and the
     course->tee cascade (edit_tournament_rounds / load_tournament_round_tees
@@ -212,6 +221,13 @@ def _tournament_round_row(index):
                 placeholder="Tees",
                 disabled=True,
                 className="t3g-tournament-round-tee",
+            ),
+            dcc.Dropdown(
+                id={"type": "tournament-round-group-size", "index": index},
+                options=_GROUP_SIZE_OPTIONS,
+                value=group_size,
+                clearable=False,
+                className="t3g-tournament-round-group-size",
             ),
             html.Button(
                 "Remove",
@@ -358,6 +374,20 @@ def _tournament_modal():
                                         ],
                                     ),
                                 ],
+                            ),
+                        ],
+                    ),
+                    html.Div(
+                        className="t3g-modal-section",
+                        children=[
+                            html.Label(
+                                "Tee time grouping", className="t3g-modal-label t3g-tournament-rounds-label"
+                            ),
+                            dcc.RadioItems(
+                                id="tournament-grouping-method-input",
+                                options=_TOURNAMENT_GROUPING_METHOD_OPTIONS,
+                                value="random",
+                                className="t3g-tournament-entry-mode",
                             ),
                         ],
                     ),
@@ -685,6 +715,7 @@ def adjust_tournament_max_handicap(plus_clicks, minus_clicks, current):
     Output("tournament-name-input", "value"),
     Output("tournament-format-input", "value"),
     Output("tournament-entry-mode-input", "value"),
+    Output("tournament-grouping-method-input", "value"),
     Output("tournament-min-handicap-store", "data", allow_duplicate=True),
     Output("tournament-min-handicap-display", "children", allow_duplicate=True),
     Output("tournament-max-handicap-store", "data", allow_duplicate=True),
@@ -695,23 +726,25 @@ def adjust_tournament_max_handicap(plus_clicks, minus_clicks, current):
     State("tournament-name-input", "value"),
     State("tournament-format-input", "value"),
     State("tournament-entry-mode-input", "value"),
+    State("tournament-grouping-method-input", "value"),
     State("tournament-min-handicap-store", "data"),
     State("tournament-max-handicap-store", "data"),
     State({"type": "tournament-round-date", "index": ALL}, "date"),
     State({"type": "tournament-round-course", "index": ALL}, "value"),
     State({"type": "tournament-round-tee", "index": ALL}, "value"),
+    State({"type": "tournament-round-group-size", "index": ALL}, "value"),
     State("club-id-store", "data"),
     State("_pages_location", "pathname"),
     prevent_initial_call=True,
 )
 def handle_tournament_modal(
     open_clicks, cancel_clicks, submit_clicks,
-    name, format_value, entry_mode, min_handicap, max_handicap,
-    round_dates, round_courses, round_tees,
+    name, format_value, entry_mode, grouping_method, min_handicap, max_handicap,
+    round_dates, round_courses, round_tees, round_group_sizes,
     club_id, current_pathname,
 ):
     triggered_id = dash.ctx.triggered_id
-    no_update_rest = (dash.no_update,) * 8
+    no_update_rest = (dash.no_update,) * 9
 
     if triggered_id == "tournament-create-button":
         # Fresh modal every time it's opened -- one blank round row, no
@@ -719,7 +752,7 @@ def handle_tournament_modal(
         # previous cancelled attempt.
         return (
             True, "", dash.no_update, [_tournament_round_row(0)],
-            None, None, "self", None, "–", None, "–",
+            None, None, "self", "random", None, "–", None, "–",
         )
 
     if triggered_id == "tournament-cancel":
@@ -734,12 +767,19 @@ def handle_tournament_modal(
             return (True, "Min handicap can't be greater than max.", dash.no_update) + no_update_rest
 
         rounds_payload = []
-        for round_date, course_id, tee_id in zip(round_dates, round_courses, round_tees):
+        for round_date, course_id, tee_id, group_size in zip(
+            round_dates, round_courses, round_tees, round_group_sizes
+        ):
             if not round_date or not course_id or not tee_id:
                 return (
                     True, "Fill in the date, course, and tees for every round.", dash.no_update,
                 ) + no_update_rest
-            rounds_payload.append({"round_date": round_date, "course_id": course_id, "tee_id": tee_id})
+            rounds_payload.append({
+                "round_date": round_date,
+                "course_id": course_id,
+                "tee_id": tee_id,
+                "group_size": group_size or _DEFAULT_GROUP_SIZE,
+            })
 
         if not rounds_payload:
             return (True, "Add at least one round.", dash.no_update) + no_update_rest
@@ -753,6 +793,7 @@ def handle_tournament_modal(
                 "name": name.strip(),
                 "format": format_value,
                 "entry_mode": entry_mode or "self",
+                "grouping_method": grouping_method or "random",
                 "min_handicap": min_handicap,
                 "max_handicap": max_handicap,
                 "rounds": rounds_payload,

@@ -208,7 +208,7 @@
    happen. */
 .t3g-tournament-round-row {
     display: grid;
-    grid-template-columns: 70px 130px minmax(0, 1.4fr) minmax(0, 1fr) auto;
+    grid-template-columns: 70px 130px minmax(0, 1.4fr) minmax(0, 1fr) 108px auto;
     align-items: center;
     gap: 0.6rem;
     background: #ffffff;
@@ -230,7 +230,8 @@
 
 .t3g-tournament-round-date,
 .t3g-tournament-round-course,
-.t3g-tournament-round-tee {
+.t3g-tournament-round-tee,
+.t3g-tournament-round-group-size {
     min-width: 0; /* lets a dropdown/date field shrink inside its grid column instead of forcing the row to overflow */
     width: 100%;
 }
@@ -413,4 +414,90 @@
 
 .t3g-tournament-subnav-back:hover {
     color: #ffffff !important;
+}
+
+/* Pending Applications (Entrants panel, approval-mode tournaments) and the
+   Confirmed list's inline-remove rows both use this same row/list pair --
+   defined once here rather than per-section, same "shaded tile per row"
+   treatment as .t3g-tournament-item. */
+.t3g-friend-request-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.t3g-friend-request-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    background: #f4f5f9;
+    border-radius: 10px;
+    padding: 0.65rem 0.9rem;
+}
+
+.t3g-friend-request-name {
+    color: #1e2a47;
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+.t3g-friend-request-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-shrink: 0;
+}
+
+/* Tee Times panel -- one .t3g-modal-section-style shaded block per round
+   (same gray/rounded treatment the create/edit modals use), a
+   first-tee-time input + Generate button for admins, and the generated
+   groups listed below as soft white tiles once they exist. */
+.t3g-teetime-round-section:last-of-type {
+    margin-bottom: 0;
+}
+
+.t3g-teetime-generate-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin: 0.5rem 0 0.75rem;
+    flex-wrap: wrap;
+}
+
+.t3g-teetime-time-input {
+    border: 1px solid #d7d9e3;
+    border-radius: 8px;
+    padding: 0.4rem 0.6rem;
+    font-size: 0.85rem;
+    color: #1e2a47;
+    background: #ffffff;
+}
+
+.t3g-teetime-group-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.t3g-teetime-group {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    background: #ffffff;
+    border: 1px solid #e2e4ea;
+    border-radius: 10px;
+    padding: 0.6rem 0.9rem;
+}
+
+.t3g-teetime-time {
+    font-weight: 800;
+    color: #c21861;
+    font-size: 0.85rem;
+    white-space: nowrap;
+    min-width: 4.5rem;
+}
+
+.t3g-teetime-players {
+    color: #374151;
+    font-size: 0.88rem;
 }
