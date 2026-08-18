@@ -34,6 +34,17 @@ class RoundStartRequest(BaseModel):
         return v
 
 
+class TournamentRoundStartRequest(BaseModel):
+    """Starting (or joining, if a groupmate already beat you to it) the
+    shared live round for one tournament tee time grouping -- see
+    start_tournament_round in backend/services/rounds.py. Deliberately a
+    separate, much smaller request than RoundStartRequest: course/tee come
+    from the tournament round itself, players come from the tee time's own
+    assignments, so there's no course/tee/manual/invited_player_ids to
+    supply here, just who's asking."""
+    player_id: str
+
+
 class HoleScoreUpdate(BaseModel):
     """
     Partial update for a single player's single hole. The router calls
@@ -129,6 +140,25 @@ class RoundResponse(BaseModel):
     # get_active_round(player_id)) -- lets the frontend know whether the
     # viewer can Finish/Scrap this round.
     is_owner: Optional[bool] = None
+    # Both set together, or both null -- see rounds_tournament_link_
+    # consistent in add_tournament_live_rounds.sql. Non-null means this is
+    # a tournament round: started from a specific tee time grouping on the
+    # Start Sheet, rather than a normal casual round.
+    tournament_round_id: Optional[UUID] = None
+    tee_time_id: Optional[UUID] = None
+    # Populated alongside the two above (see _tournament_context_for_round
+    # in backend/services/rounds.py) -- lets the live round page link back
+    # into the tournament (its own subnav, Return to Club) instead of
+    # being a dead end once you're scoring, and lets any round display
+    # (home page's Live Round panel, Rounds History, round_header_label)
+    # show which tournament and round number this is -- the only thing
+    # that actually distinguishes a tournament round from a casual one at
+    # a glance, now that a player can have one of each in progress at
+    # once.
+    tournament_id: Optional[UUID] = None
+    tournament_name: Optional[str] = None
+    tournament_round_number: Optional[int] = None
+    club_slug: Optional[str] = None
 
 
 class RoundDetailResponse(RoundResponse):

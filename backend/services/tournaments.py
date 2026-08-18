@@ -7,6 +7,8 @@ from backend.models.tournament import (
     TournamentCreate,
     TournamentUpdate,
 )
+from backend.services.handicaps import get_current_player_handicap
+from backend.services.rounds import _hole_handicap_strokes, _stableford_points
 from backend.services.tournament_tee_times import fetch_tee_times_by_round
 
 _PLAYER_EMBED = "players(id, first_name, surname, nickname)"
@@ -40,6 +42,11 @@ class NoRoundsError(Exception):
 
 class TournamentNotFoundError(Exception):
     """Raised when tournament_id doesn't match any tournament."""
+
+
+class TournamentRoundNotFoundError(Exception):
+    """Raised when a leaderboard is requested for a round_id that doesn't
+    belong to the given tournament (or doesn't exist at all)."""
 
 
 def _get_club(club_id: str) -> dict | None:
@@ -298,4 +305,208 @@ def get_tournament(tournament_id: str) -> dict | None:
         **tournament,
         "rounds": rounds_by_tournament.get(tournament_id, []),
         "entrants": entrants_by_tournament.get(tournament_id, []),
+    }
+
+
+def _course_holes_meta(tee_id: str) -> dict[int, dict]:
+    """{hole_number: {"par":, "stroke_index":}} for one tee -- what every
+    per-player leaderboard line for a round is measured against."""
+    response = (
+        supabase
+        .table("course_holes")
+        .select("hole_number, par, stroke_index")
+        .eq("tee_id", tee_id)
+        .order("hole_number")
+        .execute()
+    )
+    return {h["hole_number"]: h for h in (response.data or [])}
+
+
+def _tournament_round_scores_by_player(tournament_round_id: str) -> dict[str, dict[int, int]]:
+    """Every accepted player's per-hole strokes across *every* grouping's
+    live/finished round for one tournament round -- not just one tee time,
+    since the leaderboard covers the whole field, not one viewer's own
+    grouping the way the Start Sheet/Live Round tabs do. {player_id:
+    {hole_number: strokes}}, holes with no score yet simply absent."""
+    rounds_response = (
+        supabase
+        .table("rounds")
+        .select("id")
+        .eq("tournament_round_id", tournament_round_id)
+        .execute()
+    )
+    round_ids = [r["id"] for r in (rounds_response.data or [])]
+    if not round_ids:
+        return {}
+
+    scores_response = (
+        supabase
+        .table("round_scores")
+        .select("player_id, hole_number, strokes")
+        .in_("round_id", round_ids)
+        .execute()
+    )
+    by_player: dict[str, dict[int, int]] = {}
+    for row in (scores_response.data or []):
+        if row.get("strokes") is None:
+            continue
+        by_player.setdefault(row["player_id"], {})[row["hole_number"]] = row["strokes"]
+    return by_player
+
+
+def _compute_leaderboard_line(scores_by_hole: dict[int, int], holes_meta: dict[int, dict], handicap: float | None) -> dict:
+    """Cumulative gross/nett-to-par and cumulative Stableford points through
+    each of the 18 holes for one player in one round -- None for any hole
+    they haven't played yet (or that has no par on record), so the
+    frontend can render a blank cell instead of a fabricated running
+    total. gross/nett "to par" is relative to the *par of the holes
+    actually played so far*, not all 18, same convention every real
+    leaderboard uses for an in-progress round -- see _hole_handicap_
+    strokes/_stableford_points in backend/services/rounds.py for the
+    handicap-stroke-allocation and points math this reuses."""
+    holes_gross: list[int | None] = []
+    holes_nett: list[int | None] = []
+    holes_stableford: list[int | None] = []
+    # Raw strokes per hole, alongside the cumulative-to-par lines above --
+    # not used by the leaderboard grid itself (that's all cumulative), but
+    # it's what the click-through per-player scorecard (see tournament.py's
+    # _leaderboard_player_scorecard) renders, so clicking a row doesn't
+    # need a second round trip to reconstruct it from the deltas.
+    holes_strokes: list[int | None] = []
+
+    running_par = 0
+    running_gross = 0
+    running_nett = 0
+    running_points = 0
+    thru = 0
+
+    for hole_number in range(1, 19):
+        strokes = scores_by_hole.get(hole_number)
+        hole = holes_meta.get(hole_number)
+        par = hole.get("par") if hole else None
+
+        if strokes is None or par is None:
+            holes_gross.append(None)
+            holes_nett.append(None)
+            holes_stableford.append(None)
+            holes_strokes.append(None)
+            continue
+
+        thru += 1
+        stroke_index = hole.get("stroke_index")
+        hcp_strokes = _hole_handicap_strokes(handicap, stroke_index)
+        net_strokes = strokes - hcp_strokes
+
+        running_par += par
+        running_gross += strokes
+        running_nett += net_strokes
+        running_points += _stableford_points(net_strokes, par) or 0
+
+        holes_gross.append(running_gross - running_par)
+        holes_nett.append(running_nett - running_par)
+        holes_stableford.append(running_points)
+        holes_strokes.append(strokes)
+
+    return {
+        "holes_gross": holes_gross,
+        "holes_nett": holes_nett,
+        "holes_stableford": holes_stableford,
+        "holes_strokes": holes_strokes,
+        "total_gross": holes_gross[thru - 1] if thru else None,
+        "total_nett": holes_nett[thru - 1] if thru else None,
+        "total_stableford": holes_stableford[thru - 1] if thru else 0,
+        "thru": thru,
+    }
+
+
+def get_tournament_leaderboard(tournament_id: str, round_id: str) -> dict:
+    """Live, whole-field leaderboard for one round of a tournament --
+    every confirmed entrant, sorted leader-first once the frontend applies
+    whichever of gross/stableford/nett it's currently displaying (all
+    three are computed here regardless, so switching format on the
+    frontend is instant with no extra request). PRIOR is each player's
+    cumulative total from every *earlier* round of this same tournament
+    (0 if they never played, or weren't grouped into, an earlier round --
+    a missed round isn't retroactively penalized beyond what they actually
+    shot); the round grid itself is only this one selected round's holes.
+    """
+    round_response = (
+        supabase.table("tournament_rounds").select("*").eq("id", round_id).maybe_single().execute()
+    )
+    tournament_round = round_response.data if round_response is not None else None
+    if not tournament_round or tournament_round["tournament_id"] != tournament_id:
+        raise TournamentRoundNotFoundError("Round not found for this tournament.")
+
+    entrants_by_tournament = _fetch_entrants_by_tournament([tournament_id])
+    entrants = [e for e in entrants_by_tournament.get(tournament_id, []) if e["status"] == "confirmed"]
+
+    all_rounds_response = (
+        supabase
+        .table("tournament_rounds")
+        .select("id, round_number, tee_id")
+        .eq("tournament_id", tournament_id)
+        .order("round_number")
+        .execute()
+    )
+    all_rounds = all_rounds_response.data or []
+    earlier_rounds = [r for r in all_rounds if r["round_number"] < tournament_round["round_number"]]
+
+    handicap_by_player: dict[str, float | None] = {}
+    for entrant in entrants:
+        handicap_row = get_current_player_handicap(entrant["player_id"])
+        handicap_by_player[entrant["player_id"]] = handicap_row["handicap"] if handicap_row else None
+
+    # Prior totals -- sum each earlier round's own line (its own course/
+    # tee, so its own holes_meta and its own scores) per format, per
+    # player. A player who never played a given earlier round contributes
+    # 0 to it, not a penalty.
+    prior_gross = {e["player_id"]: 0 for e in entrants}
+    prior_nett = {e["player_id"]: 0 for e in entrants}
+    prior_stableford = {e["player_id"]: 0 for e in entrants}
+
+    for earlier in earlier_rounds:
+        holes_meta = _course_holes_meta(earlier["tee_id"])
+        scores_by_player = _tournament_round_scores_by_player(earlier["id"])
+        for entrant in entrants:
+            player_id = entrant["player_id"]
+            line = _compute_leaderboard_line(
+                scores_by_player.get(player_id, {}), holes_meta, handicap_by_player[player_id]
+            )
+            prior_gross[player_id] += line["total_gross"] or 0
+            prior_nett[player_id] += line["total_nett"] or 0
+            prior_stableford[player_id] += line["total_stableford"]
+
+    holes_meta = _course_holes_meta(tournament_round["tee_id"])
+    scores_by_player = _tournament_round_scores_by_player(round_id)
+
+    players = []
+    for entrant in entrants:
+        player_id = entrant["player_id"]
+        line = _compute_leaderboard_line(scores_by_player.get(player_id, {}), holes_meta, handicap_by_player[player_id])
+        name = entrant.get("nickname") or f"{entrant.get('first_name', '')} {entrant.get('surname', '')}".strip()
+
+        players.append({
+            "player_id": player_id,
+            "name": name or "Unknown player",
+            "thru": line["thru"],
+            "holes_gross": line["holes_gross"],
+            "holes_nett": line["holes_nett"],
+            "holes_stableford": line["holes_stableford"],
+            "holes_strokes": line["holes_strokes"],
+            "prior_gross": prior_gross[player_id],
+            "prior_nett": prior_nett[player_id],
+            "prior_stableford": prior_stableford[player_id],
+            "total_gross": prior_gross[player_id] + (line["total_gross"] or 0),
+            "total_nett": prior_nett[player_id] + (line["total_nett"] or 0),
+            "total_stableford": prior_stableford[player_id] + line["total_stableford"],
+        })
+
+    return {
+        "round_id": round_id,
+        "round_number": tournament_round["round_number"],
+        "holes": [
+            {"hole_number": n, "par": holes_meta.get(n, {}).get("par")}
+            for n in range(1, 19)
+        ],
+        "players": players,
     }

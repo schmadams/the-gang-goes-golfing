@@ -88,19 +88,28 @@
     }
 }
 
+/* Fixed 2-column grid (2xN) rather than auto-fill -- auto-fill let a
+   short club list (e.g. 3 clubs) spread into a single wide row of N
+   narrow tiles instead of wrapping into a stable, predictable shape. */
 .t3g-clubs-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1rem;
+}
+
+@media (max-width: 500px) {
+    .t3g-clubs-list {
+        grid-template-columns: 1fr;
+    }
 }
 
 .t3g-club-item {
-    display: block;
+    display: flex;
+    flex-direction: column;
     background: #f4f5f9;
     border-radius: 10px;
-    padding: 1rem 1.25rem;
+    overflow: hidden;
     color: #1e2a47 !important;
-    font-weight: 700;
     text-decoration: none !important;
     transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
@@ -108,6 +117,41 @@
 .t3g-club-item:hover {
     transform: translateY(-3px);
     box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
+}
+
+/* Actual uploaded photo -- fixed aspect ratio so tiles line up evenly
+   across a row regardless of the source image's own dimensions. */
+.t3g-club-item-photo {
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    object-fit: cover;
+    display: block;
+    background: #dfe2ee;
+}
+
+/* Fallback when a club hasn't uploaded a photo yet -- same tile footprint
+   as the real photo (so the grid doesn't jump around as clubs add theirs
+   one by one), initials on a dark gradient instead of a broken image. */
+.t3g-club-item-photo-placeholder {
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    background: linear-gradient(135deg, #1e2a47, #364a75);
+    color: #ffffff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 800;
+    font-size: 1.6rem;
+    letter-spacing: 0.04em;
+}
+
+.t3g-club-item-name {
+    padding: 0.65rem 0.85rem;
+    font-weight: 700;
+    font-size: 0.88rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .t3g-empty-state {
@@ -212,6 +256,27 @@
     border: 1px solid rgba(230, 57, 70, 0.4);
     border-radius: 999px;
     padding: 0.25rem 0.65rem 0.25rem 0.5rem;
+    white-space: nowrap;
+}
+
+/* Flat navy pill marking a round as tournament-linked -- sits next to
+   (or in place of) .t3g-live-badge in a round card's header, see
+   tournament_round_badge() in components/scorecard.py. Deliberately not
+   red/pulsing like the live badge -- this is an identity tag ("what kind
+   of round is this"), not a status indicator, so the two read as visually
+   distinct even when both show together on a live tournament round. */
+.t3g-tournament-round-badge {
+    display: inline-flex;
+    align-items: center;
+    color: #1e2a47;
+    font-weight: 800;
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    background: rgba(30, 42, 71, 0.08);
+    border: 1px solid rgba(30, 42, 71, 0.25);
+    border-radius: 999px;
+    padding: 0.25rem 0.65rem;
     white-space: nowrap;
 }
 

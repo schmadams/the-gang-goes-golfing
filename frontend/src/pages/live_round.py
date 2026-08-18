@@ -6,238 +6,98 @@ from dash import ALL, Input, Output, State, callback, dcc, html
 from dash.exceptions import PreventUpdate
 from flask import session
 
+from components.live_scorecard import (
+    _hole_par,
+    _result_badge,
+    _score_marking_class,
+    _score_total_text,
+    render_live_round_body,
+)
 from config import API_BASE_URL
 
 dash.register_page(__name__, path="/live-round", name="Live Round")
 
-_MANUAL_FIELD_KEYS = {
-    "par": "manual_par",
-    "yardage": "manual_yardage",
-    "stroke_index": "manual_stroke_index",
-}
-
 _FAIRWAY_RADIO_TO_BOOL = {"yes": True, "no": False}
 _FAIRWAY_BOOL_TO_RADIO = {True: "yes", False: "no"}
 
-
-def _player_display_name(player):
-    return (
-        player.get("nickname")
-        or f"{player.get('first_name', '')} {player.get('surname', '')}".strip()
-        or "Player"
-    )
-
-
-def _hole_par(hole):
-    # Manual rounds don't have a real course_holes row yet, so par lives on
-    # manual_par instead -- this picks whichever one actually applies.
-    return hole.get("manual_par") if hole.get("manual_par") is not None else hole.get("par")
+# Same literal class strings as tournament.py's _TAB_BUTTON_BASE/_ACTIVE --
+# duplicated rather than imported across pages (these two modules don't
+# otherwise depend on each other, and Dash Pages modules aren't really
+# meant to import from one another -- see components/live_scorecard.py's
+# module docstring for why that specifically breaks page registration) so
+# this page's back-to-tournament subnav visually matches the real one
+# exactly.
+_TAB_BUTTON_BASE = "t3g-tournament-tab"
+_TAB_BUTTON_ACTIVE = "t3g-tournament-tab t3g-tournament-tab--active"
 
 
-def _hole_value(hole, field, manual_field):
-    return hole.get(manual_field) if hole.get(manual_field) is not None else hole.get(field)
-
-
-def _score_marking_class(strokes, par):
-    """
-    Traditional scorecard marks, applied around the score itself: birdie ->
-    circle, eagle (or better) -> double circle, bogey -> square, double
-    bogey (or worse) -> double square. No score yet -> the wider "Enter
-    Score" text button, not a shape.
-
-    Once a score exists, the button switches to a fixed-size square
-    (t3g-score-button-filled) regardless of the mark -- a mark drawn with
-    border-radius/box-shadow only looks like a true circle or square when
-    the box itself is a square, and this button's width otherwise varies
-    with its label ("Enter Score" vs "3").
-    """
-    if strokes is None:
-        return "t3g-score-button"
-
-    base = "t3g-score-button t3g-score-button-filled"
-    if par is None:
-        return base
-
-    diff = strokes - par
-    if diff <= -2:
-        return f"{base} t3g-score-eagle"
-    if diff == -1:
-        return f"{base} t3g-score-birdie"
-    if diff == 1:
-        return f"{base} t3g-score-bogey"
-    if diff >= 2:
-        return f"{base} t3g-score-double-bogey"
-    return base
-
-
-def _result_badge(strokes, par):
-    """Live text feedback in the Enter Score modal -- same par-vs-strokes
-    logic as _score_marking_class, but as a word instead of a shape, since
-    there's no fixed-shape score box in the modal to draw a mark around."""
-    if strokes is None or par is None:
-        return "", "t3g-result-badge"
-
-    diff = strokes - par
-    if diff <= -2:
-        return "Eagle or better", "t3g-result-badge t3g-result-eagle"
-    if diff == -1:
-        return "Birdie", "t3g-result-badge t3g-result-birdie"
-    if diff == 0:
-        return "Par", "t3g-result-badge t3g-result-par"
-    if diff == 1:
-        return "Bogey", "t3g-result-badge t3g-result-bogey"
-    return "Double bogey or worse", "t3g-result-badge t3g-result-double-bogey"
-
-
-def _score_button(player_id, hole, par):
-    strokes = hole.get("strokes")
-    return html.Button(
-        str(strokes) if strokes is not None else "Enter Score",
-        id={"type": "live-round-score-button", "player": player_id, "hole": hole["hole_number"]},
-        className=_score_marking_class(strokes, par),
-        n_clicks=0,
-    )
-
-
-def _manual_input(owner_id, field_type, hole, min_val, max_val):
-    return dcc.Input(
-        id={"type": f"live-round-{field_type}", "hole": hole["hole_number"]},
-        type="number",
-        min=min_val,
-        max=max_val,
-        value=hole.get(_MANUAL_FIELD_KEYS[field_type]),
-        placeholder="-",
-        className="t3g-manual-input",
-    )
-
-
-def _score_total_text(holes_subset):
-    entered = [h["strokes"] for h in holes_subset if h.get("strokes") is not None]
-    return str(sum(entered)) if entered else "-"
-
-
-def _summary_row(label, hole_numbers, reference_holes, players, holes_by_player, total_id_type):
-    """OUT/IN/TOTAL row for the merged table -- yardage/par totals are
-    shared (same course info for everyone), but the score total is
-    per-player, one cell per player in the same column order as the rest
-    of the table."""
-    ref_subset = [reference_holes.get(n, {"hole_number": n}) for n in hole_numbers]
-    yardage_total = sum(_hole_value(h, "yardage", "manual_yardage") or 0 for h in ref_subset)
-    par_total = sum(_hole_par(h) or 0 for h in ref_subset)
-
-    score_cells = [
-        html.Td(
-            html.Span(
-                _score_total_text([holes_by_player[p["player_id"]].get(n, {}) for n in hole_numbers]),
-                id={"type": total_id_type, "player": p["player_id"]},
-            )
-        )
-        for p in players
-    ]
-
-    return html.Tr(
-        className="t3g-scorecard-summary-row",
-        children=[html.Td(label), html.Td(yardage_total), html.Td("-"), html.Td(par_total), *score_cells],
-    )
-
-
-def _scorecard_table(players, owner_player, is_manual, is_owner_of_round):
-    """One shared scorecard table for the whole group, instead of a
-    separate full scorecard stacked per player -- Hole/Yards/S.I./Par are
-    common to everyone (sourced from the round owner's holes, since that's
-    the only place manual-round course info ever gets entered -- other
-    players' own rows never carry it), with one Score column per player
-    under a shared "Score" header so the group can compare a hole at a
-    glance instead of scrolling through separate cards."""
-    reference_player = owner_player or players[0]
-    reference_holes = {h["hole_number"]: h for h in reference_player["holes"]}
-    holes_by_player = {p["player_id"]: {h["hole_number"]: h for h in p["holes"]} for p in players}
-    can_edit_course_info = is_owner_of_round
-
-    header = html.Thead(
-        [
-            html.Tr(
-                [
-                    html.Th("Hole", rowSpan=2),
-                    html.Th("Yards", rowSpan=2),
-                    html.Th("S.I.", rowSpan=2),
-                    html.Th("Par", rowSpan=2),
-                    html.Th("Score", colSpan=len(players), className="t3g-scorecard-score-group"),
-                ]
-            ),
-            html.Tr(
-                [
-                    html.Th(
-                        _player_display_name(p) + (" (you)" if p.get("is_viewer") else ""),
-                        className="t3g-scorecard-player-col",
-                    )
-                    for p in players
-                ]
-            ),
-        ]
-    )
-
-    def _score_row(hole_number):
-        ref_hole = reference_holes.get(hole_number, {"hole_number": hole_number})
-
-        if is_manual and can_edit_course_info:
-            yardage_cell = html.Td(_manual_input(None, "yardage", ref_hole, 0, 1000))
-            si_cell = html.Td(_manual_input(None, "stroke_index", ref_hole, 1, 18))
-            par_cell = html.Td(_manual_input(None, "par", ref_hole, 3, 5))
-        else:
-            yardage_val = _hole_value(ref_hole, "yardage", "manual_yardage")
-            si_val = _hole_value(ref_hole, "stroke_index", "manual_stroke_index")
-            par_val = _hole_par(ref_hole)
-            yardage_cell = html.Td(yardage_val if yardage_val is not None else "-")
-            si_cell = html.Td(si_val if si_val is not None else "-")
-            par_cell = html.Td(par_val if par_val is not None else "-")
-
-        par = _hole_par(ref_hole)
-        score_cells = [
-            html.Td(
-                _score_button(
-                    p["player_id"],
-                    holes_by_player[p["player_id"]].get(hole_number, {"hole_number": hole_number}),
-                    par,
-                )
-            )
-            for p in players
-        ]
-
-        return html.Tr(
-            [html.Td(hole_number, className="t3g-hole-number"), yardage_cell, si_cell, par_cell, *score_cells]
-        )
-
-    front_nine_rows = [_score_row(n) for n in range(1, 10)]
-    back_nine_rows = [_score_row(n) for n in range(10, 19)]
-
-    body = html.Tbody(
-        front_nine_rows
-        + [_summary_row("OUT", range(1, 10), reference_holes, players, holes_by_player, "live-round-out-total")]
-        + back_nine_rows
-        + [_summary_row("IN", range(10, 19), reference_holes, players, holes_by_player, "live-round-in-total")]
-        + [_summary_row("TOTAL", range(1, 19), reference_holes, players, holes_by_player, "live-round-total-total")]
-    )
-
+def _tournament_context_subnav(tournament_id, club_slug):
+    """Reached when the round being scored is a tournament round (see
+    round_data's tournament_id/tee_time_id) -- keeps the tournament's own
+    subnav visible above the scorecard instead of leaving the page a dead
+    end back to "/" only. Tournament Info/Start Sheet/Leaderboard are real
+    navigation links back to the tournament page (Start Sheet/Leaderboard
+    carry ?tab= so they land on the right tab there, same query param
+    tournament.py's own layout() reads -- see _tab_visibility), Live Round
+    is shown as the (non-clickable) active tab since that's where we
+    already are."""
+    base_href = f"/clubs/{club_slug}/tournaments/{tournament_id}"
     return html.Div(
-        className="t3g-player-scorecard",
-        children=html.Table(className="t3g-scorecard-table t3g-scorecard-table--multi", children=[header, body]),
+        className="t3g-tournament-subnav",
+        children=html.Div(
+            className="t3g-tournament-subnav-inner",
+            children=[
+                html.Div(
+                    className="t3g-tournament-tabs",
+                    children=[
+                        dcc.Link("Tournament Info", href=base_href, className=_TAB_BUTTON_BASE),
+                        dcc.Link(
+                            "Start Sheet", href=f"{base_href}?tab=startsheet", className=_TAB_BUTTON_BASE
+                        ),
+                        dcc.Link(
+                            "Leaderboard", href=f"{base_href}?tab=leaderboard", className=_TAB_BUTTON_BASE
+                        ),
+                        html.Span("Live Round", className=_TAB_BUTTON_ACTIVE),
+                    ],
+                ),
+                dcc.Link(
+                    "Return to Club",
+                    href=f"/clubs/{club_slug}",
+                    className="t3g-tournament-subnav-back",
+                ),
+            ],
+        ),
     )
 
 
-def layout(**kwargs):
+def layout(round_id=None, **kwargs):
     player_id = session.get("player_id")
 
     if not session.get("logged_in") or not player_id:
         session.clear()
         return dcc.Location(pathname="/signin", id="live-round-redirect-signin", refresh=True)
 
-    # No round_id in the URL on purpose -- there can only ever be one round
-    # (owned or joined) a player is an accepted participant in at a time
-    # (enforced app-side in backend/services/rounds.py), so looking it up
-    # by player_id is exactly what lets this page "pick up where you left
-    # off" after closing and reopening the app, with no state to restore.
-    response = requests.get(f"{API_BASE_URL}/rounds/active/{player_id}")
+    if round_id:
+        # Reached from the tournament page's Live Round tab (Start/
+        # Continue Live Round both link here with ?round_id=...) rather
+        # than the default no-argument load. Fetched directly by id
+        # instead of through the "my one active round" lookup below,
+        # because a player can now have a casual round *and* a tournament
+        # round live at the same time (see _get_active_round_id_for_
+        # player's tournament_scope split in backend/services/rounds.py)
+        # -- /rounds/active/{player_id} can only ever return one of them.
+        response = requests.get(
+            f"{API_BASE_URL}/rounds/{round_id}", params={"viewer_player_id": player_id}
+        )
+    else:
+        # No round_id in the URL -- there can only ever be one *casual*
+        # round (owned or joined) a player is an accepted participant in
+        # at a time, so looking it up by player_id is exactly what lets
+        # this page "pick up where you left off" after closing and
+        # reopening the app, with no state to restore. Doesn't surface a
+        # tournament round even if one's live -- those are only reached
+        # via the tournament page's own Continue Live Round link, above.
+        response = requests.get(f"{API_BASE_URL}/rounds/active/{player_id}")
 
     if response.status_code != 200:
         return html.Div(
@@ -258,231 +118,49 @@ def layout(**kwargs):
         )
 
     round_data = response.json()
-    is_manual = round_data.get("is_manual")
-    is_owner_of_round = bool(round_data.get("is_owner"))
     players = round_data.get("players", [])
     pending_invites = round_data.get("pending_invites", [])
-    owner_player = next((p for p in players if p.get("is_owner")), None)
 
-    for p in players:
-        p["is_viewer"] = p["player_id"] == player_id
-
-    # Single source of truth for every player's hole data -- everything
-    # reactive on this page (score button labels/marks, OUT/IN/TOTAL score
-    # sums per player, the score modal's prefilled values) reads from and
-    # writes back to this. A list (not a dict keyed by player_id) so
-    # iteration order is unambiguous and stays identical between this
-    # layout and the refresh_scorecard callback that rebuilds it.
-    players_store_data = [
-        {
-            "player_id": p["player_id"],
-            "display_name": _player_display_name(p),
-            "is_owner": p.get("is_owner", False),
-            "holes": {str(h["hole_number"]): h for h in p["holes"]},
-        }
-        for p in players
-    ]
-
-    title_bits = [round_data.get("club_name") or "Live Round"]
-    if round_data.get("course_name"):
-        title_bits.append(round_data["course_name"])
-    if round_data.get("tee_name"):
-        title_bits.append(f"{round_data['tee_name']} tees")
-    title = " — ".join(title_bits)
-
-    header_actions = []
-    if is_owner_of_round:
-        header_actions = [
-            html.Button(
-                "Scrap Round",
-                id="live-round-scrap-button",
-                className="t3g-panel-action-button t3g-panel-action-button--secondary",
+    # A round reached by explicit id (the tournament path above) isn't
+    # otherwise scoped to "rounds I belong to" the way the default lookup
+    # is -- guard against a stale/guessed round_id showing someone else's
+    # scorecard to a player who was never part of it.
+    if round_id and not any(p["player_id"] == player_id for p in players + pending_invites):
+        return html.Div(
+            className="t3g-page",
+            children=html.Div(
+                className="t3g-panel",
+                children=html.Div(
+                    className="t3g-panel-body",
+                    children=[
+                        html.P("You're not part of this round.", className="t3g-empty-state"),
+                        dcc.Link("Back to home", href="/", className="t3g-link-button"),
+                    ],
+                ),
             ),
-            html.Button(
-                "Finish Round",
-                id="live-round-finish-button",
-                className="t3g-panel-action-button",
-            ),
-        ]
+        )
 
-    pending_note = None
-    if pending_invites:
-        names = ", ".join(_player_display_name(p) for p in pending_invites)
-        pending_note = html.P(f"Waiting on {names} to accept their invite.", className="t3g-empty-state")
+    tournament_subnav = None
+    if round_data.get("tournament_id") and round_data.get("club_slug"):
+        tournament_subnav = _tournament_context_subnav(round_data["tournament_id"], round_data["club_slug"])
 
+    body_children = render_live_round_body(round_data, player_id)
     return html.Div(
         className="t3g-page",
-        children=[
-            dcc.Store(id="live-round-id-store", data=round_data["id"]),
-            dcc.Store(id="live-round-owner-id-store", data=owner_player["player_id"] if owner_player else None),
-            dcc.Store(id="live-round-players-store", data=players_store_data),
-            dcc.Store(id="live-round-active-hole-store"),
-            html.Div(
-                className="t3g-panel",
-                children=[
-                    html.Div(
-                        className="t3g-panel-navbar",
-                        children=[
-                            html.H3(title, className="t3g-panel-navbar-title"),
-                            html.Div(header_actions, className="t3g-panel-navbar-action")
-                            if header_actions
-                            else None,
-                        ],
-                    ),
-                    html.Div(
-                        className="t3g-panel-body",
-                        children=[
-                            html.P(
-                                "This course isn't in our list yet -- the round owner enters yards, "
-                                "stroke index, and par for each hole as they go. It'll be saved as a "
-                                "real course once the round finishes.",
-                                className="t3g-empty-state",
-                            )
-                            if is_manual
-                            else None,
-                            pending_note,
-                            _scorecard_table(players, owner_player, is_manual, is_owner_of_round)
-                            if players
-                            else None,
-                            html.Div(id="live-round-error", className="text-danger mt-2"),
-                        ],
-                    ),
-                ],
-            ),
-            dbc.Modal(
-                id="live-round-score-modal",
-                is_open=False,
-                className="t3g-score-modal",
-                children=[
-                    dbc.ModalHeader(dbc.ModalTitle(id="live-round-score-modal-title")),
-                    dbc.ModalBody(
-                        [
-                            html.Div(
-                                className="t3g-stepper-row",
-                                children=[
-                                    html.Div(
-                                        className="t3g-stepper-col",
-                                        children=[
-                                            html.Div("Score", className="t3g-stepper-label"),
-                                            html.Div(
-                                                className="t3g-stepper",
-                                                children=[
-                                                    html.Button(
-                                                        "+",
-                                                        id="live-round-score-shots-plus",
-                                                        className="t3g-stepper-button",
-                                                        n_clicks=0,
-                                                    ),
-                                                    html.Div(
-                                                        "-",
-                                                        id="live-round-score-shots-display",
-                                                        className="t3g-stepper-value",
-                                                    ),
-                                                    html.Button(
-                                                        "–",
-                                                        id="live-round-score-shots-minus",
-                                                        className="t3g-stepper-button",
-                                                        n_clicks=0,
-                                                    ),
-                                                ],
-                                            ),
-                                        ],
-                                    ),
-                                    html.Div(
-                                        className="t3g-stepper-col",
-                                        children=[
-                                            html.Div("Putts", className="t3g-stepper-label"),
-                                            html.Div(
-                                                className="t3g-stepper",
-                                                children=[
-                                                    html.Button(
-                                                        "+",
-                                                        id="live-round-score-putts-plus",
-                                                        className="t3g-stepper-button",
-                                                        n_clicks=0,
-                                                    ),
-                                                    html.Div(
-                                                        "-",
-                                                        id="live-round-score-putts-display",
-                                                        className="t3g-stepper-value",
-                                                    ),
-                                                    html.Button(
-                                                        "–",
-                                                        id="live-round-score-putts-minus",
-                                                        className="t3g-stepper-button",
-                                                        n_clicks=0,
-                                                    ),
-                                                ],
-                                            ),
-                                        ],
-                                    ),
-                                ],
-                            ),
-                            html.Div(id="live-round-score-result-badge", className="t3g-result-badge"),
-                            html.Div(
-                                id="live-round-score-fairway-row",
-                                className="t3g-fairway-row",
-                                children=[
-                                    html.Label("Fairway Hit", className="t3g-fairway-label"),
-                                    dbc.RadioItems(
-                                        id="live-round-score-fairway-input",
-                                        options=[
-                                            {"label": "Yes", "value": "yes"},
-                                            {"label": "No", "value": "no"},
-                                        ],
-                                        inline=True,
-                                        className="t3g-fairway-toggle",
-                                    ),
-                                ],
-                            ),
-                            dcc.Store(id="live-round-score-shots-store"),
-                            dcc.Store(id="live-round-score-putts-store"),
-                            dcc.Store(id="live-round-score-modal-par-store"),
-                        ]
-                    ),
-                    dbc.ModalFooter(
-                        [
-                            dbc.Button("Cancel", id="live-round-score-cancel", color="secondary"),
-                            dbc.Button(
-                                "Enter",
-                                id="live-round-score-save",
-                                color="primary",
-                                className="t3g-enter-button",
-                            ),
-                        ]
-                    ),
-                ],
-            ),
-            dbc.Modal(
-                id="live-round-scrap-modal",
-                is_open=False,
-                children=[
-                    dbc.ModalHeader(dbc.ModalTitle("Scrap this round?")),
-                    dbc.ModalBody(
-                        "This live round and every score entered so far -- for every player in it -- "
-                        "will be permanently deleted. This can't be undone."
-                    ),
-                    dbc.ModalFooter(
-                        [
-                            dbc.Button("Cancel", id="live-round-scrap-cancel", color="secondary"),
-                            dbc.Button(
-                                "Scrap Round",
-                                id="live-round-scrap-confirm",
-                                color="danger",
-                            ),
-                        ]
-                    ),
-                ],
-            ),
-            dcc.Location(id="live-round-finish-redirect", refresh=True),
-        ],
+        children=([tournament_subnav] if tournament_subnav else []) + body_children,
     )
 
 
 def _patch_hole(round_id, player_id, hole_number, field, value):
+    # updated_by is always the viewer making this request (whoever's
+    # session it is), not necessarily player_id (the person whose hole is
+    # being edited) -- the backend checks updated_by against round
+    # membership, matching casual rounds' "anyone in the group can score
+    # anyone in the group" model.
     response = requests.patch(
         f"{API_BASE_URL}/rounds/{round_id}/players/{player_id}/holes/{hole_number}",
         json={field: value},
+        params={"updated_by": session.get("player_id")},
     )
     if response.status_code == 200:
         return ""
@@ -651,6 +329,7 @@ def save_score(n_clicks, active_hole, round_id, shots, putts, fairway_radio, par
     response = requests.patch(
         f"{API_BASE_URL}/rounds/{round_id}/players/{target_player_id}/holes/{hole_number}",
         json={"strokes": shots, "putts": putts, "fairway_hit": fairway_hit},
+        params={"updated_by": session.get("player_id")},
     )
 
     if response.status_code != 200:

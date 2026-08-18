@@ -9,13 +9,28 @@ import requests
 from dash import ALL, Input, Output, State, callback, dcc, html
 from flask import session
 
-from components.scorecard import format_handicap, history_score_mark_class, live_badge, round_header_label
+from components.scorecard import (
+    format_handicap,
+    history_score_mark_class,
+    live_badge,
+    round_header_label,
+    tournament_round_badge,
+)
 from config import API_BASE_URL
 from layouts.panel_navbar import build_panel_navbar
 
 dash.register_page(__name__, path="/", name="Home")
 
 _ROUNDS_PER_PAGE = 2
+
+
+def _club_initials(name):
+    """Fallback tile content for a club with no photo uploaded yet -- up to
+    the first two words' initials (e.g. "Senco Squad" -> "SS", "Ashford" ->
+    "A"), same idea as a lot of avatar-placeholder patterns elsewhere."""
+    words = (name or "").split()
+    initials = "".join(w[0] for w in words[:2] if w)
+    return initials.upper() or "?"
 
 
 @contextmanager
@@ -154,11 +169,21 @@ def _round_scorecard_card(round_data, player_rows):
         )
 
     is_live = round_data.get("status") == "in_progress"
+    is_tournament = bool(round_data.get("tournament_id"))
     header_children = [html.Span(round_header_label(round_data), className="t3g-round-card-title")]
+
+    # Tournament badge shows regardless of live/completed status (a
+    # finished tournament round should still read as one), live_badge
+    # only while it's actually in progress -- both can show together,
+    # since round_header_label's own tournament-aware title text is only
+    # the first layer of the "is this a tournament round" distinction.
+    badges = []
+    if is_tournament:
+        badges.append(tournament_round_badge())
     if is_live:
-        header_children.append(
-            html.Div(live_badge(), className="t3g-round-card-header-actions")
-        )
+        badges.append(live_badge())
+    if badges:
+        header_children.append(html.Div(badges, className="t3g-round-card-header-actions"))
 
     return html.Div(
         className="t3g-round-card",
@@ -466,9 +491,19 @@ def layout(**kwargs):
             className="t3g-clubs-list",
             children=[
                 dcc.Link(
-                    club["name"],
                     href=f"/clubs/{club['slug']}",
                     className="t3g-club-item",
+                    children=[
+                        (
+                            html.Img(src=club["photo_url"], className="t3g-club-item-photo")
+                            if club.get("photo_url")
+                            else html.Div(
+                                _club_initials(club.get("name")),
+                                className="t3g-club-item-photo-placeholder",
+                            )
+                        ),
+                        html.Div(club["name"], className="t3g-club-item-name"),
+                    ],
                 )
                 for club in clubs
             ],
@@ -517,11 +552,15 @@ def layout(**kwargs):
     rounds_history = rounds_resp.json() if rounds_resp.status_code == 200 else []
 
     # Live rounds no longer show in Rounds History at all -- they get
-    # their own panel up top instead (built below, alongside
+    # their own panel(s) up top instead (built below, alongside
     # invites_section), the same treatment as a round invite,
     # since "a round that's happening right now" is a different kind of
-    # thing from "a round that already happened".
-    live_round = next((r for r in rounds_history if r.get("status") == "in_progress"), None)
+    # thing from "a round that already happened". A player can have a
+    # casual round *and* a tournament round live at the same time now
+    # (see backend/services/rounds.py's tournament_scope split) -- both
+    # show, as separate cards, rather than this only ever surfacing
+    # whichever one happened to come back first.
+    live_rounds = [r for r in rounds_history if r.get("status") == "in_progress"]
     completed_rounds = [r for r in rounds_history if r.get("status") != "in_progress"]
 
     # Only needed for the scorecard's avatar/name -- skip the call
@@ -535,14 +574,23 @@ def layout(**kwargs):
         player_initial = player_label[0].upper() if player_label else "Y"
         player_info = {"initial": player_initial, "label": player_label}
 
-    live_round_section = None
-    if live_round:
+    live_round_sections = []
+    for live_round in live_rounds:
+        is_tournament_round = bool(live_round.get("tournament_id"))
+
         # The Rounds History endpoint only ever returns *your* scorecard
         # (RoundSummaryResponse is deliberately single-player -- see its
         # docstring), so a round with other people in it needs the full
         # detail lookup (RoundDetailResponse) to get everyone's holes.
+        # viewer_player_id matters for a tournament round specifically --
+        # that's what get_round uses to compute is_owner correctly for
+        # the "every grouping member is an equal owner" tournament-round
+        # case (see backend/services/rounds.py's get_round) -- harmless
+        # to always send it either way.
         with _timed(f"GET /rounds/{live_round['id']}"):
-            live_round_detail_resp = requests.get(f"{API_BASE_URL}/rounds/{live_round['id']}")
+            live_round_detail_resp = requests.get(
+                f"{API_BASE_URL}/rounds/{live_round['id']}", params={"viewer_player_id": player_id}
+            )
         live_round_detail = live_round_detail_resp.json() if live_round_detail_resp.status_code == 200 else None
 
         if live_round_detail and live_round_detail.get("players"):
@@ -590,23 +638,38 @@ def layout(**kwargs):
                 }
             ]
 
-        live_round_section = html.Div(
-            className="t3g-panel",
-            children=[
-                build_panel_navbar(
-                    "Live Round",
-                    action=dcc.Link(
-                        "Continue Round",
-                        href="/live-round",
-                        className="t3g-panel-action-button",
-                        style={"textDecoration": "none"},
+        # A tournament round links back into its own tee time via
+        # round_id -- /live-round without that query param falls back to
+        # "whichever round is active for this player", which is exactly
+        # wrong when there are two active rounds at once (it's ambiguous
+        # which one you'd land on). A casual round has no such ambiguity
+        # (there can only ever be one live casual round per player -- see
+        # start_round's existing-active-round check), so the plain link
+        # still works fine there.
+        panel_title = "Live Tournament Round" if is_tournament_round else "Live Round"
+        continue_href = (
+            f"/live-round?round_id={live_round['id']}" if is_tournament_round else "/live-round"
+        )
+
+        live_round_sections.append(
+            html.Div(
+                className="t3g-panel",
+                children=[
+                    build_panel_navbar(
+                        panel_title,
+                        action=dcc.Link(
+                            "Continue Round",
+                            href=continue_href,
+                            className="t3g-panel-action-button",
+                            style={"textDecoration": "none"},
+                        ),
                     ),
-                ),
-                html.Div(
-                    _round_scorecard_card(live_round_detail or live_round, live_round_player_rows),
-                    className="t3g-panel-body",
-                ),
-            ],
+                    html.Div(
+                        _round_scorecard_card(live_round_detail or live_round, live_round_player_rows),
+                        className="t3g-panel-body",
+                    ),
+                ],
+            )
         )
 
     # The Stores and pagination controls always render, even with zero
@@ -727,7 +790,7 @@ def layout(**kwargs):
         children=[
             dcc.Location(id="round-invite-refresh", refresh=True),
             dcc.Location(id="club-invite-refresh", refresh=True),
-            live_round_section,
+            *live_round_sections,
             invites_section,
             _handicap_panel(current_handicap, handicap_history, handicap_breakdown),
             html.Div(
@@ -1279,7 +1342,7 @@ def render_rounds_page(page, completed_rounds, player_info):
 
 
 @callback(
-    Output("round-invite-refresh", "pathname"),
+    Output("round-invite-refresh", "href"),
     Output("round-invite-error", "children"),
     Input({"type": "round-invite-accept", "round_id": ALL}, "n_clicks"),
     prevent_initial_call=True,
@@ -1296,7 +1359,13 @@ def accept_round_invite(n_clicks_list):
         )
 
     if response.status_code == 200:
-        return "/live-round", ""
+        # href (not pathname) -- pathname gets percent-encoded when it
+        # contains a "?", corrupting the query string; and even without
+        # one, dcc.Location only reloads when the value it's given differs
+        # from what's already loaded, so a cache-busting suffix matters
+        # anywhere the target page could be the one you're already on.
+        # Same fix as tournament.py/club.py/my_account.py's redirects.
+        return f"/live-round?_r={time.time()}", ""
 
     try:
         detail = response.json().get("detail", "Couldn't accept that invite.")
@@ -1306,7 +1375,7 @@ def accept_round_invite(n_clicks_list):
 
 
 @callback(
-    Output("round-invite-refresh", "pathname", allow_duplicate=True),
+    Output("round-invite-refresh", "href", allow_duplicate=True),
     Input({"type": "round-invite-decline", "round_id": ALL}, "n_clicks"),
     prevent_initial_call=True,
 )
@@ -1319,7 +1388,10 @@ def decline_round_invite(n_clicks_list):
     with _timed(f"POST /rounds/{triggered_id['round_id']}/invites/{player_id}/decline"):
         requests.post(f"{API_BASE_URL}/rounds/{triggered_id['round_id']}/invites/{player_id}/decline")
 
-    return "/"
+    # Cache-busted -- this panel only ever renders on "/" itself, so a
+    # plain "/" is a no-op (dcc.Location only reloads on an actual value
+    # change) and the decline silently appears to do nothing.
+    return f"/?_r={time.time()}"
 
 @callback(
     Output("handicap-panel-content", "children"),
@@ -1353,7 +1425,7 @@ def toggle_handicap_info_modal(open_clicks, close_clicks):
 
 
 @callback(
-    Output("club-invite-refresh", "pathname"),
+    Output("club-invite-refresh", "href"),
     Output("club-invite-error", "children"),
     Input({"type": "club-invite-accept", "invite_id": ALL}, "n_clicks"),
     prevent_initial_call=True,
@@ -1371,7 +1443,12 @@ def accept_club_invite(n_clicks_list):
         )
 
     if response.status_code == 200:
-        return "/", ""
+        # href + cache-bust, not a plain "/" on pathname -- this panel only
+        # ever renders on "/" itself, so a bare "/" is a no-op (dcc.Location
+        # only reloads when the value actually changes) and Accept looked
+        # like it did nothing. Same fix as tournament.py/club.py/
+        # my_account.py's redirects.
+        return f"/?_r={time.time()}", ""
 
     try:
         detail = response.json().get("detail", "Couldn't accept that invite.")
@@ -1381,7 +1458,7 @@ def accept_club_invite(n_clicks_list):
 
 
 @callback(
-    Output("club-invite-refresh", "pathname", allow_duplicate=True),
+    Output("club-invite-refresh", "href", allow_duplicate=True),
     Input({"type": "club-invite-decline", "invite_id": ALL}, "n_clicks"),
     prevent_initial_call=True,
 )
@@ -1397,4 +1474,4 @@ def decline_club_invite(n_clicks_list):
             params={"player_id": player_id},
         )
 
-    return "/"
+    return f"/?_r={time.time()}"

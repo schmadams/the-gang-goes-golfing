@@ -1,4 +1,4 @@
-# target path: frontend/src/components/scorecard.py (new file)
+# target path: frontend/src/components/scorecard.py (full replacement)
 """
 Shared building blocks for anything that renders a round as a mini
 traditional scorecard -- currently the home page's Rounds History panel
@@ -35,12 +35,29 @@ def round_header_label(round_data):
     """One combined line -- club, course, tees, and date together, like
     the label on a real scorecard's cover. A live round has no
     completed_at yet, so it just omits the date rather than showing a
-    blank."""
-    label = round_data.get("club_name") or "Manually entered round"
-    if round_data.get("course_name"):
-        label += f" — {round_data['course_name']}"
-    if round_data.get("tee_name"):
-        label += f" ({round_data['tee_name']} tees)"
+    blank.
+
+    Tournament-linked rounds (round_data carries tournament_id/
+    tournament_name/tournament_round_number -- see _tournament_context_
+    for_round in backend/services/rounds.py) get a different label
+    entirely: club, tournament name, and round number, instead of course/
+    tees. That's the whole point of a tournament round from a player's
+    perspective -- which competition and which round of it -- not which
+    tee they played off, and it's what actually distinguishes it from a
+    casual round wherever this label shows up (the home page's Live Round
+    panel, Rounds History, Scoring History), now that a player can have
+    one of each in progress at the same time."""
+    if round_data.get("tournament_id") and round_data.get("tournament_name"):
+        label = round_data.get("club_name") or "Tournament round"
+        label += f" — {round_data['tournament_name']}"
+        if round_data.get("tournament_round_number"):
+            label += f" — Round {round_data['tournament_round_number']}"
+    else:
+        label = round_data.get("club_name") or "Manually entered round"
+        if round_data.get("course_name"):
+            label += f" — {round_data['course_name']}"
+        if round_data.get("tee_name"):
+            label += f" ({round_data['tee_name']} tees)"
 
     date = (round_data.get("completed_at") or "")[:10]
     return f"{label} · {date}" if date else label
@@ -55,6 +72,20 @@ def live_badge():
         [html.Span(className="t3g-live-dot"), html.Span("LIVE")],
         className="t3g-live-badge",
     )
+
+
+def tournament_round_badge():
+    """Small tag marking a round as tournament-linked -- shown alongside
+    live_badge() for a round in progress, or on its own for a completed
+    one, anywhere round_header_label appears. Exists specifically so a
+    tournament round is never mistaken for a casual one at a glance, on
+    top of round_header_label's own tournament-aware title text -- most
+    important on the home page's Live Round panel, since a player can now
+    have a casual round *and* a tournament round live at the same time
+    (see backend/services/rounds.py's tournament_scope split), shown as
+    two separate cards there that need to read as clearly different kinds
+    of thing, not just two rounds that happen to have different titles."""
+    return html.Span("TOURNAMENT", className="t3g-tournament-round-badge")
 
 
 def format_handicap(handicap):

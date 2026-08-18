@@ -5,8 +5,10 @@ import dash
 import dash_bootstrap_components as dbc
 import requests
 from dash import ALL, MATCH, Input, Output, State, callback, dcc, html
+from dash.exceptions import PreventUpdate
 from flask import session
 
+from components.live_scorecard import render_live_round_body
 from components.scorecard import live_badge
 from config import API_BASE_URL
 from layouts.panel_navbar import build_panel_navbar
@@ -51,6 +53,7 @@ _TOURNAMENT_ENTRY_MODE_OPTIONS = [
 _TOURNAMENT_GROUPING_METHOD_OPTIONS = [
     {"label": "Random", "value": "random"},
     {"label": "By handicap", "value": "handicap"},
+    {"label": "Manual", "value": "manual"},
 ]
 _GROUP_SIZE_OPTIONS = [{"label": f"{n} per group", "value": n} for n in range(2, 7)]
 _DEFAULT_GROUP_SIZE = 4
@@ -126,16 +129,135 @@ def _format_tee_time(tee_time_str):
     return f"{display_hour}:{minute:02d} {period}"
 
 
-def _tee_times_panel(tournament, is_admin):
-    """Lives as its own panel card within the Tournament Info tab (next to
-    Tournament Info and Entrants) rather than a separate subnav tab -- one
-    section per round, each showing whatever groups have been generated
-    plus, for admins, a first-tee-time input and a Generate button.
-    Generating is always a full wholesale regenerate (see
+def _recap_row(cells, header=False):
+    """One row of the read-only tee time recap -- a fixed Tee Time column
+    plus one column per player slot (Player A/B/C/...), truncated with an
+    ellipsis (title attr carries the full name for a hover tooltip) rather
+    than wrapping/overflowing, with a literal "|" divider between each pair
+    of player columns -- not between Tee Time and Player A, just between the
+    players themselves. Reused for both the header labels row and every
+    data row so the two stay pixel-aligned (same flex proportions, same
+    number of divider cells)."""
+    row_children = []
+    for index, cell in enumerate(cells):
+        if index > 1:
+            row_children.append(html.Span("|", className="t3g-teetime-recap-divider"))
+        is_time_col = index == 0
+        row_children.append(
+            html.Span(
+                cell,
+                className="t3g-teetime-recap-cell"
+                + (" t3g-teetime-recap-cell--time" if is_time_col else ""),
+                title=(None if header or is_time_col else cell),
+            )
+        )
+    class_name = "t3g-teetime-recap-row" + (" t3g-teetime-recap-row--header" if header else "")
+    return html.Div(row_children, className=class_name)
+
+
+def _first_unfinished_prior_round(tournament, target_round_number, player_id):
+    """Frontend mirror of backend/services/rounds.py's
+    _first_unfinished_prior_round_number -- tournament rounds have to be
+    played in order, so before showing a clickable Start Live Round
+    button for a given round, walk every earlier round_number in this
+    tournament (ascending, using the round list already on hand from the
+    page load -- no extra request) and return the first one the viewer
+    was grouped into but hasn't completed, or None if there isn't one.
+    This copy only decides whether to show a button or an explanatory
+    message; the POST to /rounds/tournament/{tee_time_id} is still the
+    real, authoritative gate -- see start_tournament_round."""
+    for r in sorted(tournament.get("rounds", []), key=lambda r: r["round_number"]):
+        if r["round_number"] >= target_round_number:
+            continue
+        group = next(
+            (g for g in r.get("tee_times", []) if any(p["player_id"] == player_id for p in g.get("players", []))),
+            None,
+        )
+        if group is None:
+            continue
+        live_round = group.get("live_round")
+        if not live_round or live_round.get("status") != "completed":
+            return r["round_number"]
+    return None
+
+
+def _my_group_action(tournament, r, my_group, player_id):
+    """The viewer's own tee time + live round action for one round,
+    rendered on the Start Sheet right alongside the tee times themselves
+    rather than off on a separate Live Round tab -- Start Live Round is a
+    per-grouping action on the round you're actually looking at, so it
+    belongs where the groupings are. Mirrors the states _live_round_panel
+    used to render on its own (not-started/in-progress/completed), but
+    only this copy ever shows the actual clickable button -- the Live
+    Round tab now just reflects whatever state this produced."""
+    round_id = r["id"]
+    tee_time_id = my_group["id"]
+    live_round = my_group.get("live_round")
+
+    groupmate_labels = [
+        _entrant_label(p) for p in my_group.get("players", []) if p["player_id"] != player_id
+    ]
+    meta_text = f"Your tee time: {_format_tee_time(my_group.get('tee_time'))}"
+    if groupmate_labels:
+        meta_text += f" with {', '.join(groupmate_labels)}"
+
+    if live_round is None:
+        blocking_round_number = _first_unfinished_prior_round(tournament, r["round_number"], player_id)
+        if blocking_round_number is not None:
+            action = html.Span(
+                f"Finish Round {blocking_round_number} before you can start this round.",
+                className="t3g-empty-state",
+            )
+        else:
+            action = html.Button(
+                "Start Live Round",
+                id={
+                    "type": "tournament-start-live-round",
+                    "round_id": round_id,
+                    "tee_time_id": tee_time_id,
+                },
+                className="t3g-panel-action-button",
+                n_clicks=0,
+            )
+    elif live_round.get("status") == "in_progress":
+        action = html.Span("Live round in progress", className="t3g-liveround-inprogress-badge")
+    else:
+        action = html.Span("Round completed", className="t3g-liveround-finished-badge")
+
+    return html.Div(
+        className="t3g-liveround-group",
+        children=[html.Div(meta_text, className="t3g-liveround-group-meta"), action],
+    )
+
+
+def _tee_times_panel(tournament, is_admin, player_id):
+    """Rendered inside its own "Start Sheet" subnav tab (see
+    _tournament_subnav / switch_tournament_tab) rather than as a section of
+    Tournament Info -- one block per round, each showing whatever groups
+    have been generated plus, for admins, a first-tee-time input and a
+    Generate button. Generating is always a full wholesale regenerate (see
     generate_tee_times's docstring) -- no confirmation, since re-running it
     after a withdrawal/late add is the expected, ordinary workflow, not a
-    destructive edge case."""
+    destructive edge case. When the tournament's grouping_method is
+    "manual", Generate still creates the slots (spaced/sized the same way)
+    but leaves them empty -- admins place confirmed entrants into them one
+    by one via the dropdowns _management_table builds below, instead of the
+    auto methods sorting the whole field for you.
+
+    Layout is split in two, top to bottom: an admin-only management table
+    (editable tee time per slot, plus -- for manual mode -- the player
+    assignment dropdowns) and, below that, a plain read-only recap of
+    whatever's actually saved. All editing lives in the management table;
+    the recap never has inputs in it, admin or not, so it stays a clean
+    "here's the current start sheet" view.
+
+    Right under each round's heading, every viewer (admin or not) also
+    gets their own tee time plus the Start Live Round action for it (see
+    _my_group_action) -- starting a live round happens right here, next
+    to the actual tee times, rather than on a separate Live Round tab."""
     rounds = tournament.get("rounds", [])
+    is_manual = tournament.get("grouping_method") == "manual"
+    confirmed_entrants = [e for e in tournament.get("entrants", []) if e.get("status") == "confirmed"]
 
     round_sections = []
     for r in rounds:
@@ -147,40 +269,187 @@ def _tee_times_panel(tournament, is_admin):
             course_label += f", {r['course_name']}"
         round_heading = f"Round {r['round_number']} — {r.get('round_date', '')} ({course_label})"
 
+        my_group = next(
+            (g for g in groups if any(p["player_id"] == player_id for p in g.get("players", []))),
+            None,
+        )
+        my_group_section = _my_group_action(tournament, r, my_group, player_id) if my_group else None
+
         if groups:
-            group_rows = [
-                html.Div(
-                    className="t3g-teetime-group",
-                    children=[
-                        html.Span(_format_tee_time(g.get("tee_time")), className="t3g-teetime-time"),
-                        html.Span(
-                            ", ".join(_entrant_label(p) for p in g.get("players", [])) or "No players",
-                            className="t3g-teetime-players",
-                        ),
-                    ],
-                )
-                for g in groups
-            ]
+            recap_group_size = r.get("group_size") or _DEFAULT_GROUP_SIZE
+            recap_header = _recap_row(
+                ["Tee Time"] + [f"Player {chr(65 + i)}" for i in range(recap_group_size)], header=True
+            )
+            recap_data_rows = []
+            for g in groups:
+                slot_labels = [_entrant_label(p) for p in g.get("players", [])][:recap_group_size]
+                slot_labels += ["—"] * (recap_group_size - len(slot_labels))
+                recap_data_rows.append(_recap_row([_format_tee_time(g.get("tee_time"))] + slot_labels))
+            group_rows = [recap_header] + recap_data_rows
         else:
-            group_rows = [html.P("No tee times generated yet.", className="t3g-empty-state mb-0")]
+            empty_text = (
+                "No tee time slots created yet." if is_manual else "No tee times generated yet."
+            )
+            group_rows = [html.P(empty_text, className="t3g-empty-state mb-0")]
 
         admin_controls = None
         if is_admin:
             admin_controls = html.Div(
                 className="t3g-teetime-generate-row",
                 children=[
-                    dcc.Input(
+                    # dbc.Input, not dcc.Input -- dcc.Input's `type` prop is
+                    # restricted by its JS PropTypes to a fixed list that
+                    # doesn't include "time" (React throws a hard prop-type
+                    # error for anything outside it). dbc.Input maps
+                    # straight to a native <input> with no such
+                    # restriction, so the browser's own time picker works.
+                    dbc.Input(
                         id={"type": "tournament-teetime-first-time", "round_id": round_id},
                         type="time",
                         value="08:00",
                         className="t3g-teetime-time-input",
                     ),
                     html.Button(
-                        "Generate Tee Times",
+                        "Create Tee Time Slots" if is_manual else "Generate Tee Times",
                         id={"type": "tournament-teetime-generate", "round_id": round_id},
                         className="t3g-panel-action-button t3g-panel-action-button--secondary",
                         n_clicks=0,
                     ),
+                ],
+            )
+
+        management_table = None
+        if is_admin and groups:
+            # One row per tee time slot. Manual mode gets a fixed
+            # "Player A/B/C/..." dropdown column per seat in the group
+            # (round.group_size wide) same as before -- slot position within
+            # a group is purely a frontend/display convenience, nothing
+            # server-side tracks "Player A" vs "Player B", it's just however
+            # each group's current player list happens to be ordered, so on
+            # every reload the columns get re-filled left-to-right from that
+            # order. Non-manual modes get a single read-only Players column
+            # instead, since reassigning players isn't part of this table for
+            # those methods -- only the tee time itself is editable there.
+            group_size = r.get("group_size") or _DEFAULT_GROUP_SIZE
+            entrant_options = [
+                {"label": _entrant_label(e), "value": e["player_id"]} for e in confirmed_entrants
+            ]
+            grid_style = (
+                {"gridTemplateColumns": f"210px repeat({group_size}, minmax(0, 1fr))"}
+                if is_manual
+                else {"gridTemplateColumns": "210px 1fr"}
+            )
+
+            header_children = [html.Span("Tee Time", className="t3g-teetime-assign-col-label")]
+            header_children += (
+                [
+                    html.Span(f"Player {chr(65 + i)}", className="t3g-teetime-assign-col-label")
+                    for i in range(group_size)
+                ]
+                if is_manual
+                else [html.Span("Players", className="t3g-teetime-assign-col-label")]
+            )
+            header_row = html.Div(
+                className="t3g-teetime-assign-table-row t3g-teetime-assign-table-header",
+                style=grid_style,
+                children=header_children,
+            )
+
+            slot_rows = []
+            for g in groups:
+                # Editable time + Save button, same one-off-override
+                # endpoint (update_tee_time_slot) regardless of grouping
+                # method -- this doesn't touch who's in the group, only when
+                # they tee off.
+                time_cell = html.Div(
+                    className="t3g-teetime-edit",
+                    children=[
+                        dbc.Input(
+                            id={
+                                "type": "tournament-teetime-update-input",
+                                "round_id": round_id,
+                                "tee_time_id": g["id"],
+                            },
+                            type="time",
+                            value=(g.get("tee_time") or "")[:5] or None,
+                            className="t3g-teetime-time-input t3g-teetime-time-input--inline",
+                        ),
+                        html.Button(
+                            "Save",
+                            id={
+                                "type": "tournament-teetime-update-save",
+                                "round_id": round_id,
+                                "tee_time_id": g["id"],
+                            },
+                            className="t3g-teetime-save-button",
+                            n_clicks=0,
+                        ),
+                    ],
+                )
+
+                row_children = [time_cell]
+                if is_manual:
+                    slot_player_ids = [p["player_id"] for p in g.get("players", [])][:group_size]
+                    slot_player_ids += [None] * (group_size - len(slot_player_ids))
+                    row_children.extend(
+                        dcc.Dropdown(
+                            id={
+                                "type": "tournament-teetime-assign",
+                                "round_id": round_id,
+                                "tee_time_id": g["id"],
+                                "slot": slot_index,
+                            },
+                            options=entrant_options,
+                            value=player_id,
+                            placeholder="Select player",
+                            clearable=True,
+                            className="t3g-teetime-assign-dropdown",
+                        )
+                        for slot_index, player_id in enumerate(slot_player_ids)
+                    )
+                else:
+                    row_children.append(
+                        html.Span(
+                            ", ".join(_entrant_label(p) for p in g.get("players", [])) or "No players",
+                            className="t3g-teetime-assign-players-readonly",
+                        )
+                    )
+                slot_rows.append(
+                    html.Div(
+                        className="t3g-teetime-assign-table-row", style=grid_style, children=row_children
+                    )
+                )
+
+            management_table = html.Div(
+                className="t3g-teetime-manual-assign",
+                children=[
+                    # Holds the round's full confirmed-entrant option list so
+                    # filter_tee_time_assign_options (below) can re-derive
+                    # each dropdown's *available* options -- entrant_options
+                    # minus whoever's already picked in one of the round's
+                    # other dropdowns -- every time any dropdown's value
+                    # changes, without a server round trip. Only needed in
+                    # manual mode, since that's the only case with dropdowns
+                    # to filter.
+                    dcc.Store(
+                        id={"type": "tournament-teetime-entrant-options", "round_id": round_id},
+                        data=entrant_options,
+                    )
+                    if is_manual
+                    else None,
+                    html.Div(
+                        "Assign Players" if is_manual else "Manage Tee Times",
+                        className="t3g-modal-label t3g-tournament-rounds-label mt-2 mb-1",
+                    ),
+                    html.Div([header_row] + slot_rows, className="t3g-teetime-assign-table"),
+                    html.Button(
+                        "Save Assignments",
+                        id={"type": "tournament-teetime-save-assignments", "round_id": round_id},
+                        className="t3g-panel-action-button mt-2",
+                        n_clicks=0,
+                    )
+                    if is_manual
+                    else None,
                 ],
             )
 
@@ -189,11 +458,32 @@ def _tee_times_panel(tournament, is_admin):
                 className="t3g-modal-section t3g-teetime-round-section",
                 children=[
                     html.Div(round_heading, className="t3g-modal-label t3g-tournament-rounds-label"),
+                    my_group_section,
+                    html.Div(
+                        id={"type": "tournament-liveround-error", "round_id": round_id},
+                        className="text-danger mb-2",
+                    ),
+                    # Per-round, same MATCH-key-consistency reasoning as the
+                    # rest of this section's per-round Locations -- see
+                    # handle_start_live_round.
+                    dcc.Location(
+                        id={"type": "tournament-liveround-redirect", "round_id": round_id}, refresh=True
+                    ),
                     admin_controls,
                     html.Div(
                         id={"type": "tournament-teetime-error", "round_id": round_id},
                         className="text-danger mb-2",
                     ),
+                    # Per-round, not a single shared Location -- Dash requires
+                    # every Output in a MATCH callback to carry the same
+                    # wildcard keys, so the redirect has to be keyed by
+                    # round_id right alongside the error div rather than one
+                    # page-level component (see handle_generate_tee_times /
+                    # handle_save_tee_time_assignments).
+                    dcc.Location(
+                        id={"type": "tournament-teetime-redirect", "round_id": round_id}, refresh=True
+                    ),
+                    management_table,
                     html.Div(group_rows, className="t3g-teetime-group-list"),
                 ],
             )
@@ -423,32 +713,82 @@ def _entrants_panel(tournament, entrants, my_entry, is_admin):
     )
 
 
-def _leaderboard_panel(entrants):
-    """Placeholder -- no round-to-tournament scoring link exists yet, so
-    this just lists confirmed entrants (alphabetically, since there's no
-    score to rank by) instead of a real leaderboard. Position/Player/Score
-    columns are here so the shape is already right once scoring lands."""
-    confirmed = sorted(
-        (e for e in entrants if e["status"] == "confirmed"),
-        key=lambda e: _entrant_label(e).lower(),
-    )
+_LEADERBOARD_FORMAT_KEYS = ("gross", "stableford", "nett")
+_LEADERBOARD_FORMAT_LABELS = {"gross": "Gross", "stableford": "Stableford", "nett": "Nett"}
+# Tournament format -> which of the leaderboard's three display modes it
+# opens on by default. Team formats (2bbb/4bbb/texas_scramble) don't map
+# onto an individual per-player leaderboard the way this table works, so
+# they fall back to Gross same as "scratch" rather than guessing.
+_TOURNAMENT_FORMAT_TO_LEADERBOARD_MODE = {"stableford": "stableford", "net": "nett"}
 
-    if not confirmed:
-        body = html.P("No entrants yet.", className="t3g-empty-state")
-    else:
-        rows = [
-            html.Tr([html.Td(str(i + 1)), html.Td(_entrant_label(e)), html.Td("-")])
-            for i, e in enumerate(confirmed)
-        ]
-        body = dbc.Table(
-            [
-                html.Thead(html.Tr([html.Th("Pos"), html.Th("Player"), html.Th("Score")])),
-                html.Tbody(rows),
+_LEADERBOARD_REFRESH_INTERVAL_MS = 25_000
+
+
+def _default_leaderboard_mode(tournament):
+    return _TOURNAMENT_FORMAT_TO_LEADERBOARD_MODE.get(tournament.get("format"), "gross")
+
+
+def _round_has_grouping_status(r, live_status):
+    return any((g.get("live_round") or {}).get("status") == live_status for g in r.get("tee_times", []))
+
+
+def _default_leaderboard_round(tournament):
+    """Which round the leaderboard opens on -- whatever's actively being
+    played (highest round_number with a group still in_progress) takes
+    priority, since that's what "live" means here; failing that, the
+    latest round with anything completed; failing that, just Round 1 so
+    there's always something selected before a single shot's been hit."""
+    rounds = sorted(tournament.get("rounds", []), key=lambda r: r["round_number"])
+    if not rounds:
+        return None
+    in_progress = [r for r in rounds if _round_has_grouping_status(r, "in_progress")]
+    if in_progress:
+        return in_progress[-1]
+    completed = [r for r in rounds if _round_has_grouping_status(r, "completed")]
+    if completed:
+        return completed[-1]
+    return rounds[0]
+
+
+def _leaderboard_format_classes(active_mode):
+    return {
+        key: ("t3g-leaderboard-format-tab t3g-leaderboard-format-tab--active" if key == active_mode
+              else "t3g-leaderboard-format-tab")
+        for key in _LEADERBOARD_FORMAT_KEYS
+    }
+
+
+def _leaderboard_panel(tournament):
+    """Live, whole-field Masters-style leaderboard -- a round selector (one
+    round tab/dropdown per tournament round) and a Gross/Stableford/Nett
+    format toggle sit above the table; the table itself (round selector's
+    own data, format's own column) is filled in by render_tournament_
+    leaderboard_table below once tournament-leaderboard-store has data,
+    not built here at layout time, so switching rounds/format never needs
+    a full page reload -- just a fetch (round change) or a client-side
+    re-render (format change, no new request since the backend already
+    computes all three formats at once). tournament-leaderboard-refresh-
+    interval polls the currently selected round on a timer so scores
+    update on their own while someone's sitting on this tab watching a
+    live round."""
+    rounds = sorted(tournament.get("rounds", []), key=lambda r: r["round_number"])
+
+    if not rounds:
+        return html.Div(
+            className="t3g-panel",
+            children=[
+                build_panel_navbar("Leaderboard"),
+                html.Div(html.P("No rounds set up yet.", className="t3g-empty-state"), className="t3g-panel-body"),
             ],
-            className="t3g-club-directory-table",
-            bordered=False,
-            hover=True,
         )
+
+    default_round = _default_leaderboard_round(tournament)
+    default_mode = _default_leaderboard_mode(tournament)
+    format_classes = _leaderboard_format_classes(default_mode)
+
+    round_options = [
+        {"label": f"Round {r['round_number']} — {r.get('round_date', '')}", "value": r["id"]} for r in rounds
+    ]
 
     return html.Div(
         className="t3g-panel",
@@ -457,14 +797,280 @@ def _leaderboard_panel(entrants):
             html.Div(
                 className="t3g-panel-body",
                 children=[
-                    html.P(
-                        "Scoring isn't wired up yet -- this will rank by score once rounds are linked in.",
-                        className="t3g-empty-state mb-2",
+                    html.Div(
+                        className="t3g-leaderboard-controls",
+                        children=[
+                            dcc.Dropdown(
+                                id="tournament-leaderboard-round-select",
+                                options=round_options,
+                                value=default_round["id"] if default_round else None,
+                                clearable=False,
+                                searchable=False,
+                                className="t3g-leaderboard-round-select",
+                            ),
+                            html.Div(
+                                className="t3g-leaderboard-format-tabs",
+                                children=[
+                                    html.Button(
+                                        _LEADERBOARD_FORMAT_LABELS[key],
+                                        id={"type": "tournament-leaderboard-format-button", "mode": key},
+                                        className=format_classes[key],
+                                        n_clicks=0,
+                                    )
+                                    for key in _LEADERBOARD_FORMAT_KEYS
+                                ],
+                            ),
+                        ],
                     ),
-                    body,
+                    html.Div(id="tournament-leaderboard-error", className="text-danger mb-2"),
+                    dcc.Loading(
+                        html.Div(id="tournament-leaderboard-table-container"),
+                        type="circle",
+                    ),
+                    dcc.Store(id="tournament-leaderboard-store"),
+                    dcc.Store(id="tournament-leaderboard-format-store", data=default_mode),
+                    dcc.Interval(
+                        id="tournament-leaderboard-refresh-interval",
+                        interval=_LEADERBOARD_REFRESH_INTERVAL_MS,
+                        n_intervals=0,
+                    ),
+                    _leaderboard_scorecard_modal(),
                 ],
             ),
         ],
+    )
+
+
+def _leaderboard_scorecard_modal():
+    """Opened by clicking a player's row in the leaderboard table (see
+    toggle_tournament_leaderboard_scorecard_modal) -- their Hole/Par/Score
+    line for whichever round the leaderboard is currently showing. Body
+    content is filled in by the callback, not here, since it depends on
+    which row got clicked."""
+    return dbc.Modal(
+        id="tournament-leaderboard-scorecard-modal",
+        is_open=False,
+        size="xl",
+        children=[
+            dbc.ModalHeader(dbc.ModalTitle(id="tournament-leaderboard-scorecard-modal-title")),
+            dbc.ModalBody(id="tournament-leaderboard-scorecard-modal-body"),
+            dbc.ModalFooter(dbc.Button("Close", id="tournament-leaderboard-scorecard-close", color="secondary")),
+        ],
+    )
+
+
+def _leaderboard_player_scorecard(player, holes):
+    """Read-only Hole/Par/Score line for one player's selected round --
+    built straight from holes_strokes, the same raw per-hole strokes the
+    leaderboard's cumulative-to-par columns were derived from, so this
+    always matches exactly what the grid is already showing rather than
+    needing its own fetch."""
+    strokes = player.get("holes_strokes") or [None] * 18
+    pars = [h.get("par") for h in holes]
+    hole_numbers = [h["hole_number"] for h in holes]
+
+    def _row(label, values, bold=False):
+        cells = [html.Td(label, className="t3g-leaderboard-scorecard-label")]
+        for i, v in enumerate(values):
+            divider = " t3g-leaderboard-divider" if hole_numbers[i] == 10 else ""
+            cells.append(html.Td(str(v) if v is not None else "-", className=divider.strip()))
+        return html.Tr(cells, className="t3g-leaderboard-scorecard-score-row" if bold else None)
+
+    header_cells = [html.Th("Hole")]
+    for hole_number in hole_numbers:
+        divider = " t3g-leaderboard-divider" if hole_number == 10 else ""
+        header_cells.append(html.Th(str(hole_number), className=divider.strip()))
+
+    out_par = sum(p for p in pars[:9] if p is not None)
+    in_par = sum(p for p in pars[9:] if p is not None)
+    out_strokes = [s for s in strokes[:9] if s is not None]
+    in_strokes = [s for s in strokes[9:] if s is not None]
+    total_strokes = out_strokes + in_strokes
+
+    summary = html.Div(
+        className="t3g-leaderboard-scorecard-summary",
+        children=[
+            html.Span(f"OUT  {sum(out_strokes) if out_strokes else '-'}  (par {out_par})"),
+            html.Span(f"IN  {sum(in_strokes) if in_strokes else '-'}  (par {in_par})"),
+            html.Span(
+                f"TOTAL  {sum(total_strokes) if total_strokes else '-'}  (par {out_par + in_par})",
+                className="t3g-leaderboard-scorecard-total",
+            ),
+        ],
+    )
+
+    return html.Div(
+        [
+            html.Div(
+                html.Table(
+                    [
+                        html.Thead(html.Tr(header_cells)),
+                        html.Tbody([_row("Par", pars), _row("Score", strokes, bold=True)]),
+                    ],
+                    className="t3g-leaderboard-table t3g-leaderboard-scorecard-table",
+                ),
+                className="t3g-leaderboard-wrap",
+            ),
+            summary,
+        ]
+    )
+
+
+def _leaderboard_to_par_text(value):
+    if value is None:
+        return "–"
+    if value == 0:
+        return "E"
+    return f"+{value}" if value > 0 else str(value)
+
+
+def _leaderboard_cell_class(value, mode):
+    base = "t3g-leaderboard-cell"
+    if value is None:
+        return f"{base} t3g-leaderboard-cell-empty"
+    if mode != "stableford" and value < 0:
+        return f"{base} t3g-leaderboard-cell-under"
+    return base
+
+
+def _leaderboard_total_pill_class(value, mode):
+    """Modifier for the Total column's pill -- red/good, grey/level, navy/
+    over for gross+nett (same under-par-is-red convention as the hole
+    cells, just promoted to a flat chip since Total is the one number
+    someone actually scans the whole board for). Stableford has no
+    under/over polarity to key off -- just points -- so it always gets the
+    same neutral "points" chip instead."""
+    if mode == "stableford":
+        return "t3g-leaderboard-total-pill t3g-leaderboard-total-pill--points"
+    if value is None:
+        return "t3g-leaderboard-total-pill t3g-leaderboard-total-pill--even"
+    if value < 0:
+        return "t3g-leaderboard-total-pill t3g-leaderboard-total-pill--under"
+    if value == 0:
+        return "t3g-leaderboard-total-pill t3g-leaderboard-total-pill--even"
+    return "t3g-leaderboard-total-pill t3g-leaderboard-total-pill--over"
+
+
+def _leaderboard_initials(name):
+    words = [w for w in name.split() if w]
+    if not words:
+        return "?"
+    if len(words) == 1:
+        return words[0][:2].upper()
+    return (words[0][0] + words[-1][0]).upper()
+
+
+def _leaderboard_positions(sorted_players, total_key):
+    """Sequential rank with ties sharing a position (and a "T" prefix once
+    they do) -- same convention every real leaderboard uses rather than
+    just numbering rows 1..N regardless of equal scores."""
+    positions = []
+    for i, p in enumerate(sorted_players):
+        if i > 0 and p[total_key] == sorted_players[i - 1][total_key]:
+            positions.append(positions[-1])
+        else:
+            positions.append(i + 1)
+
+    counts: dict[int, int] = {}
+    for pos in positions:
+        counts[pos] = counts.get(pos, 0) + 1
+    return [f"T{pos}" if counts[pos] > 1 else str(pos) for pos in positions]
+
+
+def _leaderboard_table(leaderboard_data, mode):
+    holes = leaderboard_data.get("holes", [])
+    players = leaderboard_data.get("players", [])
+
+    if not players:
+        return html.P("No confirmed entrants yet.", className="t3g-empty-state")
+
+    holes_key = f"holes_{mode}"
+    prior_key = f"prior_{mode}"
+    total_key = f"total_{mode}"
+
+    # Gross/Nett: lowest to-par leads. Stableford: most points leads.
+    sorted_players = sorted(players, key=lambda p: p[total_key], reverse=(mode == "stableford"))
+    positions = _leaderboard_positions(sorted_players, total_key)
+
+    value_text = (lambda v: str(v)) if mode == "stableford" else _leaderboard_to_par_text
+
+    # Two header rows, same idea as a printed scorecard: hole numbers on
+    # top, par directly beneath each one -- Pos/Player/Total/Thru/Prior
+    # only need to be labelled once, on the hole-number row.
+    hole_header_row = [html.Th(""), html.Th("Player"), html.Th("Total"), html.Th("Thru"), html.Th("Prior")]
+    par_header_row = [html.Th(""), html.Th(""), html.Th(""), html.Th(""), html.Th("Par")]
+    for hole in holes:
+        divider = " t3g-leaderboard-divider" if hole["hole_number"] == 10 else ""
+        hole_header_row.append(html.Th(str(hole["hole_number"]), className=divider.strip()))
+        par_header_row.append(
+            html.Th(str(hole["par"]) if hole.get("par") is not None else "-", className=divider.strip())
+        )
+
+    body_rows = []
+    for pos, p in zip(positions, sorted_players):
+        is_finished = p["thru"] == 18
+        thru_text = "F" if is_finished else (str(p["thru"]) if p["thru"] else "–")
+
+        # Tier comes from the *displayed* position (so a tie for 1st -- "T1"
+        # -- still reads as top-tier for both rows), not row order, which
+        # would only ever flag the first of a tied pair.
+        tier = int(pos.lstrip("T"))
+        tier_class = {1: " t3g-leaderboard-pos-badge--first",
+                      2: " t3g-leaderboard-pos-badge--second",
+                      3: " t3g-leaderboard-pos-badge--third"}.get(tier, "")
+
+        row_cells = [
+            html.Td(
+                html.Span(pos, className="t3g-leaderboard-pos-badge" + tier_class),
+                className="t3g-leaderboard-pos",
+            ),
+            html.Td(
+                html.Div(
+                    [
+                        html.Span(_leaderboard_initials(p["name"]), className="t3g-leaderboard-avatar"),
+                        html.Span(p["name"]),
+                    ],
+                    className="t3g-leaderboard-player-cell",
+                ),
+                className="t3g-leaderboard-player-col",
+            ),
+            html.Td(
+                html.Span(value_text(p[total_key]), className=_leaderboard_total_pill_class(p[total_key], mode)),
+                className="t3g-leaderboard-total-col",
+            ),
+            html.Td(
+                html.Span(thru_text, className="t3g-leaderboard-thru-badge" + (" t3g-leaderboard-thru-badge--finished" if is_finished else ""))
+            ),
+            html.Td(value_text(p[prior_key]), className="t3g-leaderboard-prior-col"),
+        ]
+        for i, cell_value in enumerate(p[holes_key]):
+            hole_number = holes[i]["hole_number"]
+            divider = " t3g-leaderboard-divider" if hole_number == 10 else ""
+            cell_text = "–" if cell_value is None else (str(cell_value) if mode == "stableford" else _leaderboard_to_par_text(cell_value))
+            row_cells.append(
+                html.Td(cell_text, className=(_leaderboard_cell_class(cell_value, mode) + divider))
+            )
+        body_rows.append(
+            html.Tr(
+                row_cells,
+                id={"type": "tournament-leaderboard-player-row", "player_id": p["player_id"]},
+                n_clicks=0,
+                # Position 1 (or every row tied for it) gets its own
+                # highlight on top of the usual clickable-row treatment --
+                # the leader should read as "the leader" at a glance.
+                className="t3g-leaderboard-row" + (" t3g-leaderboard-row--leader" if tier == 1 else ""),
+            )
+        )
+
+    return html.Div(
+        html.Table(
+            [
+                html.Thead([html.Tr(hole_header_row), html.Tr(par_header_row, className="t3g-leaderboard-par-row")]),
+                html.Tbody(body_rows),
+            ],
+            className="t3g-leaderboard-table",
+        ),
+        className="t3g-leaderboard-wrap",
     )
 
 
@@ -678,13 +1284,42 @@ def _tournament_edit_modal(tournament):
 _TAB_BUTTON_BASE = "t3g-tournament-tab"
 _TAB_BUTTON_ACTIVE = "t3g-tournament-tab t3g-tournament-tab--active"
 
+# Maps a ?tab= query value (also what the Live Round page's own back-to-
+# tournament subnav links use, see live_round.py's _tournament_context_
+# subnav) to which of the four tab keys -- info/startsheet/leaderboard/
+# liveround, in this fixed order -- should be shown/active on first load.
+# Anything unrecognized (including no ?tab= at all) falls back to "info",
+# same as before this existed.
+_TOURNAMENT_TAB_KEYS = ("info", "startsheet", "leaderboard", "liveround")
 
-def _tournament_subnav(slug):
-    """Page-level subnav: Info/Leaderboard are client-side tabs (both
-    panel groups are always in the DOM, toggled by switch_tournament_tab
-    below), Return to Club is a real navigation link -- same
-    always-render-both-toggle-with-style approach the entry button uses,
-    so the tab buttons' ids are stable across renders."""
+
+def _tab_visibility(active_tab):
+    """(styles, classes) for all four tab panels/buttons at page-load time,
+    picked from a plain ?tab= query value instead of always defaulting to
+    Tournament Info -- lets a link from elsewhere (the Live Round page's
+    subnav) open straight onto the right tab. switch_tournament_tab still
+    owns in-page click-driven switching after that; this is only about
+    what the very first render looks like."""
+    hidden = {"display": "none"}
+    shown = {}
+    key = active_tab if active_tab in _TOURNAMENT_TAB_KEYS else "info"
+    index = _TOURNAMENT_TAB_KEYS.index(key)
+
+    styles = tuple(shown if i == index else hidden for i in range(4))
+    classes = tuple(_TAB_BUTTON_ACTIVE if i == index else _TAB_BUTTON_BASE for i in range(4))
+    return styles, classes
+
+
+def _tournament_subnav(slug, tab_classes):
+    """Page-level subnav: Info/Start Sheet/Leaderboard/Live Round are
+    client-side tabs (all four panel groups are always in the DOM, toggled
+    by switch_tournament_tab below), Return to Club is a real navigation
+    link -- same always-render-every-panel-toggle-with-style approach the
+    entry button uses, so the tab buttons' ids are stable across renders.
+    tab_classes (from _tab_visibility) is what makes the *initial* active
+    tab match whatever ?tab= value got here, rather than always opening on
+    Tournament Info."""
+    info_class, startsheet_class, leaderboard_class, liveround_class = tab_classes
     return html.Div(
         className="t3g-tournament-subnav",
         children=html.Div(
@@ -696,13 +1331,25 @@ def _tournament_subnav(slug):
                         html.Button(
                             "Tournament Info",
                             id="tournament-tab-info-button",
-                            className=_TAB_BUTTON_ACTIVE,
+                            className=info_class,
+                            n_clicks=0,
+                        ),
+                        html.Button(
+                            "Start Sheet",
+                            id="tournament-tab-startsheet-button",
+                            className=startsheet_class,
                             n_clicks=0,
                         ),
                         html.Button(
                             "Leaderboard",
                             id="tournament-tab-leaderboard-button",
-                            className=_TAB_BUTTON_BASE,
+                            className=leaderboard_class,
+                            n_clicks=0,
+                        ),
+                        html.Button(
+                            "Live Round",
+                            id="tournament-tab-liveround-button",
+                            className=liveround_class,
                             n_clicks=0,
                         ),
                     ],
@@ -744,7 +1391,98 @@ def _add_player_modal(options):
     )
 
 
-def layout(slug=None, tournament_id=None, **kwargs):
+def _live_round_panel(tournament, player_id):
+    """Live Round tab -- purely a read-only reflection of each round's
+    state now, scoped to just the viewing player's own tee time grouping
+    (not a full-field overview of every grouping -- that's a separate,
+    bigger thing this doesn't try to be). Starting a round is a Start
+    Sheet action (see _tee_times_panel's _my_group_action) since that's
+    where the tee times/groupings themselves live; this tab just shows,
+    per round: the *actual scorecard embedded right here* once it's in
+    progress (started by them or a groupmate -- everyone in the slot was
+    made an equal accepted participant the moment it was started, see
+    start_tournament_round) rather than just a link to go click through
+    to, a Finished badge once it's done, a plain "not started yet" hint
+    pointing back at Start Sheet, or a note if they're not in a grouping
+    for that round at all."""
+    rounds = tournament.get("rounds", [])
+    round_sections = []
+
+    for r in rounds:
+        course_label = r.get("club_name") or "Course TBC"
+        if r.get("course_name"):
+            course_label += f", {r['course_name']}"
+        round_heading = f"Round {r['round_number']} — {r.get('round_date', '')} ({course_label})"
+
+        groups = r.get("tee_times", [])
+        my_group = next(
+            (g for g in groups if any(p["player_id"] == player_id for p in g.get("players", []))),
+            None,
+        )
+
+        # extra_children is how the embedded scorecard's own stores/modals
+        # (from render_live_round_body) get spliced straight into this
+        # round's section.
+        extra_children = []
+
+        if my_group is None:
+            body = html.P(
+                "You're not in a tee time grouping for this round yet.",
+                className="t3g-empty-state mb-0",
+            )
+        else:
+            live_round = my_group.get("live_round")
+
+            if live_round is None:
+                body = html.P(
+                    "Live round hasn't started yet -- start it from the Start Sheet tab.",
+                    className="t3g-empty-state mb-0",
+                )
+            elif live_round.get("status") == "in_progress":
+                # The actual scorecard, not a link to it -- same markup
+                # (and same fixed component ids) the standalone /live-round
+                # page renders, safe to reuse here because a player can
+                # only ever have one round (casual or tournament) actually
+                # live at a time, so this only ever appears in one place
+                # in the DOM at once. See render_live_round_body's
+                # docstring in components/live_scorecard.py.
+                round_resp = requests.get(
+                    f"{API_BASE_URL}/rounds/{live_round['id']}", params={"viewer_player_id": player_id}
+                )
+                if round_resp.status_code == 200:
+                    body = None
+                    extra_children = render_live_round_body(round_resp.json(), player_id)
+                else:
+                    body = html.P(
+                        "Couldn't load the live round right now.", className="t3g-empty-state mb-0"
+                    )
+            else:
+                body = html.Span("Round completed", className="t3g-liveround-finished-badge")
+
+        round_sections.append(
+            html.Div(
+                className="t3g-modal-section t3g-teetime-round-section",
+                children=[
+                    html.Div(round_heading, className="t3g-modal-label t3g-tournament-rounds-label"),
+                    body,
+                    *extra_children,
+                ],
+            )
+        )
+
+    if not round_sections:
+        round_sections = [html.P("No rounds set up yet.", className="t3g-empty-state")]
+
+    return html.Div(
+        className="t3g-panel",
+        children=[
+            build_panel_navbar("Live Round"),
+            html.Div(round_sections, className="t3g-panel-body"),
+        ],
+    )
+
+
+def layout(slug=None, tournament_id=None, tab=None, **kwargs):
     player_id = session.get("player_id")
 
     if not session.get("logged_in") or not player_id:
@@ -779,23 +1517,35 @@ def layout(slug=None, tournament_id=None, **kwargs):
             if row["player_id"] not in entered_ids
         ]
 
+    (info_style, startsheet_style, leaderboard_style, liveround_style), tab_classes = _tab_visibility(tab)
+
     return html.Div(
         className="t3g-page t3g-club-page",
         children=[
             dcc.Store(id="tournament-id-store", data=tournament_id),
-            _tournament_subnav(slug),
+            _tournament_subnav(slug, tab_classes),
             html.Div(
                 id="tournament-tab-panel-info",
+                style=info_style,
                 children=[
                     _tournament_info_panel(tournament, is_admin),
                     _entrants_panel(tournament, entrants, my_entry, is_admin),
-                    _tee_times_panel(tournament, is_admin),
                 ],
             ),
             html.Div(
+                id="tournament-tab-panel-startsheet",
+                style=startsheet_style,
+                children=_tee_times_panel(tournament, is_admin, player_id),
+            ),
+            html.Div(
                 id="tournament-tab-panel-leaderboard",
-                style={"display": "none"},
-                children=_leaderboard_panel(entrants),
+                style=leaderboard_style,
+                children=_leaderboard_panel(tournament),
+            ),
+            html.Div(
+                id="tournament-tab-panel-liveround",
+                style=liveround_style,
+                children=_live_round_panel(tournament, player_id),
             ),
             dcc.Store(id="tournament-entry-action-store", data=_entry_toggle_meta(tournament, my_entry)[1]),
             _add_player_modal(add_options),
@@ -805,7 +1555,6 @@ def layout(slug=None, tournament_id=None, **kwargs):
             dcc.Location(id="tournament-admin-action-redirect", refresh=True),
             dcc.Location(id="tournament-add-player-redirect", refresh=True),
             dcc.Location(id="tournament-remove-entrant-redirect", refresh=True),
-            dcc.Location(id="tournament-teetime-redirect", refresh=True),
             dcc.Location(id="tournament-edit-redirect", refresh=True),
         ],
     )
@@ -813,17 +1562,35 @@ def layout(slug=None, tournament_id=None, **kwargs):
 
 @callback(
     Output("tournament-tab-panel-info", "style"),
+    Output("tournament-tab-panel-startsheet", "style"),
     Output("tournament-tab-panel-leaderboard", "style"),
+    Output("tournament-tab-panel-liveround", "style"),
     Output("tournament-tab-info-button", "className"),
+    Output("tournament-tab-startsheet-button", "className"),
     Output("tournament-tab-leaderboard-button", "className"),
+    Output("tournament-tab-liveround-button", "className"),
     Input("tournament-tab-info-button", "n_clicks"),
+    Input("tournament-tab-startsheet-button", "n_clicks"),
     Input("tournament-tab-leaderboard-button", "n_clicks"),
+    Input("tournament-tab-liveround-button", "n_clicks"),
     prevent_initial_call=True,
 )
-def switch_tournament_tab(info_clicks, leaderboard_clicks):
-    if dash.ctx.triggered_id == "tournament-tab-leaderboard-button":
-        return {"display": "none"}, {}, _TAB_BUTTON_BASE, _TAB_BUTTON_ACTIVE
-    return {}, {"display": "none"}, _TAB_BUTTON_ACTIVE, _TAB_BUTTON_BASE
+def switch_tournament_tab(info_clicks, startsheet_clicks, leaderboard_clicks, liveround_clicks):
+    # Four tabs now -- same always-in-the-DOM, toggle-by-style approach,
+    # just picking which one panel gets shown (and which one button gets
+    # the active class) based on whichever tab was actually clicked, with
+    # everything else hidden/inactive.
+    hidden = {"display": "none"}
+    shown = {}
+    triggered_id = dash.ctx.triggered_id
+
+    if triggered_id == "tournament-tab-startsheet-button":
+        return hidden, shown, hidden, hidden, _TAB_BUTTON_BASE, _TAB_BUTTON_ACTIVE, _TAB_BUTTON_BASE, _TAB_BUTTON_BASE
+    if triggered_id == "tournament-tab-leaderboard-button":
+        return hidden, hidden, shown, hidden, _TAB_BUTTON_BASE, _TAB_BUTTON_BASE, _TAB_BUTTON_ACTIVE, _TAB_BUTTON_BASE
+    if triggered_id == "tournament-tab-liveround-button":
+        return hidden, hidden, hidden, shown, _TAB_BUTTON_BASE, _TAB_BUTTON_BASE, _TAB_BUTTON_BASE, _TAB_BUTTON_ACTIVE
+    return shown, hidden, hidden, hidden, _TAB_BUTTON_ACTIVE, _TAB_BUTTON_BASE, _TAB_BUTTON_BASE, _TAB_BUTTON_BASE
 
 
 @callback(
@@ -987,7 +1754,7 @@ def handle_remove_entrant(remove_clicks, tournament_id, current_pathname):
 
 @callback(
     Output({"type": "tournament-teetime-error", "round_id": MATCH}, "children"),
-    Output("tournament-teetime-redirect", "href"),
+    Output({"type": "tournament-teetime-redirect", "round_id": MATCH}, "href"),
     Input({"type": "tournament-teetime-generate", "round_id": MATCH}, "n_clicks"),
     State({"type": "tournament-teetime-first-time", "round_id": MATCH}, "value"),
     State("tournament-id-store", "data"),
@@ -1021,6 +1788,263 @@ def handle_generate_tee_times(n_clicks, first_tee_time, tournament_id, current_p
     except ValueError:
         detail = "Couldn't generate tee times."
     return detail, dash.no_update
+
+
+@callback(
+    Output({"type": "tournament-teetime-assign", "round_id": MATCH, "tee_time_id": ALL, "slot": ALL}, "options"),
+    Input({"type": "tournament-teetime-assign", "round_id": MATCH, "tee_time_id": ALL, "slot": ALL}, "value"),
+    State({"type": "tournament-teetime-assign", "round_id": MATCH, "tee_time_id": ALL, "slot": ALL}, "id"),
+    State({"type": "tournament-teetime-entrant-options", "round_id": MATCH}, "data"),
+)
+def filter_tee_time_assign_options(values, ids, entrant_options):
+    # Prevents picking the same player into more than one slot in the first
+    # place, rather than only catching it after the fact at Save (that check
+    # in handle_save_tee_time_assignments stays too, as a backstop). Every
+    # dropdown in the round shares this one callback (round_id is MATCH,
+    # tee_time_id/slot are ALL) -- whenever any of them changes, every
+    # dropdown's options get recomputed as "the round's full entrant list
+    # minus whoever's currently selected in one of the *other* dropdowns."
+    # A dropdown's own current selection is deliberately left out of its own
+    # exclusion set, otherwise picking someone would immediately make them
+    # disappear from the very dropdown they were just picked into. No
+    # prevent_initial_call -- this should run on first load too, in case
+    # stale/duplicate data ever ended up saved from before this existed.
+    entrant_options = entrant_options or []
+    filtered = []
+    for index in range(len(ids)):
+        other_selected = {v for i, v in enumerate(values) if i != index and v}
+        filtered.append([opt for opt in entrant_options if opt["value"] not in other_selected])
+    return filtered
+
+
+@callback(
+    Output({"type": "tournament-teetime-error", "round_id": MATCH}, "children", allow_duplicate=True),
+    Output({"type": "tournament-teetime-redirect", "round_id": MATCH}, "href", allow_duplicate=True),
+    Input({"type": "tournament-teetime-save-assignments", "round_id": MATCH}, "n_clicks"),
+    State({"type": "tournament-teetime-assign", "round_id": MATCH, "tee_time_id": ALL, "slot": ALL}, "value"),
+    State({"type": "tournament-teetime-assign", "round_id": MATCH, "tee_time_id": ALL, "slot": ALL}, "id"),
+    State("tournament-id-store", "data"),
+    State("_pages_location", "pathname"),
+    prevent_initial_call=True,
+)
+def handle_save_tee_time_assignments(n_clicks, values, ids, tournament_id, current_pathname):
+    # Same MATCH-on-round_id / ALL-on-the-rest shape as club.py's/this
+    # file's other per-round MATCH callbacks -- see handle_generate_tee_
+    # times's comment on why both Outputs need the same MATCH key. Reading
+    # the "id" prop alongside "value" is what ties each dropdown back to
+    # its tee_time_id (the "slot"/column position is purely a display
+    # detail -- what actually gets saved is just "this player is in this
+    # group", not which column they sat in).
+    if not n_clicks:
+        return dash.no_update, dash.no_update
+
+    round_id = dash.ctx.triggered_id["round_id"]
+
+    selected_player_ids = [v for v in values if v]
+    if len(selected_player_ids) != len(set(selected_player_ids)):
+        return "The same player is selected in more than one slot.", dash.no_update
+
+    assignments = {value: id_dict["tee_time_id"] for id_dict, value in zip(ids, values) if value}
+
+    admin_id = session.get("player_id")
+    response = requests.patch(
+        f"{API_BASE_URL}/tournaments/{tournament_id}/rounds/{round_id}/tee-times/assignments",
+        json={"admin_id": admin_id, "assignments": assignments},
+    )
+    if response.status_code == 200:
+        return "", f"{current_pathname}?_r={time.time()}"
+
+    try:
+        detail = response.json().get("detail", "Couldn't save those assignments.")
+        if not isinstance(detail, str):
+            detail = "Couldn't save those assignments."
+    except ValueError:
+        detail = "Couldn't save those assignments."
+    return detail, dash.no_update
+
+
+@callback(
+    Output({"type": "tournament-teetime-error", "round_id": MATCH}, "children", allow_duplicate=True),
+    Output({"type": "tournament-teetime-redirect", "round_id": MATCH}, "href", allow_duplicate=True),
+    Input({"type": "tournament-teetime-update-save", "round_id": MATCH, "tee_time_id": ALL}, "n_clicks"),
+    State({"type": "tournament-teetime-update-input", "round_id": MATCH, "tee_time_id": ALL}, "value"),
+    State({"type": "tournament-teetime-update-input", "round_id": MATCH, "tee_time_id": ALL}, "id"),
+    State("tournament-id-store", "data"),
+    State("_pages_location", "pathname"),
+    prevent_initial_call=True,
+)
+def handle_update_tee_time(save_clicks, values, ids, tournament_id, current_pathname):
+    # Same ALL-with-phantom-trigger-guard shape as handle_entrant_response/
+    # handle_remove_entrant -- there's one Save button per tee time slot in
+    # the round, all sharing this one callback (round_id is the MATCH key,
+    # tee_time_id is ALL), so a fresh Save button appearing elsewhere on the
+    # page (e.g. after Generate rebuilds the whole slot list) can re-fire
+    # this with no real click behind it.
+    triggered_id = dash.ctx.triggered_id
+    if not triggered_id or not any(save_clicks or []):
+        return dash.no_update, dash.no_update
+
+    target_tee_time_id = triggered_id["tee_time_id"]
+    round_id = triggered_id["round_id"]
+
+    new_time = None
+    for id_dict, value in zip(ids, values):
+        if id_dict["tee_time_id"] == target_tee_time_id:
+            new_time = value
+            break
+
+    if not new_time:
+        return "Enter a tee time first.", dash.no_update
+
+    admin_id = session.get("player_id")
+    response = requests.patch(
+        f"{API_BASE_URL}/tournaments/{tournament_id}/rounds/{round_id}/tee-times/{target_tee_time_id}",
+        json={"admin_id": admin_id, "tee_time": new_time},
+    )
+    if response.status_code == 200:
+        return "", f"{current_pathname}?_r={time.time()}"
+
+    try:
+        detail = response.json().get("detail", "Couldn't update that tee time.")
+        if not isinstance(detail, str):
+            detail = "Couldn't update that tee time."
+    except ValueError:
+        detail = "Couldn't update that tee time."
+    return detail, dash.no_update
+
+
+@callback(
+    Output({"type": "tournament-liveround-error", "round_id": MATCH}, "children"),
+    Output({"type": "tournament-liveround-redirect", "round_id": MATCH}, "href"),
+    Input({"type": "tournament-start-live-round", "round_id": MATCH, "tee_time_id": ALL}, "n_clicks"),
+    prevent_initial_call=True,
+)
+def handle_start_live_round(start_clicks):
+    # MATCH on round_id, ALL on tee_time_id -- there's only ever one Start
+    # button per round (the viewer's own grouping), but the id still
+    # carries tee_time_id so the handler knows which slot to start without
+    # a separate State lookup, and every key in a pattern-matched id has
+    # to be either a literal or a wildcard, so ALL it is even though it
+    # only ever matches one component. Same phantom-trigger guard as
+    # handle_remove_entrant/handle_entrant_response.
+    triggered_id = dash.ctx.triggered_id
+    if not triggered_id or not any(start_clicks or []):
+        return dash.no_update, dash.no_update
+
+    tee_time_id = triggered_id["tee_time_id"]
+    player_id = session.get("player_id")
+
+    response = requests.post(
+        f"{API_BASE_URL}/rounds/tournament/{tee_time_id}",
+        json={"player_id": player_id},
+    )
+    if response.status_code == 200:
+        round_data = response.json()
+        return "", f"/live-round?round_id={round_data['id']}"
+
+    try:
+        detail = response.json().get("detail", "Couldn't start the live round.")
+        if not isinstance(detail, str):
+            detail = "Couldn't start the live round."
+    except ValueError:
+        detail = "Couldn't start the live round."
+    return detail, dash.no_update
+
+
+@callback(
+    Output("tournament-leaderboard-store", "data"),
+    Output("tournament-leaderboard-error", "children"),
+    Input("tournament-leaderboard-round-select", "value"),
+    Input("tournament-leaderboard-refresh-interval", "n_intervals"),
+    State("tournament-id-store", "data"),
+)
+def load_tournament_leaderboard(round_id, n_intervals, tournament_id):
+    # No prevent_initial_call -- this has to run on first render too (the
+    # round dropdown's own default value, from _default_leaderboard_round,
+    # is what picks the initial round), not just on later round changes.
+    # The Interval Input is what makes this "live": it re-fires this same
+    # fetch every _LEADERBOARD_REFRESH_INTERVAL_MS regardless of whether
+    # the round selection changed, so scores update on their own while
+    # someone's sitting on this tab watching a round in progress.
+    if not round_id or not tournament_id:
+        raise PreventUpdate
+
+    response = requests.get(
+        f"{API_BASE_URL}/tournaments/{tournament_id}/leaderboard", params={"round_id": round_id}
+    )
+    if response.status_code != 200:
+        return dash.no_update, "Couldn't load the leaderboard right now."
+    return response.json(), ""
+
+
+@callback(
+    Output("tournament-leaderboard-table-container", "children"),
+    Input("tournament-leaderboard-store", "data"),
+    Input("tournament-leaderboard-format-store", "data"),
+)
+def render_tournament_leaderboard_table(leaderboard_data, mode):
+    # Fires on every leaderboard fetch (round change or the refresh
+    # interval) and on every format-toggle click -- switching format never
+    # needs a new request, since the backend already computed all three
+    # (gross/stableford/nett) lines up front; this just picks which one to
+    # render and re-sorts by it.
+    if not leaderboard_data:
+        raise PreventUpdate
+    return _leaderboard_table(leaderboard_data, mode or "gross")
+
+
+@callback(
+    Output("tournament-leaderboard-format-store", "data"),
+    Output({"type": "tournament-leaderboard-format-button", "mode": ALL}, "className"),
+    Input({"type": "tournament-leaderboard-format-button", "mode": ALL}, "n_clicks"),
+    State({"type": "tournament-leaderboard-format-button", "mode": ALL}, "id"),
+    prevent_initial_call=True,
+)
+def switch_tournament_leaderboard_format(clicks, ids):
+    # Same phantom-trigger guard as the other ALL-pattern button rows on
+    # this page (e.g. handle_entrant_response) -- all 3 format buttons
+    # share this one callback.
+    triggered_id = dash.ctx.triggered_id
+    if not triggered_id or not any(clicks or []):
+        raise PreventUpdate
+
+    active_mode = triggered_id["mode"]
+    classes = _leaderboard_format_classes(active_mode)
+    return active_mode, [classes[id_dict["mode"]] for id_dict in ids]
+
+
+@callback(
+    Output("tournament-leaderboard-scorecard-modal", "is_open"),
+    Output("tournament-leaderboard-scorecard-modal-title", "children"),
+    Output("tournament-leaderboard-scorecard-modal-body", "children"),
+    Input({"type": "tournament-leaderboard-player-row", "player_id": ALL}, "n_clicks"),
+    Input("tournament-leaderboard-scorecard-close", "n_clicks"),
+    State("tournament-leaderboard-store", "data"),
+    prevent_initial_call=True,
+)
+def toggle_tournament_leaderboard_scorecard(row_clicks, close_clicks, leaderboard_data):
+    # Every player row shares this one callback (player_id is ALL, there's
+    # no per-row callback) -- same phantom-trigger guard as the other
+    # ALL-pattern rows on this page, since the table gets rebuilt (fresh
+    # n_clicks=0 rows) on every leaderboard refresh, round change, and
+    # format switch.
+    triggered_id = dash.ctx.triggered_id
+
+    if triggered_id == "tournament-leaderboard-scorecard-close":
+        return False, dash.no_update, dash.no_update
+
+    if not triggered_id or not any(row_clicks or []):
+        raise PreventUpdate
+
+    player_id = triggered_id["player_id"]
+    leaderboard_data = leaderboard_data or {}
+    player = next((p for p in leaderboard_data.get("players", []) if p["player_id"] == player_id), None)
+    if not player:
+        raise PreventUpdate
+
+    title = f"{player['name']} — Round {leaderboard_data.get('round_number')}"
+    body = _leaderboard_player_scorecard(player, leaderboard_data.get("holes", []))
+    return True, title, body
 
 
 @callback(

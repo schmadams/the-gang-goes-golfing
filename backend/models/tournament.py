@@ -12,8 +12,11 @@ VALID_TOURNAMENT_FORMATS = {"scratch", "stableford", "net", "2bbb", "4bbb", "tex
 VALID_ENTRY_MODES = {"self", "approval"}
 # How confirmed entrants get sorted into tee time groups when they're
 # generated -- "random" shuffles the field, "handicap" sorts ascending by
-# handicap_at_entry (lowest/best first) before chunking into groups.
-VALID_GROUPING_METHODS = {"random", "handicap"}
+# handicap_at_entry (lowest/best first) before chunking into groups,
+# "manual" skips auto-assignment entirely: generating just creates the
+# right number of empty slots (sized from group_size) for the admin to
+# place entrants into themselves via assign_tee_time_players.
+VALID_GROUPING_METHODS = {"random", "handicap", "manual"}
 
 
 class TournamentRoundCreate(BaseModel):
@@ -52,6 +55,22 @@ class TournamentUpdate(BaseModel):
 class TeeTimeGenerateRequest(BaseModel):
     admin_id: UUID  # must match clubs.club_admin -- enforced in the service layer
     first_tee_time: time
+
+
+class TeeTimeAssignmentRequest(BaseModel):
+    admin_id: UUID  # must match clubs.club_admin -- enforced in the service layer
+    # player_id -> tee_time_id (the specific group/slot they're placed in),
+    # or None to leave/make them unassigned. Sent as the full set of
+    # confirmed entrants every time (same "replace, don't diff" approach as
+    # update_tournament's rounds and generate_tee_times itself) rather than
+    # a partial patch, so the dropdown state on the page is always exactly
+    # what ends up saved.
+    assignments: dict[str, str | None]
+
+
+class TeeTimeUpdateRequest(BaseModel):
+    admin_id: UUID  # must match clubs.club_admin -- enforced in the service layer
+    tee_time: time
 
 
 class TournamentRoundResponse(BaseModel):

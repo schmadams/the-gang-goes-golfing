@@ -21,7 +21,17 @@ dash.register_page(__name__, path="/signin", name="Sign In")
 # revisiting if that becomes a real problem.
 
 
-def layout():
+def layout(**kwargs):
+    # **kwargs (not a bare empty signature) -- Dash Pages passes any query
+    # string on the URL through to layout() as keyword arguments. Every
+    # other page's layout() already tolerates this; this one didn't, which
+    # is exactly what broke Sign out: navbar.py's signout-redirect used to
+    # leave a stale "?_r=..." cache-buster attached to the "/signin"
+    # redirect (fixed separately in navbar.py), and landing here with that
+    # still on the URL raised "layout() got an unexpected keyword argument
+    # '_r'" since this signature accepted none at all. Kept regardless of
+    # that other fix, since anyone could still land on /signin?whatever
+    # some other way (a bookmark, a stale link, retyping the URL by hand).
     return dbc.Container(
         [
             dcc.Location(id="signin-redirect", refresh=True),
@@ -74,7 +84,7 @@ def _log_in(account: dict) -> None:
 
 
 @callback(
-    Output("signin-redirect", "pathname"),
+    Output("signin-redirect", "href"),
     Output("signin-error", "children"),
     Output("register-section", "style"),
     Output("register-error", "children"),

@@ -107,10 +107,24 @@ def refresh_live_round_indicator(n_intervals):
 
 
 @callback(
-    Output("signout-redirect", "pathname"),
+    Output("signout-redirect", "href"),
     Input("signout-button", "n_clicks"),
     prevent_initial_call=True,
 )
 def handle_signout(n_clicks):
+    # href (not pathname) -- this Location lives in the navbar, outside
+    # Dash Pages' own page_container, so it's a separate component from
+    # _pages_location with its own "search" prop that just mirrors
+    # whatever query string happened to already be in the browser's URL
+    # (e.g. a leftover "?_r=..." cache-buster from an Accept/Decline click
+    # right before Sign out). Writing only "pathname" leaves that stale
+    # search string attached, so the redirect actually lands on
+    # "/signin?_r=..." -- and since query params get passed through to a
+    # page's layout() as kwargs, signin.py's layout(**kwargs) would
+    # normally swallow that fine, but if this same signout-redirect
+    # component's target page ever doesn't declare **kwargs, that stale
+    # "_r" blows up exactly like this. href sidesteps all of it by
+    # navigating to a single, complete, self-contained URL instead of
+    # letting Dash merge in whatever "search" was last set to.
     session.clear()
     return "/signin"

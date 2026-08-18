@@ -37,6 +37,37 @@ class RoundInviteNotFoundError(Exception):
     already been responded to."""
 
 
+class TournamentTeeTimeNotFoundError(Exception):
+    """Raised when starting a tournament round against a tee_time_id that
+    doesn't match any tournament_tee_times row (or whose round/tournament
+    has gone missing, checked defensively)."""
+
+
+class NotInGroupingError(Exception):
+    """Raised when a player who isn't assigned to a tee time's grouping
+    tries to start that grouping's live round."""
+
+
+class NotRoundMemberError(Exception):
+    """Raised when a player who isn't an accepted participant in a round
+    tries to update one of its hole scores -- being able to see a
+    round_id/player_id/hole_number combination (e.g. from the URL) isn't
+    enough on its own; the *requester* has to actually belong to the round
+    too, not just the player whose hole is being scored."""
+
+
+class EarlierRoundNotFinishedError(Exception):
+    """Raised when a player tries to start a tournament round while an
+    earlier round in the same tournament -- one they were actually
+    grouped into -- isn't completed yet. Tournament rounds have to be
+    played in order; carries the blocking round's round_number so the
+    router/frontend can say exactly which round needs finishing first."""
+
+    def __init__(self, round_number: int):
+        self.round_number = round_number
+        super().__init__(f"Finish Round {round_number} before starting this round.")
+
+
 @contextmanager
 def _timed(label: str, source: str = "database"):
     """Same pattern as backend/services/courses.py -- logs elapsed time so
@@ -114,11 +145,22 @@ def _expire_stale_rounds() -> None:
         delete_round(row["id"])
 
 
-def _get_active_round_id_for_player(player_id: str) -> str | None:
+def _get_active_round_id_for_player(player_id: str, tournament_scope: bool = False) -> str | None:
     """The one round (if any) this player is currently an accepted
     participant in -- owner or joined, doesn't matter which. This is what
     the "one active round per player" rule now actually checks, since a
-    player can be tied up in someone else's round without owning it."""
+    player can be tied up in someone else's round without owning it.
+
+    tournament_scope splits this into two independent pools rather than
+    one -- False (the default, used everywhere casual rounds care about
+    "do I already have an active round") only looks at rounds with
+    tournament_round_id IS NULL; True (used by start_tournament_round)
+    only looks at rounds with tournament_round_id IS NOT NULL. That's what
+    lets a player have one active casual round *and* one active tournament
+    round running at the same time without either blocking the other --
+    see add_tournament_live_rounds.sql's comment on the rescoped
+    rounds_one_active_per_player index, which enforces the same split at
+    the database level for the casual side."""
     _expire_stale_rounds()
 
     with _timed(f"select accepted round_players for player {player_id}"):
@@ -134,16 +176,16 @@ def _get_active_round_id_for_player(player_id: str) -> str | None:
     if not round_ids:
         return None
 
-    with _timed(f"select in_progress round among player {player_id}'s rounds"):
-        rounds_response = (
+    with _timed(f"select in_progress round among player {player_id}'s rounds (tournament_scope={tournament_scope})"):
+        query = (
             supabase
             .table("rounds")
             .select("id")
             .in_("id", round_ids)
             .eq("status", "in_progress")
-            .limit(1)
-            .execute()
         )
+        query = query.not_.is_("tournament_round_id", "null") if tournament_scope else query.is_("tournament_round_id", "null")
+        rounds_response = query.limit(1).execute()
     rows = rounds_response.data or []
     return rows[0]["id"] if rows else None
 
@@ -257,6 +299,10 @@ def _hydrate_round(round_row: dict) -> dict:
         entry["holes"] = holes
         players.append(entry)
 
+    tournament_context = {}
+    if round_row.get("tournament_round_id"):
+        tournament_context = _tournament_context_for_round(round_row["tournament_round_id"])
+
     return {
         **round_row,
         "club_name": club_name,
@@ -264,6 +310,41 @@ def _hydrate_round(round_row: dict) -> dict:
         "tee_name": tee_name,
         "players": players,
         "pending_invites": pending_invites,
+        **tournament_context,
+    }
+
+
+def _tournament_context_for_round(tournament_round_id: str) -> dict:
+    """tournament_id/tournament_name/tournament_round_number/club_slug for
+    a tournament-linked round -- lets the live round page show its way
+    back into the tournament (a subnav matching the tournament page's own,
+    plus Return to Club) instead of a dead end, and lets round_header_
+    label (components/scorecard.py) show "club — tournament — Round N"
+    instead of the plain club/course/tee format, so a tournament round
+    never looks like just another casual round wherever it's displayed --
+    the home page's Live Round panel, Rounds History, Scoring History.
+    One query via a nested embed (tournament_rounds -> tournaments ->
+    clubs) rather than four sequential fetches."""
+    with _timed(f"fetch tournament context for round {tournament_round_id}"):
+        response = (
+            supabase
+            .table("tournament_rounds")
+            .select("tournament_id, round_number, tournaments(name, clubs(slug))")
+            .eq("id", tournament_round_id)
+            .maybe_single()
+            .execute()
+        )
+    row = response.data if response is not None else None
+    if not row:
+        return {}
+
+    tournament = row.get("tournaments") or {}
+    club = tournament.get("clubs") or {}
+    return {
+        "tournament_id": row.get("tournament_id"),
+        "tournament_name": tournament.get("name"),
+        "tournament_round_number": row.get("round_number"),
+        "club_slug": club.get("slug"),
     }
 
 
@@ -283,7 +364,16 @@ def get_round(round_id: str, viewer_player_id: str | None = None) -> dict | None
 
     hydrated = _hydrate_round(round_row)
     if viewer_player_id is not None:
-        hydrated["is_owner"] = round_row["player_id"] == viewer_player_id
+        if round_row.get("tournament_round_id"):
+            # Tournament rounds don't have a single privileged owner the
+            # way casual rounds do -- every grouping member was made an
+            # equal accepted participant when the round was started (see
+            # start_tournament_round), so "can this viewer Finish/Scrap
+            # it" means "are they one of the accepted players", not
+            # "are they specifically whoever happened to tap Start first".
+            hydrated["is_owner"] = any(p["player_id"] == viewer_player_id for p in hydrated["players"])
+        else:
+            hydrated["is_owner"] = round_row["player_id"] == viewer_player_id
     return hydrated
 
 
@@ -515,6 +605,19 @@ def _build_round_summary(
     strokes_list = [h["strokes"] for h in holes if h["strokes"] is not None]
     stableford_list = [h["stableford_points"] for h in holes if h["stableford_points"] is not None]
 
+    # Same tournament context _hydrate_round attaches for the live-round
+    # page -- needed here too so the home page's Live Round panel and
+    # Rounds History (both built from list_player_rounds) can tell a
+    # tournament round apart from a casual one, not just the live-round
+    # detail view. Not batched across the round list the way tee/course_
+    # holes/scores are above -- most players have few or no tournament
+    # rounds in their history, so one extra query apiece is cheap in
+    # practice, and keeping this self-contained here means callers don't
+    # need their own batching logic just for this.
+    tournament_context = {}
+    if round_row.get("tournament_round_id"):
+        tournament_context = _tournament_context_for_round(round_row["tournament_round_id"])
+
     return {
         **round_row,
         "club_name": club_name,
@@ -525,6 +628,7 @@ def _build_round_summary(
         "holes": holes,
         "handicap": handicap,
         "total_stableford": sum(stableford_list) if stableford_list else None,
+        **tournament_context,
     }
 
 
@@ -726,7 +830,270 @@ def start_round(payload: dict) -> dict:
     return get_round(round_id, viewer_player_id=player_id)
 
 
-def update_hole_score(round_id: str, player_id: str, hole_number: int, updates: dict) -> dict | None:
+def _get_tee_time(tee_time_id: str) -> dict | None:
+    with _timed(f"select tournament_tee_times {tee_time_id}"):
+        response = (
+            supabase.table("tournament_tee_times").select("*").eq("id", tee_time_id).maybe_single().execute()
+        )
+    return response.data if response is not None else None
+
+
+def _tee_time_player_ids(tee_time_id: str) -> list[str]:
+    with _timed(f"select tournament_tee_time_players for slot {tee_time_id}"):
+        response = (
+            supabase
+            .table("tournament_tee_time_players")
+            .select("player_id")
+            .eq("tee_time_id", tee_time_id)
+            .execute()
+        )
+    return [row["player_id"] for row in (response.data or [])]
+
+
+def _get_tournament_round(tournament_round_id: str) -> dict | None:
+    with _timed(f"select tournament_rounds {tournament_round_id}"):
+        response = (
+            supabase.table("tournament_rounds").select("*").eq("id", tournament_round_id).maybe_single().execute()
+        )
+    return response.data if response is not None else None
+
+
+def _find_in_progress_round_for_tee_time(tee_time_id: str) -> dict | None:
+    with _timed(f"select in_progress round for tee_time {tee_time_id}"):
+        response = (
+            supabase
+            .table("rounds")
+            .select("id")
+            .eq("tee_time_id", tee_time_id)
+            .eq("status", "in_progress")
+            .maybe_single()
+            .execute()
+        )
+    return response.data if response is not None else None
+
+
+def _tee_time_id_for_player_in_round(tournament_round_id: str, player_id: str) -> str | None:
+    """The tee time slot (if any) this player was grouped into for a given
+    tournament round -- used by _first_unfinished_prior_round_number to
+    check whether an *earlier* round is done before letting them start a
+    later one. Two-step (tee times in the round, then that player's
+    membership among them) since tournament_tee_time_players only carries
+    tee_time_id, not tournament_round_id directly."""
+    with _timed(f"select tee times for tournament round {tournament_round_id}"):
+        tee_times_response = (
+            supabase
+            .table("tournament_tee_times")
+            .select("id")
+            .eq("tournament_round_id", tournament_round_id)
+            .execute()
+        )
+    tee_time_ids = [row["id"] for row in (tee_times_response.data or [])]
+    if not tee_time_ids:
+        return None
+
+    with _timed(f"select grouping membership for player {player_id} in round {tournament_round_id}"):
+        membership_response = (
+            supabase
+            .table("tournament_tee_time_players")
+            .select("tee_time_id")
+            .in_("tee_time_id", tee_time_ids)
+            .eq("player_id", player_id)
+            .maybe_single()
+            .execute()
+        )
+    membership = membership_response.data if membership_response is not None else None
+    return membership["tee_time_id"] if membership else None
+
+
+def _first_unfinished_prior_round_number(
+    tournament_id: str, target_round_number: int, player_id: str
+) -> int | None:
+    """Tournament rounds are played in order -- this walks every earlier
+    round_number in the same tournament (ascending) and returns the first
+    one the player was grouped into but hasn't completed, or None if there
+    isn't one. A player who was never grouped into a given earlier round at
+    all (joined the field late, say, or it's a single-round event) isn't
+    blocked by it -- only a round they were actually assigned to and left
+    unfinished counts. Mirrored on the frontend by tournament.py's
+    _first_unfinished_prior_round, which uses this same logic against
+    already-fetched tournament data to disable/explain the Start Live
+    Round button before the click; this copy is the real, authoritative
+    gate."""
+    with _timed(f"select earlier rounds for tournament {tournament_id} before round {target_round_number}"):
+        rounds_response = (
+            supabase
+            .table("tournament_rounds")
+            .select("id, round_number")
+            .eq("tournament_id", tournament_id)
+            .lt("round_number", target_round_number)
+            .order("round_number")
+            .execute()
+        )
+    earlier_rounds = rounds_response.data or []
+
+    for earlier_round in earlier_rounds:
+        tee_time_id = _tee_time_id_for_player_in_round(earlier_round["id"], player_id)
+        if not tee_time_id:
+            continue
+
+        with _timed(f"select round status for tee_time {tee_time_id}"):
+            round_response = (
+                supabase
+                .table("rounds")
+                .select("status")
+                .eq("tee_time_id", tee_time_id)
+                .maybe_single()
+                .execute()
+            )
+        round_row = round_response.data if round_response is not None else None
+        if not round_row or round_row["status"] != "completed":
+            return earlier_round["round_number"]
+
+    return None
+
+
+def fetch_live_rounds_by_tee_time(tee_time_ids: list[str]) -> dict[str, dict]:
+    """Batched (one query, not one per group) lookup used by tournament_
+    tee_times.py's fetch_tee_times_by_round to attach each grouping's live
+    round status -- {"id": ..., "status": "in_progress"/"completed"} or
+    absent if that grouping's never started one -- so the tournament page's
+    Live Round tab can render Start/Continue/Finished without a separate
+    round-trip per grouping. Deliberately doesn't filter by status; a
+    finished tournament round should still show as "Finished" rather than
+    disappearing and looking like it was never played."""
+    if not tee_time_ids:
+        return {}
+
+    with _timed(f"select rounds for {len(tee_time_ids)} tee time(s)"):
+        response = (
+            supabase
+            .table("rounds")
+            .select("id, status, tee_time_id")
+            .in_("tee_time_id", tee_time_ids)
+            .execute()
+        )
+    return {row["tee_time_id"]: {"id": row["id"], "status": row["status"]} for row in (response.data or [])}
+
+
+def start_tournament_round(tee_time_id: str, player_id: str) -> dict:
+    """Starts -- or joins, if a groupmate already beat them to it -- the
+    one shared live round for a tournament tee time grouping. Unlike
+    start_round's invite/accept dance, every player already assigned to
+    the slot becomes an accepted round_players row immediately, since the
+    Start Sheet has already established who's playing together; there's
+    nothing left to accept. All of them are also treated as equal owners
+    (is_owner=True for everyone, not just whoever tapped Start first), so
+    any grouping member can Finish or Scrap the round, matching "only a
+    player from the grouping" applying symmetrically to every action, not
+    just scoring.
+
+    Runs against the tournament-scoped half of _get_active_round_id_for_
+    player, not the casual half, so this doesn't collide with -- or get
+    blocked by -- a player's separate casual live round, if they happen to
+    have one going at the same time.
+    """
+    tee_time = _get_tee_time(tee_time_id)
+    if not tee_time:
+        raise TournamentTeeTimeNotFoundError("Tee time slot not found.")
+
+    slot_player_ids = _tee_time_player_ids(tee_time_id)
+    if player_id not in slot_player_ids:
+        raise NotInGroupingError("Only a player in this group can start its live round.")
+
+    tournament_round = _get_tournament_round(tee_time["tournament_round_id"])
+    if not tournament_round:
+        raise TournamentTeeTimeNotFoundError("Tournament round not found.")
+
+    # Tournament rounds have to be played in order -- checked before the
+    # existing-in-progress lookup below too, so this also applies to the
+    # (rare) case of two grouping members racing to start/join the same
+    # slot at once, not just a fresh start.
+    blocking_round_number = _first_unfinished_prior_round_number(
+        tournament_round["tournament_id"], tournament_round["round_number"], player_id
+    )
+    if blocking_round_number is not None:
+        raise EarlierRoundNotFinishedError(blocking_round_number)
+
+    # Already started by a groupmate -- everyone in the slot was already
+    # made an accepted participant the first time this ran for it, so
+    # there's nothing to do but hand back the existing round.
+    existing_row = _find_in_progress_round_for_tee_time(tee_time_id)
+    if existing_row:
+        return get_round(existing_row["id"], viewer_player_id=player_id)
+
+    if _get_active_round_id_for_player(player_id, tournament_scope=True):
+        raise RoundAlreadyActiveError(
+            "You already have a different live tournament round in progress. Finish or scrap it first."
+        )
+
+    round_payload = {
+        "player_id": player_id,
+        "course_id": tournament_round["course_id"],
+        "tee_id": tournament_round["tee_id"],
+        "is_manual": False,
+        "tournament_round_id": tournament_round["id"],
+        "tee_time_id": tee_time_id,
+    }
+
+    with _timed("insert rounds row (tournament)"):
+        try:
+            round_row = supabase.table("rounds").insert(round_payload).execute().data[0]
+        except Exception as exc:
+            if "duplicate" in str(exc).lower() or "unique" in str(exc).lower():
+                # Lost the race to a groupmate's near-simultaneous Start
+                # tap -- join whatever they just created instead of
+                # erroring.
+                existing_row = _find_in_progress_round_for_tee_time(tee_time_id)
+                if existing_row:
+                    return get_round(existing_row["id"], viewer_player_id=player_id)
+            raise
+
+    round_id = round_row["id"]
+    now = datetime.now(timezone.utc).isoformat()
+
+    round_player_rows = [
+        {"round_id": round_id, "player_id": pid, "is_owner": True, "status": "accepted", "responded_at": now}
+        for pid in slot_player_ids
+    ]
+    with _timed(f"insert round_players for tournament round {round_id}"):
+        supabase.table("round_players").insert(round_player_rows).execute()
+
+    placeholder_scores = [
+        {"round_id": round_id, "player_id": pid, "hole_number": n}
+        for pid in slot_player_ids
+        for n in range(1, 19)
+    ]
+    with _timed(f"insert round_scores placeholders for tournament round {round_id}"):
+        supabase.table("round_scores").insert(placeholder_scores).execute()
+
+    return get_round(round_id, viewer_player_id=player_id)
+
+
+def update_hole_score(
+    round_id: str, player_id: str, hole_number: int, updates: dict, requesting_player_id: str
+) -> dict | None:
+    # Being able to see a round_id/player_id/hole_number (e.g. from a URL)
+    # isn't enough on its own -- the person making *this* request has to
+    # actually be an accepted participant in the round, same as everyone
+    # whose scores they're allowed to touch. This is what "only a player
+    # from the grouping can upload scores" actually enforces server-side,
+    # for tournament rounds and casual rounds alike -- membership already
+    # decided who could BE scored (round_scores rows only exist for
+    # accepted round_players), this is what decides who can DO the scoring.
+    with _timed(f"check round membership round={round_id} requester={requesting_player_id}"):
+        membership_response = (
+            supabase
+            .table("round_players")
+            .select("status")
+            .eq("round_id", round_id)
+            .eq("player_id", requesting_player_id)
+            .maybe_single()
+            .execute()
+        )
+    membership = membership_response.data if membership_response is not None else None
+    if not membership or membership["status"] != "accepted":
+        raise NotRoundMemberError("Only players in this round can update its scores.")
+
     if not updates:
         return get_round(round_id, viewer_player_id=player_id)
 

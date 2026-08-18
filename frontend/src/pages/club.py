@@ -31,6 +31,7 @@ _TOURNAMENT_ENTRY_MODE_OPTIONS = [
 _TOURNAMENT_GROUPING_METHOD_OPTIONS = [
     {"label": "Random", "value": "random"},
     {"label": "By handicap", "value": "handicap"},
+    {"label": "Manual", "value": "manual"},
 ]
 # Group size lives per round (a comp can run 3-balls one week, 4-balls the
 # next), so it's a small dropdown on each round row rather than a
