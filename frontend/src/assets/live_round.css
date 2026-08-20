@@ -58,17 +58,31 @@
     border-left: 2px solid #e2e4ea;
 }
 
-.t3g-scorecard-score-group {
+/* Specificity note: the general ".t3g-scorecard-table th" rule above
+   (class + element) outranks a bare ".t3g-scorecard-score-group" class
+   selector, so centering these needs the "th" qualifier repeated here to
+   win the cascade -- otherwise "SCORE" and the player names silently stay
+   left-aligned regardless of what's set below. */
+.t3g-scorecard-table th.t3g-scorecard-score-group {
     text-align: center;
 }
 
-.t3g-scorecard-player-col {
-    text-align: center;
+.t3g-scorecard-table th.t3g-scorecard-player-col {
+    text-align: center !important;
     white-space: nowrap;
 }
 
+/* !important on both of these: the specificity here already outranks the
+   base ".t3g-scorecard-table th"/"td" rules on its own, so if centering
+   isn't visibly winning it means some other rule (or a stale cached
+   stylesheet) is getting in ahead of it -- this makes sure it wins
+   regardless. text-align only ever centers *inline-level* content though
+   (plain text, and the un-scored "Enter Score" button, which is inline-
+   block by default) -- it does nothing for .t3g-score-button-filled below,
+   since that's a flex container and therefore block-level; that one needs
+   its own auto side-margins instead, see there. */
 .t3g-scorecard-table--multi td:nth-child(n + 5) {
-    text-align: center;
+    text-align: center !important;
 }
 
 /* OUT / IN / TOTAL rows -- shaded and bordered like the summary rows on a
@@ -99,6 +113,11 @@
    "Enter Score" label; once a score exists the button switches to
    .t3g-score-button-filled instead (see below), which is a fixed square. */
 .t3g-score-button {
+    /* Explicit, not just relying on the browser's own default for
+       <button> (which is inline-block in most engines, but this removes
+       any doubt) -- an inline-level box is what lets the td's own
+       text-align:center actually center this button horizontally. */
+    display: inline-block;
     padding: 0.5rem 0.9rem;
     border: 1px solid #ced4da;
     border-radius: 6px;
@@ -124,6 +143,12 @@
     height: 44px;
     padding: 0;
     display: flex;
+    /* A flex container is block-level -- the parent td's text-align does
+       nothing for it (that only centers inline-level content), so once a
+       hole has a score and this class takes over from .t3g-score-button,
+       it needs its own horizontal centering. Auto side-margins on a
+       fixed-width block element is the standard way to do that. */
+    margin: 0 auto;
     align-items: center;
     justify-content: center;
     font-size: 1.05rem;

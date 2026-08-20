@@ -1,0 +1,73 @@
+/* target path: frontend/src/assets/bottom_nav.css (new file) */
+
+/* Hidden entirely on desktop/tablet -- this only exists below the
+   phone-width breakpoint, where it takes over primary navigation from the
+   top navbar's own link row (see the matching @media block in navbar.css
+   that hides .t3g-nav-links at the same width). Both this file's and
+   home.css's mobile breakpoints use the same 700px cutoff that
+   .t3g-panel-grid already collapses to a single column at, so "mobile
+   mode" kicks in consistently everywhere at once rather than each piece
+   flipping over at a slightly different width. */
+.t3g-bottom-nav {
+    display: none;
+}
+
+@media (max-width: 700px) {
+    .t3g-bottom-nav {
+        display: flex;
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 1000;
+        background: #1e2a47;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.25);
+        /* env(safe-area-inset-bottom) clears the home-indicator bar on
+           notched phones (iPhone X and later) so the nav's own bottom
+           padding doesn't sit underneath it -- falls back to 0 on devices
+           that don't define the variable at all. */
+        padding: 0.35rem 0.25rem calc(0.35rem + env(safe-area-inset-bottom, 0px));
+    }
+}
+
+.t3g-bottom-nav-item {
+    flex: 1 1 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.2rem;
+    padding: 0.35rem 0.25rem;
+    color: rgba(255, 255, 255, 0.55) !important;
+    text-decoration: none !important;
+    font-weight: 700;
+    font-size: 0.62rem;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    transition: color 0.15s ease, transform 0.08s ease;
+}
+
+.t3g-bottom-nav-item:active {
+    transform: scale(0.92);
+}
+
+.t3g-bottom-nav-icon {
+    font-size: 1.2rem;
+    line-height: 1;
+}
+
+.t3g-bottom-nav-label {
+    line-height: 1;
+}
+
+.t3g-bottom-nav-item--active {
+    color: #ffffff !important;
+}
+
+/* The pink accent used everywhere else in the app (buttons, badges) marks
+   which tab is active here too, on the icon only -- keeps the label
+   legible in white against the dark bar rather than tinting both. */
+.t3g-bottom-nav-item--active .t3g-bottom-nav-icon {
+    color: #c21861;
+}

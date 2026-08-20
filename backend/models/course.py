@@ -38,6 +38,20 @@ class CourseDetailResponse(CourseResponse):
     tees: list[TeeResponse] = []
 
 
+class ClubOption(BaseModel):
+    """A distinct real-world golf club name, deduped from the courses
+    table (see search_local_clubs in backend/services/courses.py) -- the
+    first step of the Start New Round club -> course -> tees flow on the
+    home page. Deliberately lighter than CourseResponse: a club here isn't
+    a single row, it's however many course rows happen to share this
+    club_name (most clubs have exactly one, some -- e.g. a club with East/
+    West courses -- have several), so there's no single id to hand back,
+    just the name itself, which list_courses_for_club then filters on."""
+    club_name: str
+    county: Optional[str] = None
+    postcode: Optional[str] = None
+
+
 class ExternalCourseCandidate(BaseModel):
     """A club found via a live search of the UK Golf API — not yet cached.
     Kept for a future name/location-filtered search; the API has no

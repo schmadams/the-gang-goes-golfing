@@ -40,6 +40,17 @@
     gap: 2.5rem;
 }
 
+/* Below the phone-width breakpoint the bottom nav (layouts/bottom_nav.py,
+   assets/bottom_nav.css) takes over as primary navigation -- hiding this
+   row here avoids showing two different navigation systems on screen at
+   once. The top bar itself stays (brand, live-round indicator, sign out),
+   just without the link row. */
+@media (max-width: 700px) {
+    .t3g-nav-links {
+        display: none;
+    }
+}
+
 .t3g-nav-link {
     color: #ffffff !important;
     font-weight: 700;

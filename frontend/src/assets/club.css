@@ -697,24 +697,22 @@
     margin-bottom: 1.25rem;
 }
 
-.t3g-leaderboard-round-select {
-    min-width: 240px;
-}
-
-.t3g-leaderboard-round-select .Select-control,
-.t3g-leaderboard-round-select .dash-dropdown > div {
-    border-radius: 10px !important;
-    border-color: #e2e4ea !important;
-    font-weight: 700;
-    box-shadow: none !important;
-}
-
 .t3g-leaderboard-format-tabs {
     display: flex;
     background: #f4f5f9;
     border-radius: 999px;
     padding: 0.3rem;
     gap: 0.2rem;
+}
+
+/* Round tabs reuse .t3g-leaderboard-format-tabs's pill styling wholesale
+   (same visual language as the Detailed/Simple and Gross/Stableford/Nett
+   toggles next to it) -- this just adds horizontal scrolling so a
+   tournament with a lot of rounds doesn't force the whole pill wider than
+   the panel or wrap into a ragged multi-line block. */
+.t3g-leaderboard-round-tabs {
+    overflow-x: auto;
+    max-width: 100%;
 }
 
 .t3g-leaderboard-format-tab {
@@ -966,6 +964,56 @@
    table's flatter overall weight. */
 .t3g-leaderboard-divider {
     border-left: 2px solid #dbe1ea;
+}
+
+/* Denser type scale for the leaderboard squeezed into the Tournament Info
+   tab's two-column grid (see _tournament_info_leaderboard_panel) -- the
+   normal sizing (built for a full-width tab) felt oversized and left
+   uneven spacing once it's sharing a row with the narrower Tournament
+   Info panel next to it. Every rule here just overrides the equivalent
+   base .t3g-leaderboard-* rule above at higher specificity (this class
+   plus that one, vs that one alone) -- nothing new, no changes to the
+   full Leaderboard tab's own tables. */
+.t3g-leaderboard-compact .t3g-leaderboard-table th,
+.t3g-leaderboard-compact .t3g-leaderboard-table td {
+    padding: 0.55rem 0.7rem;
+    font-size: 0.8rem;
+}
+
+.t3g-leaderboard-compact .t3g-leaderboard-table thead tr:first-child th {
+    font-size: 0.65rem;
+    padding-top: 0.4rem;
+    padding-bottom: 0.4rem;
+}
+
+.t3g-leaderboard-compact .t3g-leaderboard-player-cell {
+    gap: 0.5rem;
+    font-size: 0.85rem;
+}
+
+.t3g-leaderboard-compact .t3g-leaderboard-avatar {
+    width: 1.5rem;
+    height: 1.5rem;
+    font-size: 0.6rem;
+}
+
+.t3g-leaderboard-compact .t3g-leaderboard-pos-badge {
+    min-width: 1.6rem;
+    height: 1.6rem;
+    padding: 0 0.35rem;
+    font-size: 0.72rem;
+}
+
+.t3g-leaderboard-compact .t3g-leaderboard-total-pill {
+    min-width: 1.9rem;
+    padding: 0.2rem 0.55rem;
+    font-size: 0.8rem;
+}
+
+.t3g-leaderboard-compact .t3g-leaderboard-thru-badge {
+    min-width: 1.3rem;
+    padding: 0.1rem 0.4rem;
+    font-size: 0.68rem;
 }
 
 /* Click-through per-player scorecard modal */

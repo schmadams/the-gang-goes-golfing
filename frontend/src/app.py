@@ -7,6 +7,7 @@ import dash_bootstrap_components as dbc
 from dash import html
 from flask import session
 
+from layouts.bottom_nav import build_bottom_nav
 from layouts.navbar import build_navbar
 from layouts.subnav import build_subnav
 
@@ -18,7 +19,16 @@ app = dash.Dash(
     use_pages=True,                     # auto-discovers files in pages/
     suppress_callback_exceptions=True,  # needed since page-specific callbacks
                                          # aren't in the layout until their page loads
-    external_stylesheets=[dbc.themes.BOOTSTRAP],
+    external_stylesheets=[
+        dbc.themes.BOOTSTRAP,
+        # Icon font for the mobile bottom nav (layouts/bottom_nav.py) --
+        # dash.html has no native SVG element support (no html.Svg/Path/
+        # etc.), and the bottom nav's icons need to live inside real,
+        # clickable dcc.Link components rather than a static
+        # dangerously_allow_html blob, so an icon font is the simplest fit
+        # here rather than inlining per-icon SVG markup by hand.
+        "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css",
+    ],
 )
 
 server = app.server  # exposed so gunicorn/wsgi can target `app:server` in prod
@@ -70,6 +80,16 @@ def serve_layout():
         children.append(html.Div(id="subnav-container"))
 
     children.append(dash.page_container)
+
+    if session.get("logged_in"):
+        # Rendered once per hard load, same as build_navbar() above --
+        # which item is "active" is handled reactively inside
+        # build_bottom_nav()'s own highlight_active_bottom_nav_tab
+        # callback (also keyed off _pages_location), not here. Placed last
+        # in the DOM since it's position:fixed in CSS (assets/bottom_nav.
+        # css) and only actually shows up below the phone-width
+        # breakpoint -- desktop never sees it.
+        children.append(build_bottom_nav())
 
     return html.Div(
         children,

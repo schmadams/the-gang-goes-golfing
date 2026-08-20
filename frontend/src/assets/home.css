@@ -8,6 +8,19 @@
     box-sizing: border-box;
 }
 
+/* .t3g-page is shared site-wide (every page's outer wrapper -- home.py,
+   friends.py, clubs.py, etc. all use it, same as .t3g-panel/.t3g-panel-grid
+   below), so this one rule is what actually gives every page its mobile
+   treatment at once: tighter side padding to fit a phone screen, and a
+   bottom-padding allowance so the last bit of content doesn't sit
+   underneath the fixed bottom nav (assets/bottom_nav.css), which only
+   shows up at this same 700px breakpoint. */
+@media (max-width: 700px) {
+    .t3g-page {
+        padding: 1.25rem 1rem calc(1.25rem + 64px);
+    }
+}
+
 .t3g-panel {
     background: #ffffff;
     border-radius: 16px;
@@ -76,6 +89,14 @@
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 2rem;
+    /* Each .t3g-panel normally carries its own 2rem margin-bottom for
+       spacing against whatever comes after it -- zeroed out below so the
+       two side-by-side panels here don't each add their own margin on
+       top of the grid's own row `gap`. That left the grid itself with no
+       spacing against whatever panel follows it (e.g. Entrants below
+       Tournament Info + Leaderboard on tournament.py's Info tab), so it's
+       added back here instead, once, on the grid as a whole. */
+    margin-bottom: 2rem;
 }
 
 .t3g-panel-grid > .t3g-panel {
@@ -408,6 +429,83 @@
     color: #1e2a47;
     font-weight: 600;
 }
+
+/* Start New Round's friend picker -- dropdown on the left, selected
+   friends on the right (see the friend_invite_options block and
+   render_friend_picker in home.py), instead of the usual Dash multi-select
+   pattern of chips living inside the dropdown control itself. */
+.t3g-friend-picker-row {
+    display: flex;
+    gap: 1rem;
+    align-items: flex-start;
+    margin-bottom: 0.5rem;
+}
+
+.t3g-friend-picker-dropdown {
+    flex: 1 1 50%;
+    min-width: 160px;
+}
+
+.t3g-friend-picker-selected {
+    flex: 1 1 50%;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    min-width: 160px;
+}
+
+.t3g-friend-picker-chip {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    background: #f4f5f9;
+    border-radius: 8px;
+    padding: 0.35rem 0.4rem 0.35rem 0.7rem;
+}
+
+.t3g-friend-picker-chip-name {
+    color: #1e2a47;
+    font-weight: 700;
+    font-size: 0.85rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.t3g-friend-picker-chip-remove {
+    flex-shrink: 0;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 1px solid #c21861;
+    background: transparent;
+    color: #c21861;
+    font-size: 0.9rem;
+    line-height: 1;
+    cursor: pointer;
+    transition: opacity 0.15s ease, transform 0.08s ease;
+}
+
+.t3g-friend-picker-chip-remove:hover {
+    opacity: 0.75;
+}
+
+.t3g-friend-picker-chip-remove:active {
+    transform: scale(0.92);
+}
+
+@media (max-width: 500px) {
+    .t3g-friend-picker-row {
+        flex-direction: column;
+    }
+
+    .t3g-friend-picker-dropdown,
+    .t3g-friend-picker-selected {
+        flex: 1 1 auto;
+        width: 100%;
+    }
+}
 /* Handicap panel -- current value shown right in the header, an "i"
    button for the plain-language explainer modal, and a two-way toggle
    between the trend chart and the contributing-rounds table below. */
@@ -596,68 +694,72 @@
     border-bottom: 2px solid #e2e4ea;
 }
 
-/* Annotated legend for the Contributing Rounds card shape -- a 3x3 grid
-   with the sample card dead center and one label+arrow per corner/edge,
-   each pointing inward at the number it explains. Arrow glyphs are fixed
-   unicode characters chosen to already point the right way, rather than
-   computed/rotated lines -- simpler and just as clear at this scale. */
-.t3g-handicap-annotated-example {
-    display: grid;
-    grid-template-columns: 1fr auto 1fr;
-    grid-template-rows: auto auto auto;
-    align-items: center;
-    justify-items: center;
-    gap: 0.5rem 0.75rem;
-    padding: 1.5rem 0.5rem;
-    margin: 0.75rem 0 1.25rem;
-}
-
-.t3g-handicap-example-card {
-    grid-column: 2;
-    grid-row: 2;
-}
-
-.t3g-handicap-annotation {
+/* Annotated "GROSS SCORE" example diagram for the handicap info modal --
+   one static inline SVG (see _HANDICAP_DIAGRAM_SVG in home.py), rendered
+   through dcc.Markdown(dangerously_allow_html=True) rather than built
+   from html.Div/CSS. dcc.Markdown wraps its rendered HTML in its own
+   container div, which is what className="t3g-handicap-diagram-markdown"
+   actually lands on -- this just centers that container and caps the
+   svg's width so it scales down gracefully in a narrower modal instead
+   of overflowing edge-to-edge. */
+.t3g-handicap-diagram-markdown {
     display: flex;
-    align-items: center;
-    gap: 0.35rem;
-    font-size: 0.75rem;
-    font-weight: 700;
-    color: #6b7280;
-    white-space: nowrap;
-    max-width: 110px;
-    text-align: center;
+    justify-content: center;
+    margin: 0.5rem 0 1.25rem;
 }
 
-.t3g-handicap-annotation-arrow {
-    color: #c21861;
-    font-size: 1.1rem;
-    font-weight: 800;
-    flex-shrink: 0;
+.t3g-handicap-diagram-markdown svg {
+    width: 100%;
+    max-width: 480px;
+    height: auto;
+    display: block;
 }
 
-.t3g-handicap-annotation--gross {
-    grid-column: 1;
-    grid-row: 2;
-    justify-self: end;
-}
+/* Phone-width tightening for Home's own panels -- same 700px breakpoint as
+   .t3g-page/.t3g-panel-grid/.t3g-bottom-nav above, so everything switches
+   into "mobile mode" together. This only trims padding/sizing on classes
+   that are already shared site-wide (panel navbar/body, action buttons),
+   so club.py/tournament.py/etc. get the same tightening for free without
+   needing their own copies of these rules -- Home is just the first page
+   whose content has actually been checked end-to-end against it. */
+@media (max-width: 700px) {
+    .t3g-panel-navbar {
+        padding: 0.9rem 1rem;
+        gap: 0.5rem;
+    }
 
-.t3g-handicap-annotation--adjusted {
-    grid-column: 3;
-    grid-row: 1;
-    justify-self: start;
-    white-space: normal;
-}
+    .t3g-panel-navbar-title {
+        font-size: 0.95rem;
+    }
 
-.t3g-handicap-annotation--slope {
-    grid-column: 3;
-    grid-row: 3;
-    justify-self: start;
-}
+    .t3g-panel-action-button {
+        font-size: 0.68rem;
+        padding: 0.45rem 0.8rem;
+    }
 
-.t3g-handicap-annotation--date {
-    grid-column: 2;
-    grid-row: 3;
-    flex-direction: column;
-    white-space: normal;
+    .t3g-panel-body {
+        padding: 1rem;
+    }
+
+    .t3g-handicap-panel-header {
+        flex-wrap: wrap;
+    }
+
+    .t3g-handicap-rounds-grid {
+        grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+        gap: 0.75rem;
+    }
+
+    .t3g-handicap-round-gross {
+        font-size: 1.7rem;
+    }
+
+    /* The card header (title + Live badge + Continue button) is the one
+       spot most likely to overflow a phone width rather than wrap
+       cleanly, since none of its three pieces have any natural break
+       point -- letting it wrap to a second line here is what keeps the
+       Continue button from getting squeezed unreadably thin instead. */
+    .t3g-round-card-header {
+        flex-wrap: wrap;
+    }
 }

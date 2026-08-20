@@ -59,6 +59,17 @@ def _course_label(course):
     return f"{label} ({location})" if location else label
 
 
+def _club_label(club):
+    # Same location-suffix idea as _course_label, but for the club-only
+    # step of the Start New Round club -> course -> tees flow -- a club
+    # option here has no course_name of its own (see ClubOption /
+    # search_local_clubs in backend/services/courses.py), just whichever
+    # course row it was deduped from.
+    label = club["club_name"]
+    location = club.get("county") or club.get("postcode")
+    return f"{label} ({location})" if location else label
+
+
 def _round_scorecard_card(round_data, player_rows):
     """Renders one round as a mini traditional scorecard: hole numbers
     across the top, a par row, and one player row per entry in
@@ -223,6 +234,87 @@ _HANDICAP_TABLE_ROWS = [
     ("20+", "Average of lowest 8", "0"),
 ]
 
+# Static illustrative diagram for the handicap info modal -- a worked
+# example "GROSS SCORE" card (not tied to any real round) with a callout
+# bubble + short explanation for each of the four numbers a real
+# Contributing Rounds card packs together unlabeled. Built as one inline
+# SVG (rendered below via dcc.Markdown(dangerously_allow_html=True))
+# rather than as nested html.Div/CSS like the rest of this app's UI --
+# the diagonal dotted connector lines from each bubble to its exact spot
+# on the card are what actually make the annotations legible, and that's
+# far simpler to get pixel-accurate as one static drawing than to fake
+# with CSS borders/pseudo-elements. Every number and date here is a fixed
+# example, same as the old annotated diagram it replaces.
+_HANDICAP_DIAGRAM_SVG = """
+<svg viewBox="0 0 720 560" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Example Gross Score card, annotated: gross score, adjusted score after WHS capping, course slope rating, and date played">
+<line x1="168" y1="245" x2="240" y2="245" stroke="#c21861" stroke-width="2" stroke-dasharray="4 5"/>
+<line x1="564" y1="160" x2="480" y2="195" stroke="#c21861" stroke-width="2" stroke-dasharray="4 5"/>
+<line x1="563" y1="323" x2="480" y2="282" stroke="#c21861" stroke-width="2" stroke-dasharray="4 5"/>
+<line x1="360" y1="392" x2="360" y2="432" stroke="#c21861" stroke-width="2" stroke-dasharray="4 5"/>
+<rect x="240" y="92" width="240" height="300" rx="18" fill="#fdf5f9" stroke="#c21861" stroke-width="2"/>
+<rect x="270" y="72" width="180" height="40" rx="20" fill="#c21861"/>
+<text x="360" y="98" text-anchor="middle" font-size="15" font-weight="700" fill="#ffffff" letter-spacing="1" font-family="inherit">GROSS SCORE</text>
+<text x="300" y="270" text-anchor="middle" font-size="76" font-weight="800" fill="#1e2a47" font-family="inherit">68</text>
+<line x1="360" y1="140" x2="360" y2="320" stroke="#e2e4ea" stroke-width="1.5"/>
+<text x="378" y="195" font-size="26" font-weight="800" fill="#c21861" font-family="inherit">68</text>
+<text x="378" y="215" font-size="11" font-weight="700" fill="#6b7280" font-family="inherit">After</text>
+<text x="378" y="228" font-size="11" font-weight="700" fill="#6b7280" font-family="inherit">WHS capping</text>
+<line x1="378" y1="242" x2="465" y2="242" stroke="#e2e4ea" stroke-width="1.5"/>
+<text x="378" y="272" font-size="26" font-weight="800" fill="#c21861" font-family="inherit">131</text>
+<text x="378" y="292" font-size="11" font-weight="700" fill="#6b7280" font-family="inherit">Before</text>
+<text x="378" y="305" font-size="11" font-weight="700" fill="#6b7280" font-family="inherit">WHS capping</text>
+<line x1="240" y1="330" x2="480" y2="330" stroke="#e2e4ea" stroke-width="1.5"/>
+<g transform="translate(258,344)">
+<rect x="0" y="2" width="20" height="18" rx="3" fill="none" stroke="#c21861" stroke-width="2"/>
+<line x1="0" y1="9" x2="20" y2="9" stroke="#c21861" stroke-width="2"/>
+<line x1="5" y1="0" x2="5" y2="5" stroke="#c21861" stroke-width="2"/>
+<line x1="15" y1="0" x2="15" y2="5" stroke="#c21861" stroke-width="2"/>
+</g>
+<text x="288" y="360" font-size="16" font-weight="800" fill="#1e2a47" font-family="inherit">2026-08-12</text>
+<text x="288" y="376" font-size="10" font-weight="700" fill="#6b7280" letter-spacing="1" font-family="inherit">DATE PLAYED</text>
+<circle cx="138" cy="245" r="30" fill="#fbe6f0"/>
+<g transform="translate(138,245)" stroke="#c21861" stroke-width="2" fill="none">
+<circle r="11"/>
+<circle r="5.5"/>
+<circle r="1.2" fill="#c21861" stroke="none"/>
+</g>
+<text x="138" y="297" text-anchor="middle" font-size="16" font-weight="800" fill="#1e2a47" font-family="inherit">Gross score</text>
+<text x="138" y="317" text-anchor="middle" font-size="12" fill="#6b7280" font-family="inherit">The final score</text>
+<text x="138" y="333" text-anchor="middle" font-size="12" fill="#6b7280" font-family="inherit">for the round</text>
+<text x="138" y="349" text-anchor="middle" font-size="12" fill="#6b7280" font-family="inherit">after WHS capping.</text>
+<circle cx="592" cy="150" r="30" fill="#fbe6f0"/>
+<g transform="translate(592,150)" fill="#c21861">
+<rect x="-11" y="2" width="6" height="9"/>
+<rect x="-2" y="-4" width="6" height="15"/>
+<rect x="7" y="-9" width="6" height="20"/>
+</g>
+<text x="592" y="200" text-anchor="middle" font-size="16" font-weight="800" fill="#1e2a47" font-family="inherit">Adjusted score</text>
+<text x="592" y="218" text-anchor="middle" font-size="13" font-weight="800" fill="#1e2a47" font-family="inherit">(after WHS capping)</text>
+<text x="592" y="238" text-anchor="middle" font-size="12" fill="#6b7280" font-family="inherit">Your score after</text>
+<text x="592" y="254" text-anchor="middle" font-size="12" fill="#6b7280" font-family="inherit">World Handicap System</text>
+<text x="592" y="270" text-anchor="middle" font-size="12" fill="#6b7280" font-family="inherit">capping has been applied.</text>
+<circle cx="592" cy="330" r="30" fill="#fbe6f0"/>
+<g transform="translate(592,330)" stroke="#c21861" stroke-width="2.5" fill="none" stroke-linecap="round">
+<path d="M -13 6 A 15 15 0 0 1 13 6"/>
+<line x1="0" y1="6" x2="7" y2="-6"/>
+<circle cx="0" cy="6" r="2" fill="#c21861" stroke="none"/>
+</g>
+<text x="592" y="382" text-anchor="middle" font-size="16" font-weight="800" fill="#1e2a47" font-family="inherit">Course slope rating</text>
+<text x="592" y="402" text-anchor="middle" font-size="12" fill="#6b7280" font-family="inherit">The difficulty rating of</text>
+<text x="592" y="418" text-anchor="middle" font-size="12" fill="#6b7280" font-family="inherit">the course for the tees</text>
+<text x="592" y="434" text-anchor="middle" font-size="12" fill="#6b7280" font-family="inherit">played.</text>
+<circle cx="360" cy="462" r="30" fill="#fbe6f0"/>
+<g transform="translate(360,462)">
+<rect x="-11" y="-8" width="22" height="19" rx="3" fill="none" stroke="#c21861" stroke-width="2"/>
+<line x1="-11" y1="-1" x2="11" y2="-1" stroke="#c21861" stroke-width="2"/>
+<line x1="-6" y1="-11" x2="-6" y2="-6" stroke="#c21861" stroke-width="2"/>
+<line x1="6" y1="-11" x2="6" y2="-6" stroke="#c21861" stroke-width="2"/>
+</g>
+<text x="360" y="514" text-anchor="middle" font-size="16" font-weight="800" fill="#1e2a47" font-family="inherit">Date played</text>
+<text x="360" y="534" text-anchor="middle" font-size="12" fill="#6b7280" font-family="inherit">The date when the round was played.</text>
+</svg>
+"""
+
 _HANDICAP_INFO_TEXT = [
     html.P(
         "Your Handicap Index is calculated automatically from your completed rounds, "
@@ -232,43 +324,10 @@ _HANDICAP_INFO_TEXT = [
         "Each card in \"Contributing Rounds\" packs four numbers into one shape, with "
         "no labels -- here's what they mean:"
     ),
-    html.Div(
-        className="t3g-handicap-annotated-example",
-        children=[
-            html.Div(
-                className="t3g-handicap-annotation t3g-handicap-annotation--gross",
-                children=["Gross score", html.Span("\u2192", className="t3g-handicap-annotation-arrow")],
-            ),
-            html.Div(
-                className="t3g-handicap-annotation t3g-handicap-annotation--adjusted",
-                children=[
-                    html.Span("\u2199", className="t3g-handicap-annotation-arrow"),
-                    "Adjusted score (after WHS capping)",
-                ],
-            ),
-            html.Div(
-                className="t3g-handicap-annotation t3g-handicap-annotation--slope",
-                children=[html.Span("\u2196", className="t3g-handicap-annotation-arrow"), "Course slope rating"],
-            ),
-            html.Div(
-                className="t3g-handicap-annotation t3g-handicap-annotation--date",
-                children=[html.Span("\u2191", className="t3g-handicap-annotation-arrow"), "Date played"],
-            ),
-            html.Div(
-                className="t3g-handicap-round-card t3g-handicap-round-card--counting t3g-handicap-example-card",
-                children=[
-                    html.Div(
-                        className="t3g-handicap-round-number",
-                        children=[
-                            html.Span("68", className="t3g-handicap-round-gross"),
-                            html.Span("68", className="t3g-handicap-round-adjusted"),
-                            html.Span("131", className="t3g-handicap-round-slope"),
-                        ],
-                    ),
-                    html.Div("2026-08-12", className="t3g-handicap-round-date"),
-                ],
-            ),
-        ],
+    dcc.Markdown(
+        _HANDICAP_DIAGRAM_SVG,
+        dangerously_allow_html=True,
+        className="t3g-handicap-diagram-markdown",
     ),
     html.P(
         "For each round, we work out a Score Differential -- a single number that "
@@ -450,20 +509,23 @@ def _handicap_panel(current_handicap, history, breakdown):
                             html.Button(
                                 "Trend",
                                 id="handicap-view-trend",
-                                className="t3g-handicap-toggle-button t3g-handicap-toggle-button--active",
+                                className="t3g-handicap-toggle-button",
                                 n_clicks=0,
                             ),
                             html.Button(
                                 "Contributing Rounds",
                                 id="handicap-view-rounds",
-                                className="t3g-handicap-toggle-button",
+                                # Contributing Rounds is the default view now
+                                # (was Trend) -- the initial content below is
+                                # built from _handicap_rounds_view to match.
+                                className="t3g-handicap-toggle-button t3g-handicap-toggle-button--active",
                                 n_clicks=0,
                             ),
                         ],
                     ),
                     dcc.Store(id="handicap-history-store", data=history),
                     dcc.Store(id="handicap-breakdown-store", data=breakdown),
-                    html.Div(id="handicap-panel-content", children=_handicap_trend_view(history)),
+                    html.Div(id="handicap-panel-content", children=_handicap_rounds_view(breakdown)),
                 ],
             ),
         ],
@@ -646,7 +708,7 @@ def layout(**kwargs):
         # (there can only ever be one live casual round per player -- see
         # start_round's existing-active-round check), so the plain link
         # still works fine there.
-        panel_title = "Live Tournament Round" if is_tournament_round else "Live Round"
+        panel_title = "Tournament Round" if is_tournament_round else "Live Round"
         continue_href = (
             f"/live-round?round_id={live_round['id']}" if is_tournament_round else "/live-round"
         )
@@ -868,32 +930,59 @@ def layout(**kwargs):
                     dbc.ModalHeader(dbc.ModalTitle("Upload New Round")),
                     dbc.ModalBody(
                         [
-                            dcc.Dropdown(
-                                id="upload-round-course",
-                                placeholder="Type to search for the course you played",
-                                # No options preloaded -- used to eagerly fetch
-                                # every cached course (thousands of rows once
-                                # the regions crawl finished) on every home
-                                # page load just in case this modal got
-                                # opened, which is what made it feel slow to
-                                # open. search_course_options below fills
-                                # this in live as you type instead.
-                                options=[],
-                                searchable=True,
-                                clearable=True,
-                                className="mb-2 t3g-course-dropdown",
+                            # Club -> Course -> Tees, one step at a time --
+                            # the old single "search for the course you
+                            # played" field combined club and course into
+                            # one ILIKE-across-both-fields search, which
+                            # worked but forced you to already half-know the
+                            # course name to find it. Splitting it into a
+                            # club search step first (search_local_clubs,
+                            # deduped by club_name) narrows the second
+                            # dropdown down to just that club's own cached
+                            # courses (usually just one, auto-selected below)
+                            # before the tees. All three live inside one
+                            # container so the manual-entry toggle can
+                            # show/hide the whole group with a single Output
+                            # instead of one per field.
+                            html.Div(
+                                id="upload-round-course-fields",
+                                children=[
+                                    dcc.Dropdown(
+                                        id="upload-round-club",
+                                        placeholder="Type to search for the club you played at",
+                                        # No options preloaded, same reasoning
+                                        # as the old course dropdown -- search_
+                                        # club_options fills this in live as
+                                        # you type instead of eagerly loading
+                                        # every cached club up front.
+                                        options=[],
+                                        searchable=True,
+                                        clearable=True,
+                                        className="mb-2 t3g-course-dropdown",
+                                    ),
+                                    dcc.Loading(
+                                        type="circle",
+                                        children=dcc.Dropdown(
+                                            id="upload-round-course",
+                                            placeholder="Select the course",
+                                            options=[],
+                                            disabled=True,
+                                            className="mb-2 t3g-course-dropdown",
+                                        ),
+                                    ),
+                                    dcc.Loading(
+                                        type="circle",
+                                        children=dcc.Dropdown(
+                                            id="upload-round-tee",
+                                            placeholder="Select tees",
+                                            options=[],
+                                            disabled=True,
+                                            className="mb-1 t3g-course-dropdown",
+                                        ),
+                                    ),
+                                    html.Div(id="upload-round-tee-status", className="t3g-empty-state mt-1"),
+                                ],
                             ),
-                            dcc.Loading(
-                                type="circle",
-                                children=dcc.Dropdown(
-                                    id="upload-round-tee",
-                                    placeholder="Select tees",
-                                    options=[],
-                                    disabled=True,
-                                    className="mb-1 t3g-course-dropdown",
-                                ),
-                            ),
-                            html.Div(id="upload-round-tee-status", className="t3g-empty-state mt-1"),
                             html.Button(
                                 "Can't find your course? Enter it manually",
                                 id="upload-round-manual-toggle",
@@ -950,16 +1039,45 @@ def layout(**kwargs):
                                 className="t3g-empty-state",
                             )
                             if not friend_invite_options
-                            else None,
-                            # Always rendered (even with empty options) so
-                            # the State lookup below never points at a
-                            # missing component.
-                            dcc.Checklist(
-                                id="upload-round-friends",
-                                options=friend_invite_options,
-                                value=[],
-                                className="t3g-friend-invite-checklist",
+                            else html.Div(
+                                className="t3g-friend-picker-row",
+                                children=[
+                                    # Single-select on the left -- picking a
+                                    # friend here moves them into the store
+                                    # (add_friend_to_round below) and clears
+                                    # the dropdown back to its placeholder,
+                                    # rather than the usual Dash multi-select
+                                    # pattern of collecting chips inside the
+                                    # dropdown control itself. Selected
+                                    # friends live on the right instead (see
+                                    # upload-round-friends-selected), and
+                                    # render_friend_picker filters them back
+                                    # out of these options so the same friend
+                                    # can't be picked twice.
+                                    dcc.Dropdown(
+                                        id="upload-round-friend-picker",
+                                        placeholder="Add a friend...",
+                                        options=friend_invite_options,
+                                        value=None,
+                                        clearable=True,
+                                        className="t3g-friend-picker-dropdown",
+                                    ),
+                                    html.Div(
+                                        id="upload-round-friends-selected",
+                                        className="t3g-friend-picker-selected",
+                                    ),
+                                ],
                             ),
+                            # Master list of every friend option, untouched
+                            # by selection -- render_friend_picker needs the
+                            # full label set to look names up by id for both
+                            # the RHS chips and the remaining-options list.
+                            dcc.Store(id="upload-round-friend-options-store", data=friend_invite_options),
+                            # The actual selection state (list of player
+                            # ids) -- what handle_continue_round reads on
+                            # submit, replacing the old Checklist's own
+                            # `value` as the source of truth.
+                            dcc.Store(id="upload-round-friends-store", data=[]),
                             html.Div(id="upload-round-error", className="text-danger mt-2"),
                             html.Div(id="upload-round-status", className="mt-2"),
                         ]
@@ -1055,23 +1173,25 @@ def handle_create_club(open_clicks, cancel_clicks, submit_clicks, name, descript
 
 @callback(
     Output("upload-round-modal", "is_open"),
-    Output("upload-round-course", "value"),
+    Output("upload-round-club", "value"),
     Output("upload-round-redirect", "pathname", allow_duplicate=True),
     Output("upload-round-manual-mode", "data", allow_duplicate=True),
     Output("upload-round-manual-fields", "style", allow_duplicate=True),
-    Output("upload-round-course", "style", allow_duplicate=True),
-    Output("upload-round-tee-status", "style", allow_duplicate=True),
+    Output("upload-round-course-fields", "style", allow_duplicate=True),
+    Output("upload-round-friends-store", "data", allow_duplicate=True),
     Input("upload-round-button", "n_clicks"),
     Input("upload-round-cancel", "n_clicks"),
     prevent_initial_call=True,
 )
 def toggle_upload_round_modal(open_clicks, cancel_clicks):
-    # Resetting the course value on open (via the Output below) also
-    # triggers load_tees_for_course(None), which clears the tee dropdown --
-    # so the modal always starts fresh (manual mode off too) rather than
-    # showing a stale selection from last time it was opened.
+    # Resetting the club value on open (via the Output below) cascades
+    # through the whole chain -- load_courses_for_club(None) clears the
+    # course dropdown, which in turn triggers load_tees_for_course(None)
+    # clearing the tee dropdown -- so the modal always starts fresh
+    # (manual mode off, no friends carried over from last time, too)
+    # rather than showing a stale selection.
     triggered_id = dash.ctx.triggered_id
-    reset_manual = (False, {"display": "none"}, {}, {})
+    reset_manual = (False, {"display": "none"}, {})
 
     if triggered_id == "upload-round-button":
         player_id = session.get("player_id")
@@ -1083,17 +1203,16 @@ def toggle_upload_round_modal(open_clicks, cancel_clicks):
             # instead of opening the modal. The backend would reject a
             # second one anyway (one-active-round-per-player), but this
             # avoids making them fill out the form just to be told no.
-            return (False, dash.no_update, "/live-round", *reset_manual)
+            return (False, dash.no_update, "/live-round", *reset_manual, [])
 
-        return (True, None, dash.no_update, *reset_manual)
+        return (True, None, dash.no_update, *reset_manual, [])
 
-    return (False, dash.no_update, dash.no_update, *reset_manual)
+    return (False, dash.no_update, dash.no_update, *reset_manual, dash.no_update)
 
 
 @callback(
     Output("upload-round-manual-fields", "style", allow_duplicate=True),
-    Output("upload-round-course", "style", allow_duplicate=True),
-    Output("upload-round-tee-status", "style", allow_duplicate=True),
+    Output("upload-round-course-fields", "style", allow_duplicate=True),
     Output("upload-round-manual-mode", "data", allow_duplicate=True),
     Input("upload-round-manual-toggle", "n_clicks"),
     State("upload-round-manual-mode", "data"),
@@ -1103,52 +1222,65 @@ def toggle_manual_entry(n_clicks, is_manual):
     is_manual = not bool(is_manual)
 
     if is_manual:
-        return {"display": "block"}, {"display": "none"}, {"display": "none"}, True
+        return {"display": "block"}, {"display": "none"}, True
 
-    return {"display": "none"}, {}, {}, False
+    return {"display": "none"}, {}, False
 
 
 @callback(
-    Output("upload-round-course", "options"),
-    Input("upload-round-course", "search_value"),
-    Input("upload-round-course", "value"),
-    State("upload-round-course", "options"),
+    Output("upload-round-club", "options"),
+    Input("upload-round-club", "search_value"),
+    Input("upload-round-club", "value"),
+    State("upload-round-club", "options"),
     prevent_initial_call=True,
 )
-def search_course_options(search_value, selected_course_id, current_options):
-    # Replaces preloading every cached course at page load -- this fires
-    # per keystroke instead, but each call is a targeted ILIKE query
-    # against our own DB (search_local_courses), not the external API, so
-    # it's fast even though it runs more often. Requiring 2+ characters
-    # avoids firing on the first keystroke, when the result set would be
-    # huge and least useful anyway.
-    #
-    # Picking an option clears search_value (the dropdown closes), which
-    # used to wipe `options` back to [] on the very next call -- with no
-    # entry left for the id you just picked, the dropdown had no label to
-    # show and rendered blank even though `value` was set correctly. Since
-    # search_value and value change together on selection, both are
-    # Inputs here so they land in the same callback call, and
-    # current_options (State, still holding the pre-change list) still has
-    # the just-picked course's label -- pin that one back into whatever
-    # this call returns so the selection keeps showing.
+def search_club_options(search_value, selected_club_name, current_options):
+    # Same targeted-ILIKE-per-keystroke approach as the old course search
+    # (search_local_clubs, not the external API, so it's cheap to call
+    # this often), and the same "pin the just-picked option back in"
+    # handling -- picking a club clears search_value, which would
+    # otherwise wipe `options` back to [] with no entry left to render the
+    # selected club's own label from.
     selected_option = next(
-        (opt for opt in (current_options or []) if opt["value"] == selected_course_id),
+        (opt for opt in (current_options or []) if opt["value"] == selected_club_name),
         None,
     )
 
     if not search_value or len(search_value) < 2:
         return [selected_option] if selected_option else []
 
-    with _timed(f"GET /courses/?search={search_value}"):
-        response = requests.get(f"{API_BASE_URL}/courses/", params={"search": search_value})
-    courses = response.json() if response.status_code == 200 else []
-    options = [{"label": _course_label(c), "value": c["id"]} for c in courses]
+    with _timed(f"GET /courses/clubs?search={search_value}"):
+        response = requests.get(f"{API_BASE_URL}/courses/clubs", params={"search": search_value})
+    clubs = response.json() if response.status_code == 200 else []
+    options = [{"label": _club_label(c), "value": c["club_name"]} for c in clubs]
 
     if selected_option and not any(opt["value"] == selected_option["value"] for opt in options):
         options.append(selected_option)
 
     return options
+
+
+@callback(
+    Output("upload-round-course", "options"),
+    Output("upload-round-course", "value"),
+    Output("upload-round-course", "disabled"),
+    Input("upload-round-club", "value"),
+    prevent_initial_call=True,
+)
+def load_courses_for_club(club_name):
+    if not club_name:
+        return [], None, True
+
+    with _timed(f"GET /courses/by-club?club_name={club_name}"):
+        response = requests.get(f"{API_BASE_URL}/courses/by-club", params={"club_name": club_name})
+    courses = response.json() if response.status_code == 200 else []
+    options = [{"label": c.get("course_name") or "Main Course", "value": c["id"]} for c in courses]
+
+    # Most clubs only have one cached course -- skip making the player
+    # pick from a dropdown that only ever has one thing in it.
+    auto_value = options[0]["value"] if len(options) == 1 else None
+
+    return options, auto_value, False
 
 
 @callback(
@@ -1222,7 +1354,7 @@ def toggle_continue_button(course_id, tee_id, is_manual, manual_club, manual_tee
     State("upload-round-manual-tee", "value"),
     State("upload-round-manual-rating", "value"),
     State("upload-round-manual-slope", "value"),
-    State("upload-round-friends", "value"),
+    State("upload-round-friends-store", "data"),
     prevent_initial_call=True,
 )
 def handle_continue_round(
@@ -1276,6 +1408,88 @@ def handle_continue_round(
     except ValueError:
         detail = "Couldn't start the round."
     return html.Span(detail, className="text-danger"), dash.no_update
+
+
+@callback(
+    Output("upload-round-friends-store", "data", allow_duplicate=True),
+    Output("upload-round-friend-picker", "value"),
+    Input("upload-round-friend-picker", "value"),
+    State("upload-round-friends-store", "data"),
+    prevent_initial_call=True,
+)
+def add_friend_to_round(picked_id, selected_ids):
+    # Picking a friend moves them straight into the store and snaps the
+    # dropdown back to its placeholder -- selection lives in the RHS list
+    # (render_friend_picker below), not as chips inside the dropdown
+    # control itself. Firing again with picked_id=None (from the reset
+    # below) or a friend who's somehow already selected is a no-op.
+    if not picked_id:
+        return dash.no_update, dash.no_update
+
+    selected_ids = selected_ids or []
+    if picked_id in selected_ids or len(selected_ids) >= 3:
+        return dash.no_update, None
+
+    return selected_ids + [picked_id], None
+
+
+@callback(
+    Output("upload-round-friends-store", "data", allow_duplicate=True),
+    Input({"type": "upload-round-friend-remove", "player_id": ALL}, "n_clicks"),
+    State("upload-round-friends-store", "data"),
+    prevent_initial_call=True,
+)
+def remove_friend_from_round(remove_clicks, selected_ids):
+    if not any(remove_clicks or []):
+        # Fires once per remove button just from them being (re)rendered
+        # with n_clicks=0 whenever the selection changes -- only actually
+        # remove someone on a real click.
+        return dash.no_update
+
+    removed_id = dash.ctx.triggered_id["player_id"]
+    return [pid for pid in (selected_ids or []) if pid != removed_id]
+
+
+@callback(
+    Output("upload-round-friends-selected", "children"),
+    Output("upload-round-friend-picker", "options"),
+    Output("upload-round-friend-picker", "disabled"),
+    Output("upload-round-friend-picker", "placeholder"),
+    Input("upload-round-friends-store", "data"),
+    State("upload-round-friend-options-store", "data"),
+)
+def render_friend_picker(selected_ids, all_options):
+    # No prevent_initial_call -- fires on load too, so the RHS list shows
+    # its empty-state placeholder immediately instead of nothing at all,
+    # same reasoning as render_rounds_page below.
+    selected_ids = selected_ids or []
+    all_options = all_options or []
+    label_by_id = {opt["value"]: opt["label"] for opt in all_options}
+
+    if selected_ids:
+        selected_rows = [
+            html.Div(
+                className="t3g-friend-picker-chip",
+                children=[
+                    html.Span(label_by_id.get(pid, "Friend"), className="t3g-friend-picker-chip-name"),
+                    html.Button(
+                        "×",
+                        id={"type": "upload-round-friend-remove", "player_id": pid},
+                        className="t3g-friend-picker-chip-remove",
+                        n_clicks=0,
+                    ),
+                ],
+            )
+            for pid in selected_ids
+        ]
+    else:
+        selected_rows = [html.P("No friends added yet.", className="t3g-empty-state")]
+
+    remaining_options = [opt for opt in all_options if opt["value"] not in selected_ids]
+    at_cap = len(selected_ids) >= 3
+    placeholder = "Maximum 3 friends added" if at_cap else "Add a friend..."
+
+    return selected_rows, remaining_options, at_cap, placeholder
 
 
 @callback(

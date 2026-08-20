@@ -2,6 +2,7 @@
 from fastapi import APIRouter, HTTPException, Query, status
 
 from backend.models.course import (
+    ClubOption,
     CourseDetailResponse,
     CourseImportRequest,
     CourseResponse,
@@ -12,7 +13,9 @@ from backend.services.courses import (
     ensure_scorecard,
     get_course,
     import_course,
+    list_courses_for_club,
     search_external_clubs,
+    search_local_clubs,
     search_local_courses,
 )
 
@@ -25,6 +28,20 @@ router = APIRouter(
 @router.get("/", response_model=list[CourseResponse])
 def search_courses_route(search: str = Query(default="")):
     return search_local_courses(search)
+
+
+# Both of these have to be registered ahead of GET /{course_id} below --
+# FastAPI matches routes in registration order, not by specificity, so
+# "/clubs" or "/by-club" would otherwise get swallowed by the
+# {course_id} path param (as course_id="clubs") if they came after it.
+@router.get("/clubs", response_model=list[ClubOption])
+def search_clubs_route(search: str = Query(default="")):
+    return search_local_clubs(search)
+
+
+@router.get("/by-club", response_model=list[CourseResponse])
+def list_courses_for_club_route(club_name: str = Query(...)):
+    return list_courses_for_club(club_name)
 
 
 @router.get("/external-search", response_model=list[ExternalCourseCandidate])

@@ -96,6 +96,63 @@ def search_local_courses(query: str = "", limit: int = 3000) -> list[dict]:
     return response.data or []
 
 
+def search_local_clubs(query: str = "", limit: int = 3000) -> list[dict]:
+    """
+    Distinct list of real-world golf club names (not this app's own
+    "clubs" concept -- see backend/models/club.py for that), for the Start
+    New Round club-search step. The courses table is one row per COURSE,
+    denormalized with its own club_name copied onto every row (some clubs
+    have several courses sharing one club_name, e.g. East/West), so a
+    plain select here would list "Wentworth" three times, once per course.
+    PostgREST has no server-side DISTINCT through supabase-py's query
+    builder, so this fetches matching rows the same way
+    search_local_courses does and dedupes club_name in Python instead --
+    fine at this table's size, and keeps whichever row's county/postcode
+    was seen first as a representative location hint for that club_name.
+    """
+    query_builder = supabase.table("courses").select("club_name, county, postcode").order("club_name")
+
+    if query:
+        escaped = query.replace(",", " ").replace("%", "")
+        query_builder = query_builder.ilike("club_name", f"%{escaped}%")
+        label = f"search_local_clubs(query={query!r})"
+    else:
+        label = "search_local_clubs(all)"
+
+    with _timed(label, "database"):
+        response = query_builder.limit(limit).execute()
+
+    rows = response.data or []
+    deduped = {}
+    for row in rows:
+        name = row.get("club_name")
+        if name and name not in deduped:
+            deduped[name] = row
+
+    return list(deduped.values())
+
+
+def list_courses_for_club(club_name: str) -> list[dict]:
+    """
+    Every cached course under one exact real-world club name -- the second
+    step of the Start New Round club -> course -> tees flow, once a club's
+    been picked from a search_local_clubs result. Exact match (not ilike)
+    since club_name here always comes from that earlier result, not free
+    typing.
+    """
+    query_builder = (
+        supabase.table("courses")
+        .select("*")
+        .eq("club_name", club_name)
+        .order("course_name")
+    )
+
+    with _timed(f"list_courses_for_club(club_name={club_name!r})", "database"):
+        response = query_builder.execute()
+
+    return response.data or []
+
+
 def search_external_clubs(query: str) -> list[dict]:
     """
     NOTE: the UK Golf API has no free-text "search by club name" endpoint --

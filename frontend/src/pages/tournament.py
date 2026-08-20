@@ -723,6 +723,15 @@ _TOURNAMENT_FORMAT_TO_LEADERBOARD_MODE = {"stableford": "stableford", "net": "ne
 
 _LEADERBOARD_REFRESH_INTERVAL_MS = 25_000
 
+# Detailed = the existing hole-by-hole Masters-style grid (_leaderboard_
+# table). Simple = just Pos/Player/Total/Today (_leaderboard_simple_table)
+# -- same sort order, same Gross/Stableford/Nett format toggle, same
+# click-a-row-for-their-scorecard interaction, just far fewer columns for
+# someone who only wants "who's winning" at a glance instead of a full
+# scorecard grid. Detailed is the default -- it's what's always been here.
+_LEADERBOARD_VIEW_KEYS = ("detailed", "simple")
+_LEADERBOARD_VIEW_LABELS = {"detailed": "Detailed", "simple": "Simple"}
+
 
 def _default_leaderboard_mode(tournament):
     return _TOURNAMENT_FORMAT_TO_LEADERBOARD_MODE.get(tournament.get("format"), "gross")
@@ -758,6 +767,31 @@ def _leaderboard_format_classes(active_mode):
     }
 
 
+def _leaderboard_view_classes(active_view):
+    # Reuses the exact same pill-toggle classes as the format tabs
+    # (t3g-leaderboard-format-tab[s]) rather than a parallel set of "view"
+    # classes -- it's the same visual pattern (a small group of mutually-
+    # exclusive flat pills) just applied to a different choice, so there's
+    # nothing view-specific to actually style differently.
+    return {
+        key: ("t3g-leaderboard-format-tab t3g-leaderboard-format-tab--active" if key == active_view
+              else "t3g-leaderboard-format-tab")
+        for key in _LEADERBOARD_VIEW_KEYS
+    }
+
+
+def _leaderboard_round_classes(round_keys, active_key):
+    # Same reused pill-tab classes again -- round_keys isn't a fixed tuple
+    # like the view/format ones (it's "overall" plus however many rounds
+    # this tournament actually has), so this takes the key list as an
+    # argument instead of a module-level constant.
+    return {
+        key: ("t3g-leaderboard-format-tab t3g-leaderboard-format-tab--active" if key == active_key
+              else "t3g-leaderboard-format-tab")
+        for key in round_keys
+    }
+
+
 def _leaderboard_panel(tournament):
     """Live, whole-field Masters-style leaderboard -- a round selector (one
     round tab/dropdown per tournament round) and a Gross/Stableford/Nett
@@ -782,13 +816,25 @@ def _leaderboard_panel(tournament):
             ],
         )
 
-    default_round = _default_leaderboard_round(tournament)
     default_mode = _default_leaderboard_mode(tournament)
     format_classes = _leaderboard_format_classes(default_mode)
+    default_view = "detailed"
+    view_classes = _leaderboard_view_classes(default_view)
 
-    round_options = [
-        {"label": f"Round {r['round_number']} — {r.get('round_date', '')}", "value": r["id"]} for r in rounds
-    ]
+    # "Overall" is a sentinel, not a real round id -- it stands for
+    # "whichever round is currently the tournament's leading edge" (see
+    # _default_leaderboard_round: the highest round_number with a group
+    # still in_progress, failing that the latest with anything completed,
+    # failing that Round 1), resolved for real inside load_tournament_
+    # leaderboard rather than pinned to one round_id up front here. It's
+    # the default tab -- this is exactly what the round selector used to
+    # silently open on before it became explicit/reselectable tabs, so
+    # opening the leaderboard behaves the same as it always did, it's just
+    # now a named, clickable-back-to option instead of only ever being the
+    # initial pick.
+    default_round_key = "overall"
+    round_keys = ["overall"] + [r["id"] for r in rounds]
+    round_classes = _leaderboard_round_classes(round_keys, default_round_key)
 
     return html.Div(
         className="t3g-panel",
@@ -800,13 +846,37 @@ def _leaderboard_panel(tournament):
                     html.Div(
                         className="t3g-leaderboard-controls",
                         children=[
-                            dcc.Dropdown(
-                                id="tournament-leaderboard-round-select",
-                                options=round_options,
-                                value=default_round["id"] if default_round else None,
-                                clearable=False,
-                                searchable=False,
-                                className="t3g-leaderboard-round-select",
+                            html.Div(
+                                className="t3g-leaderboard-format-tabs t3g-leaderboard-round-tabs",
+                                children=[
+                                    html.Button(
+                                        "Overall",
+                                        id={"type": "tournament-leaderboard-round-button", "round_id": "overall"},
+                                        className=round_classes["overall"],
+                                        n_clicks=0,
+                                    ),
+                                    *[
+                                        html.Button(
+                                            f"Round {r['round_number']}",
+                                            id={"type": "tournament-leaderboard-round-button", "round_id": r["id"]},
+                                            className=round_classes[r["id"]],
+                                            n_clicks=0,
+                                        )
+                                        for r in rounds
+                                    ],
+                                ],
+                            ),
+                            html.Div(
+                                className="t3g-leaderboard-format-tabs",
+                                children=[
+                                    html.Button(
+                                        _LEADERBOARD_VIEW_LABELS[key],
+                                        id={"type": "tournament-leaderboard-view-button", "view": key},
+                                        className=view_classes[key],
+                                        n_clicks=0,
+                                    )
+                                    for key in _LEADERBOARD_VIEW_KEYS
+                                ],
                             ),
                             html.Div(
                                 className="t3g-leaderboard-format-tabs",
@@ -829,6 +899,19 @@ def _leaderboard_panel(tournament):
                     ),
                     dcc.Store(id="tournament-leaderboard-store"),
                     dcc.Store(id="tournament-leaderboard-format-store", data=default_mode),
+                    dcc.Store(id="tournament-leaderboard-view-store", data=default_view),
+                    dcc.Store(id="tournament-leaderboard-round-store", data=default_round_key),
+                    # A snapshot of this tournament's own rounds (with their
+                    # tee_times/live_round statuses already embedded, same
+                    # shape _default_leaderboard_round expects) -- what
+                    # load_tournament_leaderboard resolves "overall" against.
+                    # Taken once at page load, same as the round selector's
+                    # old default value always was -- a group starting a
+                    # brand new round after this page is already open won't
+                    # retroactively move "Overall" onto it without a refresh,
+                    # but that's no different from how the previous default
+                    # selection behaved either.
+                    dcc.Store(id="tournament-leaderboard-rounds-store", data=rounds),
                     dcc.Interval(
                         id="tournament-leaderboard-refresh-interval",
                         interval=_LEADERBOARD_REFRESH_INTERVAL_MS,
@@ -1071,6 +1154,207 @@ def _leaderboard_table(leaderboard_data, mode):
             className="t3g-leaderboard-table",
         ),
         className="t3g-leaderboard-wrap",
+    )
+
+
+def _leaderboard_today_cell(p, mode, total_key, prior_key, value_text):
+    """The Simple view's 4th column -- this round's own score once it's
+    finished (total minus prior, since both are cumulative-to-par/points
+    sums and to-par/points are additive across rounds, so the difference
+    is exactly what this one round contributed on its own), or how far
+    through the round they are otherwise. Reuses the exact same total-pill
+    styling as the Total column once finished -- it's the same kind of
+    number (a to-par score or a points total), just scoped to one round
+    instead of the whole tournament -- and the same thru-badge styling the
+    detailed table uses for "not finished yet" everywhere else."""
+    if p["thru"] == 18:
+        round_value = p[total_key] - p[prior_key]
+        return html.Span(value_text(round_value), className=_leaderboard_total_pill_class(round_value, mode))
+
+    thru_text = f"Thru {p['thru']}" if p["thru"] else "–"
+    return html.Span(thru_text, className="t3g-leaderboard-thru-badge")
+
+
+def _leaderboard_simple_table(leaderboard_data, mode, clickable=True):
+    """Same players, same sort order, same Gross/Stableford/Nett format as
+    _leaderboard_table above -- just Pos/Player/Total/Today instead of the
+    full hole-by-hole grid, for someone who wants "who's winning" at a
+    glance rather than a full scorecard.
+
+    clickable=True (the Leaderboard tab's own Simple view) gives rows the
+    same id pattern (tournament-leaderboard-player-row) the detailed table
+    uses, so toggle_tournament_leaderboard_scorecard already handles
+    clicks from either view without any changes -- it matches on an ALL
+    pattern, not which table rendered the row. clickable=False (the
+    compact panel embedded in the Tournament Info tab, see
+    _tournament_info_leaderboard_panel) deliberately leaves rows inert --
+    that panel has no scorecard modal of its own, and wiring its rows into
+    the *other* tab's modal would show whichever round the Leaderboard tab
+    happens to be sitting on, not necessarily this panel's own (always-
+    latest) round -- a real mismatch, not just an unnecessary feature."""
+    players = leaderboard_data.get("players", [])
+
+    if not players:
+        return html.P("No confirmed entrants yet.", className="t3g-empty-state")
+
+    total_key = f"total_{mode}"
+    prior_key = f"prior_{mode}"
+
+    sorted_players = sorted(players, key=lambda p: p[total_key], reverse=(mode == "stableford"))
+    positions = _leaderboard_positions(sorted_players, total_key)
+    value_text = (lambda v: str(v)) if mode == "stableford" else _leaderboard_to_par_text
+
+    header_row = [html.Th(""), html.Th("Player"), html.Th("Total"), html.Th("Today")]
+
+    body_rows = []
+    for pos, p in zip(positions, sorted_players):
+        tier = int(pos.lstrip("T"))
+        tier_class = {1: " t3g-leaderboard-pos-badge--first",
+                      2: " t3g-leaderboard-pos-badge--second",
+                      3: " t3g-leaderboard-pos-badge--third"}.get(tier, "")
+
+        row_kwargs = {}
+        row_class = " t3g-leaderboard-row--leader" if tier == 1 else ""
+        if clickable:
+            row_kwargs["id"] = {"type": "tournament-leaderboard-player-row", "player_id": p["player_id"]}
+            row_kwargs["n_clicks"] = 0
+            row_class = "t3g-leaderboard-row" + row_class
+        else:
+            row_class = row_class.strip()
+
+        body_rows.append(
+            html.Tr(
+                [
+                    html.Td(
+                        html.Span(pos, className="t3g-leaderboard-pos-badge" + tier_class),
+                        className="t3g-leaderboard-pos",
+                    ),
+                    html.Td(
+                        html.Div(
+                            [
+                                html.Span(_leaderboard_initials(p["name"]), className="t3g-leaderboard-avatar"),
+                                html.Span(p["name"]),
+                            ],
+                            className="t3g-leaderboard-player-cell",
+                        ),
+                        className="t3g-leaderboard-player-col",
+                    ),
+                    html.Td(
+                        html.Span(value_text(p[total_key]), className=_leaderboard_total_pill_class(p[total_key], mode)),
+                        className="t3g-leaderboard-total-col",
+                    ),
+                    html.Td(_leaderboard_today_cell(p, mode, total_key, prior_key, value_text)),
+                ],
+                className=row_class,
+                **row_kwargs,
+            )
+        )
+
+    return html.Div(
+        html.Table(
+            [html.Thead(html.Tr(header_row)), html.Tbody(body_rows)],
+            className="t3g-leaderboard-table t3g-leaderboard-table--simple",
+        ),
+        className="t3g-leaderboard-wrap",
+    )
+
+
+def _tournament_info_leaderboard_panel(tournament):
+    """Compact "how's it going" leaderboard for the Tournament Info tab --
+    always the Simple 4-column view (see _leaderboard_simple_table),
+    always whichever round is the tournament's current leading edge (same
+    resolution _default_leaderboard_round computes for the full
+    Leaderboard tab's Overall tab -- highest round_number with a group
+    still in_progress, failing that the latest with anything completed,
+    failing that Round 1 -- just pinned once here at page-load time rather
+    than offered as a reselectable tab, since there's no round picker in
+    this compact panel). The Gross/Stableford/Nett toggle still works
+    (own store/callback, separate from the Leaderboard tab's), defaulting
+    to whichever of those this tournament's own format maps onto -- same
+    default the full Leaderboard tab opens on (see _default_leaderboard_
+    mode) -- not hardcoded to Gross.
+
+    Sits side-by-side with Tournament Info in a two-column grid (see
+    layout()'s tournament-tab-panel-info children), so the current
+    standings are visible on the tab someone lands on by default, without
+    switching to Leaderboard. Deliberately lighter than the full panel:
+    no round tabs, no Detailed option, no click-through scorecard modal --
+    just the numbers."""
+    rounds = tournament.get("rounds", [])
+
+    if not rounds:
+        return html.Div(
+            className="t3g-panel",
+            children=[
+                build_panel_navbar("Leaderboard"),
+                html.Div(html.P("No rounds set up yet.", className="t3g-empty-state"), className="t3g-panel-body"),
+            ],
+        )
+
+    default_round = _default_leaderboard_round(tournament)
+    default_mode = _default_leaderboard_mode(tournament)
+    format_classes = _leaderboard_format_classes(default_mode)
+
+    return html.Div(
+        className="t3g-panel",
+        children=[
+            build_panel_navbar("Leaderboard"),
+            html.Div(
+                className="t3g-panel-body",
+                children=[
+                    html.Div(
+                        className="t3g-leaderboard-controls",
+                        children=[
+                            html.Div(
+                                className="t3g-leaderboard-format-tabs",
+                                children=[
+                                    html.Button(
+                                        _LEADERBOARD_FORMAT_LABELS[key],
+                                        id={"type": "tournament-info-leaderboard-format-button", "mode": key},
+                                        className=format_classes[key],
+                                        n_clicks=0,
+                                    )
+                                    for key in _LEADERBOARD_FORMAT_KEYS
+                                ],
+                            ),
+                        ],
+                    ),
+                    html.Div(id="tournament-info-leaderboard-error", className="text-danger mb-2"),
+                    # t3g-leaderboard-compact scopes a denser type scale
+                    # (see club.css) to just this panel's table -- the
+                    # full Leaderboard tab's own Detailed/Simple tables
+                    # share the same base .t3g-leaderboard-* classes and
+                    # stay at their normal size, since this panel is the
+                    # one squeezed into half a two-column row rather than
+                    # the whole tab. parent_className (not className --
+                    # that one only targets dcc.Loading's own spinner
+                    # element) is what actually lands on the wrapper div
+                    # around the children, which is what a descendant
+                    # selector needs to reach the rendered table inside.
+                    dcc.Loading(
+                        html.Div(id="tournament-info-leaderboard-table-container"),
+                        type="circle",
+                        parent_className="t3g-leaderboard-compact",
+                    ),
+                    dcc.Store(id="tournament-info-leaderboard-store"),
+                    dcc.Store(id="tournament-info-leaderboard-format-store", data=default_mode),
+                    # A concrete round_id, resolved once at build time --
+                    # unlike the Leaderboard tab's round-store, this panel
+                    # has no "overall" sentinel to re-resolve later, since
+                    # there's nothing here that would ever set it to
+                    # anything else.
+                    dcc.Store(
+                        id="tournament-info-leaderboard-round-store",
+                        data=default_round["id"] if default_round else None,
+                    ),
+                    dcc.Interval(
+                        id="tournament-info-leaderboard-refresh-interval",
+                        interval=_LEADERBOARD_REFRESH_INTERVAL_MS,
+                        n_intervals=0,
+                    ),
+                ],
+            ),
+        ],
     )
 
 
@@ -1528,7 +1812,13 @@ def layout(slug=None, tournament_id=None, tab=None, **kwargs):
                 id="tournament-tab-panel-info",
                 style=info_style,
                 children=[
-                    _tournament_info_panel(tournament, is_admin),
+                    html.Div(
+                        className="t3g-panel-grid",
+                        children=[
+                            _tournament_info_panel(tournament, is_admin),
+                            _tournament_info_leaderboard_panel(tournament),
+                        ],
+                    ),
                     _entrants_panel(tournament, entrants, my_entry, is_admin),
                 ],
             ),
@@ -1954,19 +2244,33 @@ def handle_start_live_round(start_clicks):
 @callback(
     Output("tournament-leaderboard-store", "data"),
     Output("tournament-leaderboard-error", "children"),
-    Input("tournament-leaderboard-round-select", "value"),
+    Input("tournament-leaderboard-round-store", "data"),
     Input("tournament-leaderboard-refresh-interval", "n_intervals"),
+    State("tournament-leaderboard-rounds-store", "data"),
     State("tournament-id-store", "data"),
 )
-def load_tournament_leaderboard(round_id, n_intervals, tournament_id):
+def load_tournament_leaderboard(round_key, n_intervals, rounds, tournament_id):
     # No prevent_initial_call -- this has to run on first render too (the
-    # round dropdown's own default value, from _default_leaderboard_round,
-    # is what picks the initial round), not just on later round changes.
-    # The Interval Input is what makes this "live": it re-fires this same
-    # fetch every _LEADERBOARD_REFRESH_INTERVAL_MS regardless of whether
-    # the round selection changed, so scores update on their own while
-    # someone's sitting on this tab watching a round in progress.
-    if not round_id or not tournament_id:
+    # round tabs' own default value, "overall", is what picks the initial
+    # round), not just on later round-tab clicks. The Interval Input is
+    # what makes this "live": it re-fires this same fetch every
+    # _LEADERBOARD_REFRESH_INTERVAL_MS regardless of whether the round
+    # selection changed, so scores update on their own while someone's
+    # sitting on this tab watching a round in progress.
+    if not tournament_id:
+        raise PreventUpdate
+
+    # "Overall" isn't a real round id -- resolve it to whichever round is
+    # currently the tournament's leading edge (same logic the round
+    # selector's default used to bake in silently), against the rounds
+    # snapshot taken when this panel was built. A specific "Round N" tab
+    # instead just passes its own real round_id straight through.
+    round_id = round_key
+    if round_key == "overall":
+        resolved_round = _default_leaderboard_round({"rounds": rounds or []})
+        round_id = resolved_round["id"] if resolved_round else None
+
+    if not round_id:
         raise PreventUpdate
 
     response = requests.get(
@@ -1981,16 +2285,20 @@ def load_tournament_leaderboard(round_id, n_intervals, tournament_id):
     Output("tournament-leaderboard-table-container", "children"),
     Input("tournament-leaderboard-store", "data"),
     Input("tournament-leaderboard-format-store", "data"),
+    Input("tournament-leaderboard-view-store", "data"),
 )
-def render_tournament_leaderboard_table(leaderboard_data, mode):
+def render_tournament_leaderboard_table(leaderboard_data, mode, view):
     # Fires on every leaderboard fetch (round change or the refresh
-    # interval) and on every format-toggle click -- switching format never
-    # needs a new request, since the backend already computed all three
-    # (gross/stableford/nett) lines up front; this just picks which one to
-    # render and re-sorts by it.
+    # interval), every format-toggle click, and every view-toggle click --
+    # none of the three ever need a new request, since the backend already
+    # computed all three (gross/stableford/nett) lines up front and both
+    # views are just different ways of rendering that same fetched data.
     if not leaderboard_data:
         raise PreventUpdate
-    return _leaderboard_table(leaderboard_data, mode or "gross")
+    mode = mode or "gross"
+    if view == "simple":
+        return _leaderboard_simple_table(leaderboard_data, mode)
+    return _leaderboard_table(leaderboard_data, mode)
 
 
 @callback(
@@ -2004,6 +2312,104 @@ def switch_tournament_leaderboard_format(clicks, ids):
     # Same phantom-trigger guard as the other ALL-pattern button rows on
     # this page (e.g. handle_entrant_response) -- all 3 format buttons
     # share this one callback.
+    triggered_id = dash.ctx.triggered_id
+    if not triggered_id or not any(clicks or []):
+        raise PreventUpdate
+
+    active_mode = triggered_id["mode"]
+    classes = _leaderboard_format_classes(active_mode)
+    return active_mode, [classes[id_dict["mode"]] for id_dict in ids]
+
+
+@callback(
+    Output("tournament-leaderboard-view-store", "data"),
+    Output({"type": "tournament-leaderboard-view-button", "view": ALL}, "className"),
+    Input({"type": "tournament-leaderboard-view-button", "view": ALL}, "n_clicks"),
+    State({"type": "tournament-leaderboard-view-button", "view": ALL}, "id"),
+    prevent_initial_call=True,
+)
+def switch_tournament_leaderboard_view(clicks, ids):
+    # Same pattern as switch_tournament_leaderboard_format just above --
+    # both Detailed/Simple buttons share this one callback.
+    triggered_id = dash.ctx.triggered_id
+    if not triggered_id or not any(clicks or []):
+        raise PreventUpdate
+
+    active_view = triggered_id["view"]
+    classes = _leaderboard_view_classes(active_view)
+    return active_view, [classes[id_dict["view"]] for id_dict in ids]
+
+
+@callback(
+    Output("tournament-leaderboard-round-store", "data"),
+    Output({"type": "tournament-leaderboard-round-button", "round_id": ALL}, "className"),
+    Input({"type": "tournament-leaderboard-round-button", "round_id": ALL}, "n_clicks"),
+    State({"type": "tournament-leaderboard-round-button", "round_id": ALL}, "id"),
+    prevent_initial_call=True,
+)
+def switch_tournament_leaderboard_round(clicks, ids):
+    # Same pattern again -- "Overall" plus one button per round all share
+    # this one callback; round_key here is either "overall" or a real
+    # round_id, load_tournament_leaderboard is what tells the two apart.
+    triggered_id = dash.ctx.triggered_id
+    if not triggered_id or not any(clicks or []):
+        raise PreventUpdate
+
+    active_round = triggered_id["round_id"]
+    round_keys = [id_dict["round_id"] for id_dict in ids]
+    classes = _leaderboard_round_classes(round_keys, active_round)
+    return active_round, [classes[key] for key in round_keys]
+
+
+@callback(
+    Output("tournament-info-leaderboard-store", "data"),
+    Output("tournament-info-leaderboard-error", "children"),
+    Input("tournament-info-leaderboard-refresh-interval", "n_intervals"),
+    State("tournament-info-leaderboard-round-store", "data"),
+    State("tournament-id-store", "data"),
+)
+def load_tournament_info_leaderboard(n_intervals, round_id, tournament_id):
+    # No prevent_initial_call -- has to run on first render too, same
+    # reasoning as load_tournament_leaderboard above. Always the one round
+    # _tournament_info_leaderboard_panel resolved at build time (see
+    # tournament-info-leaderboard-round-store) -- this panel has no round
+    # picker, so there's nothing to react to there, just the interval
+    # keeping that one round's numbers current.
+    if not round_id or not tournament_id:
+        raise PreventUpdate
+
+    response = requests.get(
+        f"{API_BASE_URL}/tournaments/{tournament_id}/leaderboard", params={"round_id": round_id}
+    )
+    if response.status_code != 200:
+        return dash.no_update, "Couldn't load the leaderboard right now."
+    return response.json(), ""
+
+
+@callback(
+    Output("tournament-info-leaderboard-table-container", "children"),
+    Input("tournament-info-leaderboard-store", "data"),
+    Input("tournament-info-leaderboard-format-store", "data"),
+)
+def render_tournament_info_leaderboard_table(leaderboard_data, mode):
+    if not leaderboard_data:
+        raise PreventUpdate
+    return _leaderboard_simple_table(leaderboard_data, mode or "gross", clickable=False)
+
+
+@callback(
+    Output("tournament-info-leaderboard-format-store", "data"),
+    Output({"type": "tournament-info-leaderboard-format-button", "mode": ALL}, "className"),
+    Input({"type": "tournament-info-leaderboard-format-button", "mode": ALL}, "n_clicks"),
+    State({"type": "tournament-info-leaderboard-format-button", "mode": ALL}, "id"),
+    prevent_initial_call=True,
+)
+def switch_tournament_info_leaderboard_format(clicks, ids):
+    # Same phantom-trigger-guard pattern as switch_tournament_leaderboard_
+    # format -- a separate callback (not the same one) because it's a
+    # distinct button id type (tournament-info-leaderboard-format-button
+    # vs tournament-leaderboard-format-button) and a distinct store, so
+    # switching format in one panel never touches the other.
     triggered_id = dash.ctx.triggered_id
     if not triggered_id or not any(clicks or []):
         raise PreventUpdate
