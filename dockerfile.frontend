@@ -1,0 +1,25 @@
+# target path: Dockerfile.frontend (new file)
+#
+# Builds and runs the Dash app only -- see Dockerfile.backend for the
+# API's own image. This one never imports backend/ at runtime (the
+# frontend only ever talks to the API over HTTP, via API_BASE_URL), but
+# backend/ still has to be present at build time because pip install .
+# is building the same shared pyproject.toml, and hatchling's wheel
+# config points at that package -- see the comment in Dockerfile.backend.
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY pyproject.toml ./
+COPY backend ./backend
+RUN pip install --no-cache-dir .
+
+COPY frontend ./frontend
+
+# app.py's own imports (layouts.navbar, pages.*, config, etc.) are all
+# relative to frontend/src -- this is exactly the directory `uv run
+# python frontend/src/app.py` runs from locally too, gunicorn just needs
+# to be started from the same place so those same imports resolve.
+WORKDIR /app/frontend/src
+
+CMD gunicorn app:server --bind 0.0.0.0:${PORT:-8050} --workers 2 --threads 4 --timeout 60

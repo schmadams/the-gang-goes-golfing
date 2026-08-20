@@ -100,4 +100,15 @@ def serve_layout():
 app.layout = serve_layout
 
 if __name__ == "__main__":
-    app.run(debug=True)  # auto-reloads on file changes; app.run_server is deprecated
+    # Production (Railway, etc.) runs this app via gunicorn targeting
+    # app:server directly (see Dockerfile.frontend) -- gunicorn never
+    # executes this __main__ block at all, so debug mode is never reachable
+    # that way. This guard is just a safety net for the unlikely case
+    # someone runs `python app.py` directly on a real server instead:
+    # debug=True's dev server isn't built for real traffic, and its
+    # in-browser debugger can execute arbitrary code if it's ever reachable
+    # from outside, which is a real risk on a public host. Local dev is
+    # unaffected -- DASH_DEBUG is unset there, so this still defaults to
+    # the same debug=True hot-reloading behavior as before.
+    debug_mode = os.environ.get("DASH_DEBUG", "true").lower() == "true"
+    app.run(debug=debug_mode)  # app.run_server is deprecated

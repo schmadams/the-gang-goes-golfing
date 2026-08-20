@@ -14,7 +14,13 @@ dependencies = [
     "requests",
     "dash",
     "dash-bootstrap-components",
-    "python-multipart"
+    "python-multipart",
+    # Production WSGI server for the Dash/Flask frontend (see
+    # Dockerfile.frontend) -- app.run(debug=True)'s built-in dev server
+    # (still used for local `uv run python frontend/src/app.py`) isn't
+    # meant to serve real traffic or run with debug mode reachable from
+    # the internet.
+    "gunicorn",
 ]
 
 [project.optional-dependencies]
@@ -29,4 +35,4 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["backend"]
+packages = ["backend"]  

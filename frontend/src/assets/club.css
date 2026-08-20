@@ -416,6 +416,51 @@
     color: #ffffff !important;
 }
 
+/* Below the phone-width breakpoint, "Tournament Info / Start Sheet /
+   Leaderboard / Live Round" spelled out in full, spaced with a fixed
+   1.75rem gap and squeezed against "Return to Club" via
+   justify-content:space-between, was overflowing/wrapping into a messy
+   multi-line mess -- there just isn't room for four multi-word labels
+   plus a fifth link side by side on a phone screen at their normal size.
+   Labels stay exactly as written (no shortening) -- this just switches
+   the tabs to an equal flexed share of the full width each, shrinks the
+   type down and tightens padding/letter-spacing so each one comfortably
+   fits its slice (wrapping onto two short lines where a label doesn't
+   quite fit on one, e.g. "TOURNAMENT" / "INFO", rather than overflowing
+   or forcing the whole bar wider than the screen), and demotes Return to
+   Club to its own quieter line underneath instead of competing for
+   horizontal space. */
+@media (max-width: 700px) {
+    .t3g-tournament-subnav-inner {
+        flex-direction: column;
+        align-items: stretch;
+        padding: 0.6rem 0.75rem;
+        gap: 0.4rem;
+    }
+
+    .t3g-tournament-tabs {
+        gap: 0;
+    }
+
+    .t3g-tournament-tab {
+        flex: 1 1 0;
+        text-align: center;
+        font-size: 0.56rem;
+        line-height: 1.25;
+        letter-spacing: 0.01em;
+        padding: 0.4rem 0.15rem;
+    }
+
+    .t3g-tournament-subnav-back {
+        text-align: center;
+        font-size: 0.72rem;
+        font-weight: 600;
+        color: rgba(255, 255, 255, 0.6) !important;
+        border-top: 1px solid rgba(255, 255, 255, 0.12);
+        padding-top: 0.4rem;
+    }
+}
+
 /* Pending Applications (Entrants panel, approval-mode tournaments) and the
    Confirmed list's inline-remove rows both use this same row/list pair --
    defined once here rather than per-section, same "shaded tile per row"
@@ -736,6 +781,30 @@
     color: #ffffff !important;
 }
 
+/* Same idea as the tournament subnav's own mobile block above -- labels
+   stay as-is (Overall / Round 1 / Detailed / Simple / Gross / Stableford /
+   Nett), just smaller and tighter so the three pill-groups (round tabs,
+   Detailed/Simple, format) sit more comfortably on a phone screen. Round
+   tabs also already have their own horizontal-scroll fallback
+   (.t3g-leaderboard-round-tabs) for tournaments with a lot of rounds --
+   shrinking the text here just means more of them fit before that kicks
+   in, it doesn't replace it. */
+@media (max-width: 700px) {
+    .t3g-leaderboard-controls {
+        gap: 0.5rem;
+    }
+
+    .t3g-leaderboard-format-tabs {
+        padding: 0.2rem;
+        gap: 0.1rem;
+    }
+
+    .t3g-leaderboard-format-tab {
+        font-size: 0.68rem;
+        padding: 0.4rem 0.7rem;
+    }
+}
+
 .t3g-leaderboard-wrap {
     overflow-x: auto;
     border: 1px solid #edeef2;
@@ -964,6 +1033,70 @@
    table's flatter overall weight. */
 .t3g-leaderboard-divider {
     border-left: 2px solid #dbe1ea;
+}
+
+/* Below the phone-width breakpoint, the full-size table (0.95rem/0.9rem
+   cell padding, 2rem avatars, 2.1rem position circles, 0.9rem text) is
+   wider than a phone screen can show all at once -- fine for the
+   Detailed view, which already scrolls horizontally for its 18 hole
+   columns (.t3g-leaderboard-wrap), but defeats the whole point of the
+   Simple view (Pos/Player/Total/Today -- see _leaderboard_simple_table),
+   which is meant to be a "who's winning at a glance" table and should
+   never need scrolling just to see its own Total and Today columns.
+   Reuses the same denser measurements .t3g-leaderboard-compact already
+   uses for the Tournament Info tab's narrower panel below -- that sizing
+   is already proven legible, just applied here directly to the plain
+   table (its selector has lower specificity, so it never overrides the
+   compact panel's own rules where both could apply) rather than needing
+   that wrapper class, and only below this breakpoint so the full
+   Leaderboard tab keeps its normal, roomier sizing on desktop/tablet. */
+@media (max-width: 700px) {
+    .t3g-leaderboard-table th,
+    .t3g-leaderboard-table td {
+        padding: 0.5rem 0.4rem;
+        font-size: 0.78rem;
+    }
+
+    .t3g-leaderboard-table thead tr:first-child th {
+        font-size: 0.62rem;
+        padding-top: 0.4rem;
+        padding-bottom: 0.4rem;
+    }
+
+    .t3g-leaderboard-player-cell {
+        gap: 0.4rem;
+        font-size: 0.8rem;
+        /* The one cell that actually needs this relaxed -- a long name
+           wraps onto a second line here instead of forcing the whole
+           table (and therefore the Total/Today columns) wider than the
+           screen. */
+        white-space: normal;
+    }
+
+    .t3g-leaderboard-avatar {
+        width: 1.5rem;
+        height: 1.5rem;
+        font-size: 0.6rem;
+    }
+
+    .t3g-leaderboard-pos-badge {
+        min-width: 1.5rem;
+        height: 1.5rem;
+        padding: 0 0.3rem;
+        font-size: 0.68rem;
+    }
+
+    .t3g-leaderboard-total-pill {
+        min-width: 1.7rem;
+        padding: 0.2rem 0.45rem;
+        font-size: 0.76rem;
+    }
+
+    .t3g-leaderboard-thru-badge {
+        min-width: 1.2rem;
+        padding: 0.1rem 0.35rem;
+        font-size: 0.64rem;
+    }
 }
 
 /* Denser type scale for the leaderboard squeezed into the Tournament Info
