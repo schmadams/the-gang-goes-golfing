@@ -115,6 +115,191 @@ def _score_button(player_id, hole, par):
     )
 
 
+def _holeview_score_button(player_id, hole, par):
+    """Same button, same marking classes, as _score_button above -- just a
+    distinct id "type" (live-round-holeview-score-button vs
+    live-round-score-button). The Hole by Hole view only ever renders one
+    hole's worth of these at a time (see _hole_by_hole_panel_content,
+    rebuilt whole by render_holeview_panel in live_round.py whenever the
+    active hole or the players store changes), but that hole is also
+    always present in the Full Scorecard view's own always-mounted table
+    -- reusing the same id type for both would mean two components on the
+    page sharing the literal same id (same player, same hole) the moment
+    both views exist in the DOM at once, which Dash doesn't allow. Kept
+    working with the exact same Enter Score modal regardless -- see
+    toggle_score_modal in live_round.py, whose Input list matches on
+    either type."""
+    strokes = hole.get("strokes")
+    return html.Button(
+        str(strokes) if strokes is not None else "Enter Score",
+        id={"type": "live-round-holeview-score-button", "player": player_id, "hole": hole["hole_number"]},
+        className=_score_marking_class(strokes, par),
+        n_clicks=0,
+    )
+
+
+def _initials(name):
+    words = (name or "").split()
+    letters = "".join(w[0] for w in words[:2] if w)
+    return letters.upper() or "?"
+
+
+def _to_par_text(value):
+    if value is None:
+        return "–"
+    if value == 0:
+        return "E"
+    return f"+{value}" if value > 0 else str(value)
+
+
+def _player_round_to_par(holes_by_number, reference_holes):
+    """Running score-to-par across however many holes have a strokes value
+    entered so far -- not just a completed front/back 9, all of them, the
+    same "sum whatever's actually there" idea _score_total_text already
+    uses for the OUT/IN/TOTAL row, just relative to par per hole instead
+    of a raw stroke count. holes_by_number/reference_holes are both the
+    store-shape dict keyed by *string* hole number."""
+    total_diff = 0
+    any_entered = False
+    for hole_number_str, hole in (holes_by_number or {}).items():
+        strokes = hole.get("strokes")
+        if strokes is None:
+            continue
+        par = _hole_par(reference_holes.get(hole_number_str, {}))
+        if par is None:
+            continue
+        total_diff += strokes - par
+        any_entered = True
+    return total_diff if any_entered else None
+
+
+def _first_unscored_hole(players):
+    """First hole (1-18) missing a strokes value for any accepted player,
+    across the store-shape players list -- picking up scoring exactly
+    where a group left off is a much more useful Hole by Hole starting
+    point than always opening on Hole 1 partway through a round. Falls
+    back to 18 once every hole for every player already has a score."""
+    for hole_number in range(1, 19):
+        for p in players:
+            hole = (p.get("holes") or {}).get(str(hole_number), {})
+            if hole.get("strokes") is None:
+                return hole_number
+    return 18
+
+
+def _hole_by_hole_panel_content(hole_number, players):
+    """The Hole by Hole view's actual content -- nav header (prev/next,
+    par/yards/S.I. for this one hole) plus one row per player (avatar,
+    name, running to-par, score button). Takes the same store-shape
+    players list live-round-players-store holds (holes keyed by *string*
+    hole number) so this one function works identically whether it's
+    called once at initial page render (render_live_round_body, below) or
+    rebuilt later by render_holeview_panel in live_round.py after a nav
+    click or a saved score -- there's only ever one shape of players data
+    to reason about, not two.
+
+    Manual-round course info (par/yardage/S.I. for a course that isn't in
+    the local list yet) stays editable only from the Full Scorecard view
+    for now -- duplicating those editable cells here, kept in sync with
+    the same save_manual_* callbacks, is more than this view needs to
+    pull its weight; a plain read-only note points back to where to enter
+    it instead."""
+    owner = next((p for p in players if p.get("is_owner")), None)
+    reference_holes = (owner or (players[0] if players else {})).get("holes") or {}
+    ref_hole = reference_holes.get(str(hole_number), {"hole_number": hole_number})
+    par = _hole_par(ref_hole)
+    yardage = _hole_value(ref_hole, "yardage", "manual_yardage")
+    stroke_index = _hole_value(ref_hole, "stroke_index", "manual_stroke_index")
+
+    par_text = str(par) if par is not None else "–"
+    yardage_text = f"{yardage} yds" if yardage is not None else "– yds"
+    si_text = f"S.I. {stroke_index}" if stroke_index is not None else "S.I. –"
+
+    header = html.Div(
+        className="t3g-holeview-header",
+        children=[
+            html.Button(
+                "‹", id="live-round-holeview-prev", className="t3g-holeview-nav-button", n_clicks=0
+            ),
+            html.Div(
+                className="t3g-holeview-hole-info",
+                children=[
+                    html.Div(f"Hole {hole_number}", className="t3g-holeview-hole-title"),
+                    html.Div(
+                        f"Par {par_text} · {yardage_text} · {si_text}",
+                        className="t3g-holeview-hole-meta",
+                    ),
+                ],
+            ),
+            html.Button(
+                "›", id="live-round-holeview-next", className="t3g-holeview-nav-button", n_clicks=0
+            ),
+        ],
+    )
+
+    rows = [
+        html.Div(
+            className="t3g-holeview-player-row",
+            children=[
+                html.Span(_initials(p["display_name"]), className="t3g-holeview-player-avatar"),
+                html.Div(
+                    className="t3g-holeview-player-info",
+                    children=[
+                        html.Div(
+                            p["display_name"] + (" (you)" if p.get("is_viewer") else ""),
+                            className="t3g-holeview-player-name",
+                        ),
+                        html.Div(
+                            _to_par_text(_player_round_to_par(p.get("holes") or {}, reference_holes)),
+                            className="t3g-holeview-player-total",
+                        ),
+                    ],
+                ),
+                _holeview_score_button(
+                    p["player_id"],
+                    (p.get("holes") or {}).get(str(hole_number), {"hole_number": hole_number}),
+                    par,
+                ),
+            ],
+        )
+        for p in players
+    ]
+
+    return [header, html.Div(rows, className="t3g-holeview-rows")]
+
+
+def _scorecard_view_toggle(active_view):
+    """Full Scorecard <-> Hole by Hole -- same active/inactive pill-toggle
+    pattern used elsewhere in the app (e.g. home.py's handicap panel,
+    tournament.py's leaderboard view toggle), just with its own CSS class
+    names (t3g-scorecard-view-toggle*) rather than reusing one of those,
+    matching how each of those features already has its own self-
+    contained toggle rather than sharing one across unrelated pages."""
+    holebyhole_class = "t3g-scorecard-view-toggle-button" + (
+        " t3g-scorecard-view-toggle-button--active" if active_view == "holebyhole" else ""
+    )
+    full_class = "t3g-scorecard-view-toggle-button" + (
+        " t3g-scorecard-view-toggle-button--active" if active_view == "full" else ""
+    )
+    return html.Div(
+        className="t3g-scorecard-view-toggle",
+        children=[
+            html.Button(
+                "Hole by Hole",
+                id="live-round-view-holebyhole-button",
+                className=holebyhole_class,
+                n_clicks=0,
+            ),
+            html.Button(
+                "Full Scorecard",
+                id="live-round-view-full-button",
+                className=full_class,
+                n_clicks=0,
+            ),
+        ],
+    )
+
+
 def _manual_input(owner_id, field_type, hole, min_val, max_val):
     return dcc.Input(
         id={"type": f"live-round-{field_type}", "hole": hole["hole_number"]},
@@ -275,10 +460,13 @@ def render_live_round_body(round_data, player_id):
             "player_id": p["player_id"],
             "display_name": _player_display_name(p),
             "is_owner": p.get("is_owner", False),
+            "is_viewer": p.get("is_viewer", False),
             "holes": {str(h["hole_number"]): h for h in p["holes"]},
         }
         for p in players
     ]
+
+    initial_hole = _first_unscored_hole(players_store_data)
 
     title_bits = [round_data.get("club_name") or "Live Round"]
     if round_data.get("course_name"):
@@ -312,11 +500,22 @@ def render_live_round_body(round_data, player_id):
         names = ", ".join(_player_display_name(p) for p in pending_invites)
         pending_note = html.P(f"Waiting on {names} to accept their invite.", className="t3g-empty-state")
 
+    # Hole by Hole is the default view -- see components/live_scorecard.py's
+    # module docstring update / the mobile scoring work this was built
+    # for: entering one hole's scores for the whole group at a time reads
+    # much better on a phone than the full 18-column table, which is kept
+    # around (behind the toggle, still the default in spirit for anyone
+    # who wants to see everything at once) rather than replaced outright.
+    holeview_style = {} if players else {"display": "none"}
+    full_style = {"display": "none"} if players else {}
+
     return [
         dcc.Store(id="live-round-id-store", data=round_data["id"]),
         dcc.Store(id="live-round-owner-id-store", data=owner_player["player_id"] if owner_player else None),
         dcc.Store(id="live-round-players-store", data=players_store_data),
         dcc.Store(id="live-round-active-hole-store"),
+        dcc.Store(id="live-round-view-mode-store", data="holebyhole"),
+        dcc.Store(id="live-round-holeview-hole-store", data=initial_hole),
         html.Div(
             className="t3g-panel",
             children=[
@@ -341,9 +540,19 @@ def render_live_round_body(round_data, player_id):
                         if is_manual
                         else None,
                         pending_note,
-                        _scorecard_table(players, owner_player, is_manual, is_owner_of_round)
-                        if players
-                        else None,
+                        _scorecard_view_toggle("holebyhole") if players else None,
+                        html.Div(
+                            id="live-round-holeview-container",
+                            style=holeview_style,
+                            children=_hole_by_hole_panel_content(initial_hole, players_store_data),
+                        ),
+                        html.Div(
+                            id="live-round-full-view-container",
+                            style=full_style,
+                            children=_scorecard_table(players, owner_player, is_manual, is_owner_of_round)
+                            if players
+                            else None,
+                        ),
                         html.Div(id="live-round-error", className="text-danger mt-2"),
                     ],
                 ),

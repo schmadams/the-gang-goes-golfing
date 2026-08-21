@@ -429,8 +429,13 @@
    quite fit on one, e.g. "TOURNAMENT" / "INFO", rather than overflowing
    or forcing the whole bar wider than the screen), and demotes Return to
    Club to its own quieter line underneath instead of competing for
-   horizontal space. */
-@media (max-width: 700px) {
+   horizontal space.
+
+   The (max-height: 500px) half of this query (same addition made to
+   every other @media (max-width: 700px) block across the app's mobile
+   CSS) catches phones held sideways -- landscape width alone can exceed
+   700px on a real phone, but landscape height stays short regardless. */
+@media (max-width: 700px), (max-height: 500px) {
     .t3g-tournament-subnav-inner {
         flex-direction: column;
         align-items: stretch;
@@ -789,7 +794,7 @@
    (.t3g-leaderboard-round-tabs) for tournaments with a lot of rounds --
    shrinking the text here just means more of them fit before that kicks
    in, it doesn't replace it. */
-@media (max-width: 700px) {
+@media (max-width: 700px), (max-height: 500px) {
     .t3g-leaderboard-controls {
         gap: 0.5rem;
     }
@@ -1050,7 +1055,7 @@
    compact panel's own rules where both could apply) rather than needing
    that wrapper class, and only below this breakpoint so the full
    Leaderboard tab keeps its normal, roomier sizing on desktop/tablet. */
-@media (max-width: 700px) {
+@media (max-width: 700px), (max-height: 500px) {
     .t3g-leaderboard-table th,
     .t3g-leaderboard-table td {
         padding: 0.5rem 0.4rem;

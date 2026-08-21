@@ -14,6 +14,48 @@
     padding-top: 2rem;
 }
 
+/* Safety net at every width, not just mobile -- Hole/Yards/S.I./Par plus
+   one Score column per player can still add up to more than a narrow
+   panel's width even after the mobile shrink below, especially in a
+   4+ player round, so this lets it scroll horizontally rather than
+   overflow the page or squeeze illegibly. */
+.t3g-player-scorecard {
+    overflow-x: auto;
+}
+
+/* Mobile shrink for the Full Scorecard table -- same breakpoint used
+   everywhere else in the app's mobile work, including the (max-height:
+   500px) half that catches phones held sideways (landscape width alone
+   can exceed 700px on a real phone, but landscape height stays short
+   regardless). Only sizing changes here (padding, font-size, the score
+   button's fixed square), nothing structural -- .t3g-player-scorecard's
+   own overflow-x above is still the fallback for whatever doesn't fit
+   even at this smaller size. */
+@media (max-width: 700px), (max-height: 500px) {
+    .t3g-scorecard-table th,
+    .t3g-scorecard-table td {
+        padding: 0.3rem 0.4rem;
+        font-size: 0.72rem;
+    }
+
+    .t3g-score-button {
+        padding: 0.35rem 0.55rem;
+        font-size: 0.72rem;
+    }
+
+    .t3g-score-button-filled {
+        width: 32px;
+        height: 32px;
+        font-size: 0.82rem;
+    }
+
+    .t3g-manual-input {
+        width: 44px;
+        padding: 0.25rem 0.35rem;
+        font-size: 0.78rem;
+    }
+}
+
 .t3g-player-scorecard-name {
     color: #1e2a47;
     font-weight: 800;
@@ -350,4 +392,164 @@
     background: #8dc63f;
     border-color: #8dc63f;
     color: #ffffff;
+}
+
+/* Full Scorecard <-> Hole by Hole toggle -- same pill-toggle visual
+   language as the handicap panel's trend/rounds toggle and the
+   leaderboard's Detailed/Simple toggle, kept as its own self-contained
+   set of classes rather than reusing either of theirs (see
+   _scorecard_view_toggle's docstring in components/live_scorecard.py). */
+.t3g-scorecard-view-toggle {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1.25rem;
+}
+
+.t3g-scorecard-view-toggle-button {
+    background: transparent;
+    border: 1px solid #e2e4ea;
+    color: #6b7280;
+    font-weight: 700;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 0.4rem 0.9rem;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: opacity 0.15s ease;
+}
+
+.t3g-scorecard-view-toggle-button--active {
+    background: #c21861;
+    border-color: #c21861;
+    color: #ffffff;
+}
+
+.t3g-scorecard-view-toggle-button:hover:not(.t3g-scorecard-view-toggle-button--active) {
+    opacity: 0.7;
+}
+
+/* Hole by Hole view -- one hole at a time, prev/next up top, one row per
+   player below it with a single tap target each. This is the default
+   view (see render_live_round_body) since it's the one meant for
+   actually scoring on a phone mid-round; the Full Scorecard table is the
+   "see everything at once" alternative behind the toggle above. */
+.t3g-holeview-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.t3g-holeview-nav-button {
+    flex-shrink: 0;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    border: 1px solid #e2e4ea;
+    background: #f4f5f9;
+    color: #1e2a47;
+    font-size: 1.3rem;
+    font-weight: 800;
+    line-height: 1;
+    cursor: pointer;
+    transition: background 0.15s ease, transform 0.08s ease;
+}
+
+.t3g-holeview-nav-button:hover {
+    background: #eef0f8;
+}
+
+.t3g-holeview-nav-button:active {
+    transform: scale(0.92);
+}
+
+.t3g-holeview-hole-info {
+    flex: 1 1 auto;
+    text-align: center;
+}
+
+.t3g-holeview-hole-title {
+    color: #1e2a47;
+    font-weight: 800;
+    font-size: 1.3rem;
+}
+
+.t3g-holeview-hole-meta {
+    color: #6b7280;
+    font-weight: 700;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    margin-top: 0.2rem;
+}
+
+.t3g-holeview-rows {
+    display: flex;
+    flex-direction: column;
+}
+
+.t3g-holeview-player-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.85rem 0.25rem;
+    border-bottom: 1px solid #f0f1f5;
+}
+
+.t3g-holeview-player-row:last-child {
+    border-bottom: none;
+}
+
+.t3g-holeview-player-avatar {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: #1e2a47;
+    color: #ffffff;
+    font-size: 0.78rem;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+}
+
+.t3g-holeview-player-info {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.t3g-holeview-player-name {
+    color: #1e2a47;
+    font-weight: 700;
+    font-size: 0.95rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.t3g-holeview-player-total {
+    color: #6b7280;
+    font-weight: 700;
+    font-size: 0.78rem;
+    margin-top: 0.1rem;
+}
+
+/* The score button itself reuses .t3g-score-button/.t3g-score-button-
+   filled + the birdie/eagle/bogey mark classes wholesale (see
+   _holeview_score_button) -- no new styling needed there, just sized
+   comfortably here for a one-per-row tap target instead of a dense table
+   cell. */
+.t3g-holeview-player-row .t3g-score-button-filled {
+    width: 48px;
+    height: 48px;
+    font-size: 1.1rem;
+    margin: 0;
+}
+
+.t3g-holeview-player-row .t3g-score-button {
+    margin-left: auto;
 }

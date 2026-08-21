@@ -7,6 +7,7 @@ from dash.exceptions import PreventUpdate
 from flask import session
 
 from components.live_scorecard import (
+    _hole_by_hole_panel_content,
     _hole_par,
     _result_badge,
     _score_marking_class,
@@ -188,11 +189,18 @@ def _find_player(players, player_id):
     Output("live-round-score-result-badge", "className"),
     Output("live-round-active-hole-store", "data"),
     Input({"type": "live-round-score-button", "player": ALL, "hole": ALL}, "n_clicks"),
+    Input({"type": "live-round-holeview-score-button", "player": ALL, "hole": ALL}, "n_clicks"),
     Input("live-round-score-cancel", "n_clicks"),
     State("live-round-players-store", "data"),
     prevent_initial_call=True,
 )
-def toggle_score_modal(button_clicks, cancel_clicks, players):
+def toggle_score_modal(button_clicks, holeview_button_clicks, cancel_clicks, players):
+    # Full Scorecard and Hole by Hole each have their own score buttons
+    # (distinct id "type"s -- see _holeview_score_button's docstring in
+    # components/live_scorecard.py for why they can't share one), but both
+    # open this exact same modal the exact same way -- whichever one fired
+    # carries the same {player, hole} shape, so everything below this
+    # point doesn't need to know or care which view the click came from.
     triggered_id = dash.ctx.triggered_id
     no_update = dash.no_update
 
@@ -202,8 +210,12 @@ def toggle_score_modal(button_clicks, cancel_clicks, players):
             no_update, no_update, no_update, no_update, no_update, no_update, None,
         )
 
-    if isinstance(triggered_id, dict) and triggered_id.get("type") == "live-round-score-button":
-        if not any(button_clicks):
+    if isinstance(triggered_id, dict) and triggered_id.get("type") in (
+        "live-round-score-button",
+        "live-round-holeview-score-button",
+    ):
+        all_clicks = (button_clicks or []) + (holeview_button_clicks or [])
+        if not any(all_clicks):
             # The set of buttons re-rendering also fires this (all
             # n_clicks reset to 0) -- only actually open on a real click.
             raise PreventUpdate
@@ -531,3 +543,74 @@ def confirm_scrap_round(n_clicks, round_id):
     except ValueError:
         detail = "Couldn't scrap the round."
     return detail, dash.no_update, False
+
+
+@callback(
+    Output("live-round-view-mode-store", "data"),
+    Output("live-round-holeview-container", "style"),
+    Output("live-round-full-view-container", "style"),
+    Output("live-round-view-holebyhole-button", "className"),
+    Output("live-round-view-full-button", "className"),
+    Input("live-round-view-holebyhole-button", "n_clicks"),
+    Input("live-round-view-full-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+def switch_scorecard_view(holebyhole_clicks, full_clicks):
+    view = "full" if dash.ctx.triggered_id == "live-round-view-full-button" else "holebyhole"
+
+    holeview_style = {} if view == "holebyhole" else {"display": "none"}
+    full_style = {"display": "none"} if view == "holebyhole" else {}
+
+    holebyhole_class = "t3g-scorecard-view-toggle-button" + (
+        " t3g-scorecard-view-toggle-button--active" if view == "holebyhole" else ""
+    )
+    full_class = "t3g-scorecard-view-toggle-button" + (
+        " t3g-scorecard-view-toggle-button--active" if view == "full" else ""
+    )
+
+    return view, holeview_style, full_style, holebyhole_class, full_class
+
+
+@callback(
+    Output("live-round-holeview-hole-store", "data"),
+    Input("live-round-holeview-prev", "n_clicks"),
+    Input("live-round-holeview-next", "n_clicks"),
+    State("live-round-holeview-hole-store", "data"),
+    prevent_initial_call=True,
+)
+def navigate_holeview_hole(prev_clicks, next_clicks, current_hole):
+    # The prev/next buttons live inside live-round-holeview-container's
+    # own children, which render_holeview_panel below fully replaces on
+    # every hole change or players-store update -- that recreates these
+    # buttons from scratch each time (n_clicks reset to 0), which is the
+    # same kind of "the set of buttons re-rendering also fires this"
+    # phantom trigger toggle_score_modal already has to guard against
+    # above. Checking the actual triggered *value* (not just which id
+    # triggered) is what tells a real tap apart from that.
+    triggered = dash.ctx.triggered[0] if dash.ctx.triggered else None
+    if not triggered or not triggered.get("value"):
+        raise PreventUpdate
+
+    current_hole = current_hole or 1
+    if dash.ctx.triggered_id == "live-round-holeview-prev":
+        return max(1, current_hole - 1)
+    if dash.ctx.triggered_id == "live-round-holeview-next":
+        return min(18, current_hole + 1)
+    raise PreventUpdate
+
+
+@callback(
+    Output("live-round-holeview-container", "children"),
+    Input("live-round-holeview-hole-store", "data"),
+    Input("live-round-players-store", "data"),
+    prevent_initial_call=True,
+)
+def render_holeview_panel(hole_number, players):
+    # The initial paint of this container's content comes straight from
+    # render_live_round_body/layout() (the exact same _hole_by_hole_panel_
+    # content call, just made once up front) -- this callback only needs
+    # to run for what happens *after* that: navigating to a different hole,
+    # or a score getting saved (from either view) updating players-store.
+    if not hole_number or not players:
+        raise PreventUpdate
+    return _hole_by_hole_panel_content(hole_number, players)

@@ -12,7 +12,17 @@
     display: none;
 }
 
-@media (max-width: 700px) {
+/* The plain max-width version of this query missed phones held sideways
+   -- a phone in landscape is often 650-900px wide (wider than this
+   700px cutoff) despite still being a small-screen device, so it was
+   falling back to the desktop layout just because of orientation. Real
+   landscape phones stay short (roughly 350-430px tall) regardless of
+   their rotated width, which the max-height half of this OR condition
+   catches instead -- same fix applied identically everywhere else this
+   700px breakpoint appears (club.css, home.css, live_round.css,
+   navbar.css), so "mobile mode" stays consistent across orientation the
+   same way it's already consistent across pages. */
+@media (max-width: 700px), (max-height: 500px) {
     .t3g-bottom-nav {
         display: flex;
         position: fixed;

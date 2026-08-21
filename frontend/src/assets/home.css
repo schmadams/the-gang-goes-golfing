@@ -14,8 +14,13 @@
    treatment at once: tighter side padding to fit a phone screen, and a
    bottom-padding allowance so the last bit of content doesn't sit
    underneath the fixed bottom nav (assets/bottom_nav.css), which only
-   shows up at this same 700px breakpoint. */
-@media (max-width: 700px) {
+   shows up at this same breakpoint.
+
+   The (max-height: 500px) half catches phones held sideways -- landscape
+   width alone can exceed 700px on a real phone, but landscape height
+   stays short regardless. Same addition made to every other @media
+   (max-width: 700px) block across the app's mobile CSS. */
+@media (max-width: 700px), (max-height: 500px) {
     .t3g-page {
         padding: 1.25rem 1rem calc(1.25rem + 64px);
     }
@@ -103,7 +108,7 @@
     margin-bottom: 0;
 }
 
-@media (max-width: 700px) {
+@media (max-width: 700px), (max-height: 500px) {
     .t3g-panel-grid {
         grid-template-columns: 1fr;
     }
@@ -722,7 +727,7 @@
    so club.py/tournament.py/etc. get the same tightening for free without
    needing their own copies of these rules -- Home is just the first page
    whose content has actually been checked end-to-end against it. */
-@media (max-width: 700px) {
+@media (max-width: 700px), (max-height: 500px) {
     .t3g-panel-navbar {
         padding: 0.9rem 1rem;
         gap: 0.5rem;
