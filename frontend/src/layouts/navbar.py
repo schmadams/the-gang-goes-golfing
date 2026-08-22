@@ -41,11 +41,9 @@ def build_navbar():
                                     className="t3g-nav-link",
                                 ),
                                 dcc.Link(
-                                    "Scoring History",
-                                    href="/scoring-history",
-                                    className="t3g-nav-link",
-                                ),
-                                dcc.Link(
+                                    # Scoring History and Analysis are now one merged
+                                    # page (pages/analysis.py) behind a tab subnav --
+                                    # one "Analysis" link here instead of two.
                                     "Analysis",
                                     href="/analysis",
                                     className="t3g-nav-link",

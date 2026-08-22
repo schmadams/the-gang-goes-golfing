@@ -1,0 +1,57 @@
+/* target path: frontend/src/assets/spinner.css (new file)
+   Dash automatically finds and loads anything in an assets/ folder next to
+   app.py -- no need to link this manually.
+
+   Golfer-silhouette swing-sequence loading spinner (components/spinner.py's
+   golf_swing_spinner()), used via dcc.Loading's custom_spinner prop in
+   place of the default type="circle" spinner.
+
+   This file only owns what does NOT depend on how many frames were found
+   in assets/loading/ -- positioning, sizing, which named animation to run,
+   how it eases and repeats. The @keyframes rule itself (t3g-golf-fade) is
+   frame-count-dependent (its percentage breakpoints need to divide the
+   cycle into 1/N slices) and can't be expressed as a fixed rule here that
+   stays correct as more frames get added -- components/spinner.py
+   generates it per frame-count and injects it as its own small stylesheet
+   instead. See that file's module docstring for why. */
+
+.t3g-golf-spinner {
+    position: relative;
+    width: 100%;
+    /* height set inline per-call via golf_swing_spinner(height=...) */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.t3g-golf-spinner-frame {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    height: 100%;
+    width: auto;
+    /* Keeps each frame's own aspect ratio (a narrower overhead finish vs.
+       a wider follow-through) from distorting or shifting the spinner's
+       box size as frames cycle. */
+    object-fit: contain;
+    opacity: 0;
+    animation-name: t3g-golf-fade;
+    animation-timing-function: ease-in-out;
+    animation-iteration-count: infinite;
+    /* animation-duration and animation-delay are set inline per frame in
+       components/spinner.py, computed from the actual frame count; the
+       t3g-golf-fade keyframes themselves are also generated there (see
+       _build_keyframes_css) and injected as a sibling <link>, not defined
+       in this file -- see the header comment above. */
+}
+
+/* Single-frame fallback (golf_swing_spinner() with exactly one image in
+   assets/loading/) -- shown static, no animation, so there's nothing to
+   reference a t3g-golf-fade rule that in this case never gets injected. */
+.t3g-golf-spinner-frame--static {
+    position: static;
+    transform: none;
+    opacity: 1;
+    animation: none;
+}

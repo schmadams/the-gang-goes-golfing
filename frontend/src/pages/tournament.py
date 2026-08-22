@@ -10,6 +10,7 @@ from flask import session
 
 from components.live_scorecard import render_live_round_body
 from components.scorecard import live_badge
+from components.spinner import golf_swing_spinner
 from config import API_BASE_URL
 from layouts.panel_navbar import build_panel_navbar
 
@@ -895,7 +896,7 @@ def _leaderboard_panel(tournament):
                     html.Div(id="tournament-leaderboard-error", className="text-danger mb-2"),
                     dcc.Loading(
                         html.Div(id="tournament-leaderboard-table-container"),
-                        type="circle",
+                        custom_spinner=golf_swing_spinner(),
                     ),
                     dcc.Store(id="tournament-leaderboard-store"),
                     dcc.Store(id="tournament-leaderboard-format-store", data=default_mode),
@@ -1333,7 +1334,7 @@ def _tournament_info_leaderboard_panel(tournament):
                     # selector needs to reach the rendered table inside.
                     dcc.Loading(
                         html.Div(id="tournament-info-leaderboard-table-container"),
-                        type="circle",
+                        custom_spinner=golf_swing_spinner(),
                         parent_className="t3g-leaderboard-compact",
                     ),
                     dcc.Store(id="tournament-info-leaderboard-store"),

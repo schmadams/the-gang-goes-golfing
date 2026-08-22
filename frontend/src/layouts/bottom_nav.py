@@ -8,13 +8,13 @@ never show at once, and this takes over as the primary way to move around
 the app on a phone.
 
 Five items only, on purpose: Scoring History and Analysis are folded into
-one "Rounds" destination (both pathnames light the same tab up as active,
-see the prefixes tuples below) rather than each getting their own icon,
-and My Account / Courses / Friends stay reachable through the desktop nav
-/ My Account page rather than being duplicated here. This mirrors the
-"which five things does someone actually tap on their phone" idea behind
-Instagram's own bottom bar rather than trying to fit the whole desktop
-nav into five slots.
+one "Analysis" destination (both pathnames light the same tab up as
+active, see the prefixes tuples below) rather than each getting their own
+icon, and My Account / Courses / Friends stay reachable through the
+desktop nav / My Account page rather than being duplicated here. This
+mirrors the "which five things does someone actually tap on their phone"
+idea behind Instagram's own bottom bar rather than trying to fit the whole
+desktop nav into five slots.
 
 Active-tab highlighting works the same way layouts/subnav.py keeps itself
 in sync with navigation -- keyed off Dash Pages' own pathname tracker
@@ -29,12 +29,13 @@ from dash import ALL, Input, Output, State, callback, dcc, html
 # (label, icon, href, active-path prefixes). A pathname "is" this tab if it
 # equals, or falls under, one of its prefixes -- e.g. "/clubs/some-slug" (a
 # specific club's page) still lights up the Clubs tab, and both
-# "/scoring-history" and "/analysis" light up Rounds, per the user's call
-# that those two should be treated as one destination on mobile.
+# "/analysis" and the old "/scoring-history" redirect light up Analysis,
+# per the user's call that those two should be treated as one destination
+# on mobile.
 _BOTTOM_NAV_ITEMS = [
     ("Home", "fa-house", "/", ("/",)),
     ("Clubs", "fa-flag", "/clubs", ("/clubs",)),
-    ("Rounds", "fa-chart-line", "/scoring-history", ("/scoring-history", "/analysis")),
+    ("Analysis", "fa-chart-line", "/analysis", ("/analysis", "/scoring-history")),
     ("Live", "fa-golf-ball-tee", "/live-round", ("/live-round",)),
     ("Account", "fa-user", "/my-account", ("/my-account",)),
 ]

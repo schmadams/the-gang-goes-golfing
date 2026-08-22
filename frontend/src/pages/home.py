@@ -16,6 +16,7 @@ from components.scorecard import (
     round_header_label,
     tournament_round_badge,
 )
+from components.spinner import golf_swing_spinner
 from config import API_BASE_URL
 from layouts.panel_navbar import build_panel_navbar
 
@@ -961,7 +962,7 @@ def layout(**kwargs):
                                         className="mb-2 t3g-course-dropdown",
                                     ),
                                     dcc.Loading(
-                                        type="circle",
+                                        custom_spinner=golf_swing_spinner(height="1.5rem"),
                                         children=dcc.Dropdown(
                                             id="upload-round-course",
                                             placeholder="Select the course",
@@ -971,7 +972,7 @@ def layout(**kwargs):
                                         ),
                                     ),
                                     dcc.Loading(
-                                        type="circle",
+                                        custom_spinner=golf_swing_spinner(height="1.5rem"),
                                         children=dcc.Dropdown(
                                             id="upload-round-tee",
                                             placeholder="Select tees",
