@@ -1,4 +1,4 @@
-# target path: frontend/src/pages/round_signoff.css.py (new file)
+# target path: frontend/src/pages/round_signoff.py (new file)
 """
 The dedicated review panel behind the navbar's sign-off pill
 (layouts/navbar.py's round-signoff-indicator) -- every round this player
@@ -260,6 +260,11 @@ def layout(**kwargs):
             dcc.Store(id="signoff-store", data=pending_rounds),
             dcc.Store(id="signoff-player-store", data=player_id),
             dcc.Store(id="signoff-reject-target"),
+            # href (not pathname) -- pathname alone drops query strings on
+            # a refresh=True redirect (see the fix noted in app.py's other
+            # redirect components), and the reject redirect below needs to
+            # carry ?round_id=&view=full, not just a bare path.
+            dcc.Location(id="signoff-redirect", refresh=True),
             html.Div(
                 className="t3g-panel",
                 children=[
@@ -321,6 +326,7 @@ def render_signoff_list(pending_rounds, player_id):
 
 @callback(
     Output("signoff-store", "data"),
+    Output("signoff-redirect", "href"),
     Input({"type": "signoff-approve", "round_id": ALL}, "n_clicks"),
     State("signoff-store", "data"),
     State("signoff-player-store", "data"),
@@ -347,7 +353,10 @@ def approve_signoff(approve_clicks, pending_rounds, player_id):
         raise PreventUpdate
 
     remaining = [r for r in (pending_rounds or []) if r["id"] != round_id]
-    return remaining
+    # Approving takes you straight back to home -- there's nothing else to
+    # do here for this round once you've signed off on it, regardless of
+    # whether anything else is left in the list.
+    return remaining, "/"
 
 
 @callback(
@@ -374,6 +383,7 @@ def toggle_reject_modal(reject_clicks, cancel_clicks):
 @callback(
     Output("signoff-store", "data", allow_duplicate=True),
     Output("signoff-reject-modal", "is_open", allow_duplicate=True),
+    Output("signoff-redirect", "href", allow_duplicate=True),
     Input("signoff-reject-confirm", "n_clicks"),
     State("signoff-reject-target", "data"),
     State("signoff-store", "data"),
@@ -391,4 +401,9 @@ def confirm_reject(n_clicks, target, pending_rounds, player_id):
         raise PreventUpdate
 
     remaining = [r for r in (pending_rounds or []) if r["id"] != round_id]
-    return remaining, False
+    # Rejecting reopens the round for edits -- send the rejecter straight
+    # into its Full Scorecard view (not the usual Hole by Hole default) so
+    # they can see every hole at once to find what needs fixing, instead
+    # of clicking through hole by hole -- see live_round.py's layout() and
+    # render_live_round_body's initial_view param.
+    return remaining, False, f"/live-round?round_id={round_id}&view=full"

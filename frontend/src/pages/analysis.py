@@ -97,14 +97,30 @@ def _fairway_summary(hole_subset):
     return f"{hit}/{len(eligible)}"
 
 
-def _round_scorecard_card(round_data, player_initial, player_label):
+def _round_scorecard_card(round_data, player_initial, player_label, player_id):
     """Full detail version of the Rounds History panel's mini scorecard --
     same Hole/Par/Score rows and OUT/IN/TOT/HCP/NET columns, plus Putts,
-    Fairway, Net, and Stableford rows underneath, and a Delete/Scrap
-    button in the header."""
+    Fairway, Net, and Stableford rows underneath, and a Delete/Scrap/Leave
+    button in the header.
+
+    A round shows up here for anyone who belongs to it (list_player_rounds
+    covers owner and accepted participant alike), not just its creator --
+    so the header action has to be figured out the same way live_round.py's
+    own header_actions is: a still-live casual round can only be Scrapped
+    by its actual creator (round_data["player_id"], the real rounds.
+    player_id column, present here since _build_round_summary spreads
+    **round_row); anyone else who's part of it gets Leave instead, which
+    only removes their own participation. A live tournament round keeps
+    Scrap open to anyone in the grouping, same as it's always been --
+    there's no single creator concept there. Anything not live (pending_
+    signoff or completed) keeps the plain, unrestricted Delete it's always
+    had -- that's "clean up my own history", a different action from
+    Scrap/Leave."""
     round_id = round_data["id"]
     is_live = round_data.get("status") == "in_progress"
     is_pending_signoff = round_data.get("status") == "pending_signoff"
+    is_tournament_round = bool(round_data.get("tournament_round_id"))
+    is_creator = round_data.get("player_id") == player_id
 
     holes_by_number = {h["hole_number"]: h for h in (round_data.get("holes") or [])}
     front9 = [holes_by_number.get(n, {"hole_number": n}) for n in range(1, 10)]
@@ -263,19 +279,26 @@ def _round_scorecard_card(round_data, player_initial, player_label):
         ),
     )
 
+    if is_live and not is_tournament_round and not is_creator:
+        action, action_label = "leave", "Leave"
+    elif is_live:
+        action, action_label = "scrap", "Scrap"
+    else:
+        action, action_label = "delete", "Delete"
+
     header_actions = []
     if is_live:
         header_actions.append(live_badge())
     elif is_pending_signoff:
         # A round can carry this status here even though the player
         # themself has already signed off on it -- it just means someone
-        # else in the round hasn't yet. See pages/round_signoff.css.py for
+        # else in the round hasn't yet. See pages/round_signoff.py for
         # actually approving it; this is read-only context here.
         header_actions.append(pending_signoff_badge())
     header_actions.append(
         html.Button(
-            "Scrap" if is_live else "Delete",
-            id={"type": "history-delete-round", "round_id": round_id},
+            action_label,
+            id={"type": "history-round-action", "round_id": round_id, "action": action},
             className="t3g-history-delete-button",
             n_clicks=0,
         )
@@ -414,7 +437,12 @@ def layout(tab=None, **kwargs):
             dcc.Store(id="scoring-history-store", data=rounds_history),
             dcc.Store(
                 id="scoring-history-player-store",
-                data={"initial": player_initial, "label": player_label},
+                # player_id (the signed-in viewer, not any particular
+                # round's own player_id) rides along here so the delete/
+                # scrap/leave callbacks below know who's asking, the same
+                # way _round_scorecard_card already needs it to decide
+                # which action a given round's button should even be.
+                data={"initial": player_initial, "label": player_label, "player_id": player_id},
             ),
             dcc.Store(id="scoring-history-delete-target"),
             _scoring_subnav(tab_classes),
@@ -503,7 +531,9 @@ def render_rounds(rounds_history, player_info):
         # naturally with everything visible.
         className="t3g-scoring-history-list",
         children=[
-            _round_scorecard_card(r, player_info.get("initial", "Y"), player_info.get("label", "You"))
+            _round_scorecard_card(
+                r, player_info.get("initial", "Y"), player_info.get("label", "You"), player_info.get("player_id")
+            )
             for r in rounds_history
         ],
     )
@@ -514,35 +544,42 @@ def render_rounds(rounds_history, player_info):
     Output("scoring-history-delete-modal-title", "children"),
     Output("scoring-history-delete-modal-body", "children"),
     Output("scoring-history-delete-target", "data"),
-    Input({"type": "history-delete-round", "round_id": ALL}, "n_clicks"),
+    Input({"type": "history-round-action", "round_id": ALL, "action": ALL}, "n_clicks"),
     Input("scoring-history-delete-cancel", "n_clicks"),
-    State("scoring-history-store", "data"),
     prevent_initial_call=True,
 )
-def toggle_delete_modal(delete_clicks, cancel_clicks, rounds_history):
+def toggle_delete_modal(action_clicks, cancel_clicks):
     triggered_id = dash.ctx.triggered_id
 
     if triggered_id == "scoring-history-delete-cancel":
         return False, dash.no_update, dash.no_update, None
 
-    if isinstance(triggered_id, dict) and triggered_id.get("type") == "history-delete-round":
-        if not any(delete_clicks):
+    if isinstance(triggered_id, dict) and triggered_id.get("type") == "history-round-action":
+        if not any(action_clicks):
             # The set of buttons re-rendering also fires this -- only
             # actually open on a real click.
             raise PreventUpdate
 
         round_id = triggered_id["round_id"]
-        round_data = next((r for r in (rounds_history or []) if r["id"] == round_id), None)
-        is_live = bool(round_data and round_data.get("status") == "in_progress")
+        action = triggered_id["action"]
 
-        if is_live:
+        if action == "scrap":
             title = "Scrap this round?"
-            body = "This live round and every score entered so far will be permanently deleted. This can't be undone."
+            body = (
+                "This live round and every score entered so far -- for every player in it -- "
+                "will be permanently deleted. This can't be undone."
+            )
+        elif action == "leave":
+            title = "Leave this round?"
+            body = (
+                "You'll be removed from this round and lose access to it, but it'll keep going "
+                "for everyone else still in it. This can't be undone."
+            )
         else:
             title = "Delete this round?"
             body = "This round and its scorecard will be permanently deleted. This can't be undone."
 
-        return True, title, body, {"round_id": round_id}
+        return True, title, body, {"round_id": round_id, "action": action}
 
     raise PreventUpdate
 
@@ -553,18 +590,35 @@ def toggle_delete_modal(delete_clicks, cancel_clicks, rounds_history):
     Input("scoring-history-delete-confirm", "n_clicks"),
     State("scoring-history-delete-target", "data"),
     State("scoring-history-store", "data"),
+    State("scoring-history-player-store", "data"),
     prevent_initial_call=True,
 )
-def confirm_delete(n_clicks, target, rounds_history):
+def confirm_delete(n_clicks, target, rounds_history, player_info):
     if not target or not target.get("round_id"):
         raise PreventUpdate
 
-    response = requests.delete(f"{API_BASE_URL}/rounds/{target['round_id']}")
+    round_id = target["round_id"]
+    action = target.get("action", "delete")
+    player_id = (player_info or {}).get("player_id")
 
-    if response.status_code not in (204, 404):
+    if action == "leave":
+        response = requests.post(f"{API_BASE_URL}/rounds/{round_id}/players/{player_id}/leave")
+        ok_statuses = (204, 404)
+    else:
+        # Both "scrap" and plain "delete" go through the same endpoint --
+        # requesting_player_id is what lets the backend enforce creator-
+        # only for the scrap-a-live-casual-round case specifically (see
+        # delete_round's docstring); it's ignored for every other case
+        # this same button can represent, so it's always safe to send.
+        response = requests.delete(
+            f"{API_BASE_URL}/rounds/{round_id}", params={"requesting_player_id": player_id}
+        )
+        ok_statuses = (204, 404)
+
+    if response.status_code not in ok_statuses:
         # Leave the list and modal as-is on an unexpected error -- better
         # than silently pretending it worked.
         raise PreventUpdate
 
-    remaining = [r for r in (rounds_history or []) if r["id"] != target["round_id"]]
+    remaining = [r for r in (rounds_history or []) if r["id"] != round_id]
     return remaining, False

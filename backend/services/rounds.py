@@ -85,6 +85,49 @@ class RoundNotEditableError(Exception):
     there."""
 
 
+class NotRoundCreatorError(Exception):
+    """Raised by delete_round when a non-creator tries to Scrap a casual
+    round that's still in_progress -- that deletes the round for every
+    player still in it, not just themselves, so only the round's actual
+    creator (rounds.player_id) can do it. Doesn't apply to a tournament
+    round's Scrap (every grouping member stays equally able to do that,
+    same as always -- there's no single privileged creator among an equal
+    grouping, see start_tournament_round) or to deleting an already-
+    finished round from Scoring History (a different action -- "clean up
+    my own history" -- left open to any participant)."""
+
+
+class CannotLeaveRoundError(Exception):
+    """Raised by leave_round in either of two cases: the round's own
+    creator tried to leave it (Scrap Round is their equivalent action --
+    it removes the round for everyone, since there'd be nobody left to
+    hand it to otherwise), or the round is a tournament round at all
+    (those represent an official competition round for a whole tee-time
+    grouping, not a casual game a player can just step out of -- a
+    player who can't continue a tournament round is a DNF/No Result
+    concept instead, not something leave_round covers)."""
+
+
+class RoundNotInProgressError(Exception):
+    """Raised by leave_round, and by mark_round_no_result, when the round
+    isn't in_progress anymore. Once a round reaches pending_signoff, every
+    remaining player's approval already depends on exactly who was in the
+    round and what their scorecard said at that point -- leaving, or
+    marking No Result, after the fact would need to reopen sign-off for
+    everyone else too, a bigger behavior change than either plain
+    self-service action implies -- so both are only ever allowed while
+    still in_progress."""
+
+
+class CannotMarkNoResultError(Exception):
+    """Raised by mark_round_no_result when the round isn't a tournament
+    round. No Return is a competition-scoring concept -- there's no
+    leaderboard for a casual round played with friends to sort someone to
+    the bottom of, and a casual round's equivalent "I can't continue" is
+    already covered by leave_round (which removes the player from the
+    round entirely, rather than filling their card with NR)."""
+
+
 @contextmanager
 def _timed(label: str, source: str = "database"):
     """Same pattern as backend/services/courses.py -- logs elapsed time so
@@ -319,6 +362,7 @@ def _hydrate_round(round_row: dict) -> dict:
                 "strokes": score.get("strokes"),
                 "putts": score.get("putts"),
                 "fairway_hit": score.get("fairway_hit"),
+                "nr": score.get("nr", False),
                 "manual_par": score.get("manual_par"),
                 "manual_yardage": score.get("manual_yardage"),
                 "manual_stroke_index": score.get("manual_stroke_index"),
@@ -635,6 +679,7 @@ def _build_round_summary(
             "strokes": strokes,
             "putts": score.get("putts"),
             "fairway_hit": score.get("fairway_hit"),
+            "nr": score.get("nr", False),
             "net_strokes": net_strokes,
             "stableford_points": stableford_points,
         })
@@ -1272,21 +1317,159 @@ def _create_course_from_manual_entry(round_data: dict, holes: list[dict]) -> Non
         }).eq("id", round_data["id"]).execute()
 
 
-def delete_round(round_id: str) -> bool:
+def delete_round(round_id: str, requesting_player_id: str | None = None) -> bool:
     """
     Used both to "scrap" a live round (abandon it without finishing) and to
-    delete a completed round from the Scoring History page. round_players
-    and round_scores rows both cascade-delete via their round_id FK, so
-    this is just the one table operation. Doesn't touch any courses/
-    course_tees/course_holes rows a finished manual round may have created
-    -- those are real course data now, independent of this one round.
+    delete a completed (or pending_signoff) round from the Scoring History
+    page. round_players and round_scores rows both cascade-delete via their
+    round_id FK, so this is just the one table operation. Doesn't touch any
+    courses/course_tees/course_holes rows a finished manual round may have
+    created -- those are real course data now, independent of this one
+    round.
+
+    requesting_player_id is only enforced -- and only meaningful -- for the
+    "Scrap a casual round that's still in_progress" case: only the round's
+    actual creator (rounds.player_id) can do that, since it deletes the
+    round for every player still in it, not just themselves (a non-creator
+    accepted player who wants out uses leave_round instead, which only
+    removes their own participation, leaving the round and everyone else
+    in it untouched). A tournament round's Scrap stays open to any
+    grouping member regardless of requesting_player_id, same as it's
+    always been -- there's no single privileged creator among an equal
+    grouping (see start_tournament_round). Deleting a round that's already
+    past in_progress (pending_signoff or completed, from Scoring History)
+    is left unrestricted too -- that's "clean up my own history", not
+    "scrap", and every caller of that path already only ever sees rounds
+    it itself belongs to. Passing None (as _expire_stale_rounds does, for
+    its own automatic cleanup rather than a real user action) skips this
+    check entirely.
     """
+    if requesting_player_id is not None:
+        with _timed(f"select round {round_id} for delete/scrap permission check"):
+            round_response = supabase.table("rounds").select("*").eq("id", round_id).maybe_single().execute()
+        round_row = round_response.data if round_response is not None else None
+        if round_row and round_row["status"] == "in_progress" and not round_row.get("tournament_round_id"):
+            if round_row["player_id"] != requesting_player_id:
+                raise NotRoundCreatorError(
+                    "Only the round's creator can scrap it -- ask them, or leave the round instead."
+                )
+
     with _timed(f"delete round {round_id}"):
         response = supabase.table("rounds").delete().eq("id", round_id).execute()
     return bool(response.data)
 
 
-def finish_round(round_id: str) -> dict | None:
+def leave_round(round_id: str, player_id: str) -> None:
+    """Removes a non-creator accepted player from a still-in_progress
+    casual round -- the opposite of delete_round (which removes the whole
+    round for everyone) and distinct from Scrap Round (creator-only, also
+    removes it for everyone). See CannotLeaveRoundError/
+    RoundNotInProgressError above for exactly when this isn't allowed --
+    the round's own creator, a tournament round of any kind, or a round
+    that's already moved past in_progress.
+
+    Deletes this player's round_players row (and, via its own FK, their
+    round_scores rows) outright -- they're simply no longer part of this
+    round's history from this point on, same as if they'd never accepted
+    the invite in the first place. If this drops the round to a single
+    remaining accepted player, it naturally becomes a solo round from
+    here with no extra work needed -- finish_round's own
+    len(players) > 1 check and _gather_round_inputs' participant-count
+    filter (see whs.py) already handle that correctly: it'll finish
+    straight to completed with no sign-off required, and, like any solo
+    round, never contribute to anyone's Handicap Index.
+    """
+    with _timed(f"select round {round_id} for leave"):
+        round_response = supabase.table("rounds").select("*").eq("id", round_id).maybe_single().execute()
+    round_row = round_response.data if round_response is not None else None
+    if not round_row or round_row["status"] != "in_progress":
+        raise RoundNotInProgressError("You can only leave a round that's still in progress.")
+
+    if round_row.get("tournament_round_id"):
+        raise CannotLeaveRoundError("Tournament rounds can't be left -- talk to your grouping if you can't finish.")
+
+    if round_row["player_id"] == player_id:
+        raise CannotLeaveRoundError("The round's creator can't leave it -- scrap the round instead.")
+
+    with _timed(f"select round_player round={round_id} player={player_id} for leave"):
+        rp_response = (
+            supabase
+            .table("round_players")
+            .select("*")
+            .eq("round_id", round_id)
+            .eq("player_id", player_id)
+            .maybe_single()
+            .execute()
+        )
+    round_player = rp_response.data if rp_response is not None else None
+    if not round_player or round_player["status"] != "accepted":
+        raise NotRoundMemberError("You're not an active player in this round.")
+
+    with _timed(f"delete round_scores for leaving player={player_id} round={round_id}"):
+        supabase.table("round_scores").delete().eq("round_id", round_id).eq("player_id", player_id).execute()
+    with _timed(f"delete round_players row for leaving player={player_id} round={round_id}"):
+        supabase.table("round_players").delete().eq("round_id", round_id).eq("player_id", player_id).execute()
+
+
+def mark_round_no_result(round_id: str, player_id: str) -> None:
+    """Bulk-fills every *unscored* hole of this player's own scorecard
+    within a tournament round with No Return -- a self-service withdrawal
+    from the rest of their round, not the whole thing: every other
+    player's scorecard, and the round itself, are completely untouched
+    and keep going. Tournament rounds only (see CannotMarkNoResultError)
+    -- there's no leaderboard concept for a casual round played with
+    friends; Leave Round already covers "I need to step away" there (see
+    leave_round). Only available while the round is still in_progress,
+    same restriction and reasoning as leave_round (see RoundNotInProgress
+    Error).
+
+    Only touches holes where strokes IS NULL -- any hole this player
+    already has a real score on is left exactly as entered, not
+    overwritten. This is what makes "NR the rest of my round" the actual
+    behavior rather than "erase everything and mark it all NR": someone
+    who's played 12 holes and then can't continue keeps those 12 real
+    scores, with only holes 13-18 becoming NR. The round-level is_nr flag
+    the leaderboard sorts on (see _compute_leaderboard_line in backend/
+    services/tournaments.py) only needs *any* hole marked NR to trigger,
+    so this still reliably sends them to the bottom of the board even
+    though most of their card is real.
+
+    Individual holes marked NR this way can still be turned back into a
+    real score afterward exactly like any other hole: entering strokes
+    through the normal Enter Score flow just overwrites it (see
+    HoleScoreUpdate's docstring in backend/models/round.py) -- there's no
+    separate "undo" action needed for that, or for undoing this in bulk.
+    """
+    with _timed(f"select round {round_id} for no-result"):
+        round_response = supabase.table("rounds").select("*").eq("id", round_id).maybe_single().execute()
+    round_row = round_response.data if round_response is not None else None
+    if not round_row or round_row["status"] != "in_progress":
+        raise RoundNotInProgressError("You can only mark No Result while the round is still in progress.")
+
+    if not round_row.get("tournament_round_id"):
+        raise CannotMarkNoResultError("No Result only applies to tournament rounds.")
+
+    with _timed(f"select round_player round={round_id} player={player_id} for no-result"):
+        rp_response = (
+            supabase
+            .table("round_players")
+            .select("*")
+            .eq("round_id", round_id)
+            .eq("player_id", player_id)
+            .maybe_single()
+            .execute()
+        )
+    round_player = rp_response.data if rp_response is not None else None
+    if not round_player or round_player["status"] != "accepted":
+        raise NotRoundMemberError("You're not an active player in this round.")
+
+    with _timed(f"mark unscored holes NR for player={player_id} round={round_id}"):
+        supabase.table("round_scores").update(
+            {"nr": True, "strokes": None, "putts": None, "fairway_hit": None}
+        ).eq("round_id", round_id).eq("player_id", player_id).is_("strokes", "null").execute()
+
+
+def finish_round(round_id: str, requesting_player_id: str) -> dict | None:
     round_data = get_round(round_id)
     if not round_data:
         return None
@@ -1295,9 +1478,25 @@ def finish_round(round_id: str) -> dict | None:
     # frontend only shows Finish on a live round, but nothing stops a
     # slow double-tap/retry reaching this twice, and blindly re-running
     # the block below a second time would reset completed_at and could
-    # re-trigger handicap recalculation needlessly.
+    # re-trigger handicap recalculation needlessly. Checked before the
+    # membership check below on purpose -- a stale double-tap from
+    # someone who's since left the round shouldn't error just because
+    # there's nothing left to do anyway.
     if round_data["status"] != "in_progress":
         return round_data
+
+    # Both players involved (not just the round's creator) can finish it
+    # now -- Finish used to be shown only to is_owner_of_round on the
+    # frontend (see components/live_scorecard.py), which for a casual
+    # round meant only its creator; this is what makes that actually true
+    # server-side too, not just a UI change, the same way update_hole_
+    # score/sign_off_round/reject_round_signoff already gate on real
+    # round membership rather than trusting whoever calls this with a
+    # round_id. Tournament rounds already worked this way in effect
+    # (every grouping member is_owner=True), this just makes it explicit
+    # and enforced for casual rounds too.
+    if not any(p["player_id"] == requesting_player_id for p in round_data["players"]):
+        raise NotRoundMemberError("Only players in this round can finish it.")
 
     if round_data["is_manual"] and not round_data.get("tee_id"):
         owner_entry = next((p for p in round_data["players"] if p["is_owner"]), None)

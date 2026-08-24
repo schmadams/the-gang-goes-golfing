@@ -71,7 +71,15 @@ def _tournament_context_subnav(tournament_id, club_slug):
     )
 
 
-def layout(round_id=None, **kwargs):
+def layout(round_id=None, view=None, **kwargs):
+    # view="full" is only ever set by pages/round_signoff.py's reject
+    # redirect (/live-round?round_id=...&view=full) -- sends a rejected
+    # round's scorecard straight to the Full Scorecard view instead of the
+    # usual Hole by Hole default, so whoever's fixing it can see every
+    # hole at once rather than clicking through one at a time. Any other
+    # value (including the plain no-argument case) keeps the normal
+    # default -- see render_live_round_body's initial_view param.
+    initial_view = "full" if view == "full" else "holebyhole"
     player_id = session.get("player_id")
 
     if not session.get("logged_in") or not player_id:
@@ -145,7 +153,7 @@ def layout(round_id=None, **kwargs):
     if round_data.get("tournament_id") and round_data.get("club_slug"):
         tournament_subnav = _tournament_context_subnav(round_data["tournament_id"], round_data["club_slug"])
 
-    body_children = render_live_round_body(round_data, player_id)
+    body_children = render_live_round_body(round_data, player_id, initial_view=initial_view)
     return html.Div(
         className="t3g-page",
         children=([tournament_subnav] if tournament_subnav else []) + body_children,
@@ -249,7 +257,10 @@ def _next_unscored_player(players, hole_number, after_player_id):
     ordered = players[start:] + players[:start]
     for p in ordered:
         hole = (p.get("holes") or {}).get(str(hole_number), {})
-        if hole.get("strokes") is None:
+        # nr (No Return) counts as resolved even with no strokes value --
+        # same reasoning, and same fix, as _first_unscored_hole in
+        # components/live_scorecard.py.
+        if hole.get("strokes") is None and not hole.get("nr"):
             return p
     return None
 
@@ -427,6 +438,7 @@ def _save_score_result(**overrides):
 @callback(
     *_SAVE_SCORE_OUTPUTS,
     Input("live-round-score-save", "n_clicks"),
+    Input("live-round-score-nr-save", "n_clicks"),
     State("live-round-active-hole-store", "data"),
     State("live-round-id-store", "data"),
     State("live-round-score-shots-store", "data"),
@@ -436,7 +448,7 @@ def _save_score_result(**overrides):
     State("live-round-players-store", "data"),
     prevent_initial_call=True,
 )
-def save_score(n_clicks, active_hole, round_id, shots, putts, fairway_radio, par, players):
+def save_score(n_clicks, n_clicks_nr, active_hole, round_id, shots, putts, fairway_radio, par, players):
     if not active_hole:
         raise PreventUpdate
 
@@ -450,14 +462,31 @@ def save_score(n_clicks, active_hole, round_id, shots, putts, fairway_radio, par
     # choice if it's ever missing.
     source = active_hole.get("source", "full")
 
-    # Par 3s don't get a fairway hit toggle in the UI -- also ignore
-    # whatever's in the radio's stale value here, rather than trusting a
-    # hidden control not to leak a selection into the save.
-    fairway_hit = None if par == 3 else _FAIRWAY_RADIO_TO_BOOL.get(fairway_radio)
+    # "NR" (tournament rounds only, see live-round-score-nr-save's
+    # conditional rendering in components/live_scorecard.py) always saves
+    # this hole as No Return regardless of whatever's currently in the
+    # shots/putts steppers -- a completely separate payload from the
+    # normal "Enter" save, not just a variant of it. Building the update
+    # dict once, up front, and using it for both the PATCH body and the
+    # in-memory players-store update below (hole.update(update)) is what
+    # keeps those two always in sync -- there's no second place either
+    # branch's fields could drift apart.
+    if dash.ctx.triggered_id == "live-round-score-nr-save":
+        update = {"strokes": None, "putts": None, "fairway_hit": None, "nr": True}
+    else:
+        # Par 3s don't get a fairway hit toggle in the UI -- also ignore
+        # whatever's in the radio's stale value here, rather than
+        # trusting a hidden control not to leak a selection into the
+        # save. nr=False here is what turns a previously-NR'd hole back
+        # into a real one the moment a normal score is entered again --
+        # see HoleScoreUpdate.nr's docstring for why that's the intended
+        # "undo", not a separate action.
+        fairway_hit = None if par == 3 else _FAIRWAY_RADIO_TO_BOOL.get(fairway_radio)
+        update = {"strokes": shots, "putts": putts, "fairway_hit": fairway_hit, "nr": False}
 
     response = requests.patch(
         f"{API_BASE_URL}/rounds/{round_id}/players/{target_player_id}/holes/{hole_number}",
-        json={"strokes": shots, "putts": putts, "fairway_hit": fairway_hit},
+        json=update,
         params={"updated_by": session.get("player_id")},
     )
 
@@ -473,7 +502,7 @@ def save_score(n_clicks, active_hole, round_id, shots, putts, fairway_radio, par
         if p["player_id"] == target_player_id:
             holes = dict(p["holes"])
             hole = dict(holes.get(str(hole_number), {}))
-            hole.update({"strokes": shots, "putts": putts, "fairway_hit": fairway_hit})
+            hole.update(update)
             holes[str(hole_number)] = hole
             p["holes"] = holes
 
@@ -572,8 +601,9 @@ def refresh_scorecard(players):
         for player in players:
             hole = (player.get("holes") or {}).get(str(hole_number), {})
             strokes = hole.get("strokes")
-            labels.append(str(strokes) if strokes is not None else "Enter Score")
-            classes.append(_score_marking_class(strokes, par))
+            nr = bool(hole.get("nr"))
+            labels.append("NR" if nr else (str(strokes) if strokes is not None else "Enter Score"))
+            classes.append(_score_marking_class(strokes, par, nr))
 
     out_totals, in_totals, total_totals = [], [], []
     for player in players:
@@ -681,7 +711,15 @@ def save_manual_stroke_index(values, round_id, owner_id, players):
     prevent_initial_call=True,
 )
 def finish_round(n_clicks, round_id):
-    response = requests.post(f"{API_BASE_URL}/rounds/{round_id}/finish")
+    # requesting_player_id -- who's actually tapping Finish -- is what
+    # lets the backend confirm they're really an accepted player in the
+    # round, now that Finish is shown to any accepted player, not just
+    # the round's creator (see finish_round's docstring in backend/
+    # services/rounds.py).
+    response = requests.post(
+        f"{API_BASE_URL}/rounds/{round_id}/finish",
+        params={"requesting_player_id": session.get("player_id")},
+    )
 
     if response.status_code == 200:
         return "", "/"
@@ -712,7 +750,17 @@ def toggle_scrap_modal(open_clicks, cancel_clicks):
     prevent_initial_call=True,
 )
 def confirm_scrap_round(n_clicks, round_id):
-    response = requests.delete(f"{API_BASE_URL}/rounds/{round_id}")
+    # requesting_player_id lets the backend enforce "only the round's
+    # creator can Scrap a casual round" -- see delete_round's docstring.
+    # It's only actually checked for that one case (a casual round that's
+    # still in_progress); every other use of this same endpoint (deleting
+    # a finished round from Scoring History, a tournament round's Scrap)
+    # ignores it, so passing it here is always safe regardless of which
+    # kind of round this button is currently attached to.
+    response = requests.delete(
+        f"{API_BASE_URL}/rounds/{round_id}",
+        params={"requesting_player_id": session.get("player_id")},
+    )
 
     if response.status_code in (204, 404):
         # 404 just means it's already gone somehow -- either way there's
@@ -725,6 +773,93 @@ def confirm_scrap_round(n_clicks, round_id):
     except ValueError:
         detail = "Couldn't scrap the round."
     return detail, dash.no_update, False
+
+
+@callback(
+    Output("live-round-leave-modal", "is_open"),
+    Input("live-round-leave-button", "n_clicks"),
+    Input("live-round-leave-cancel", "n_clicks"),
+    prevent_initial_call=True,
+)
+def toggle_leave_modal(open_clicks, cancel_clicks):
+    return dash.ctx.triggered_id == "live-round-leave-button"
+
+
+@callback(
+    Output("live-round-error", "children", allow_duplicate=True),
+    Output("live-round-finish-redirect", "pathname", allow_duplicate=True),
+    Output("live-round-leave-modal", "is_open", allow_duplicate=True),
+    Input("live-round-leave-confirm", "n_clicks"),
+    State("live-round-id-store", "data"),
+    prevent_initial_call=True,
+)
+def confirm_leave_round(n_clicks, round_id):
+    player_id = session.get("player_id")
+    response = requests.post(f"{API_BASE_URL}/rounds/{round_id}/players/{player_id}/leave")
+
+    if response.status_code in (204, 404):
+        # 404 just means there's nothing left to leave (round's already
+        # gone somehow) -- either way, send them home rather than showing
+        # an error for a round that no longer applies to them.
+        return "", "/", False
+
+    try:
+        detail = response.json().get("detail", "Couldn't leave the round.")
+    except ValueError:
+        detail = "Couldn't leave the round."
+    return detail, dash.no_update, False
+
+
+@callback(
+    Output("live-round-nr-modal", "is_open"),
+    Input("live-round-nr-button", "n_clicks"),
+    Input("live-round-nr-cancel", "n_clicks"),
+    prevent_initial_call=True,
+)
+def toggle_nr_modal(open_clicks, cancel_clicks):
+    return dash.ctx.triggered_id == "live-round-nr-button"
+
+
+@callback(
+    Output("live-round-error", "children", allow_duplicate=True),
+    Output("live-round-players-store", "data", allow_duplicate=True),
+    Output("live-round-nr-modal", "is_open", allow_duplicate=True),
+    Input("live-round-nr-confirm", "n_clicks"),
+    State("live-round-id-store", "data"),
+    State("live-round-players-store", "data"),
+    prevent_initial_call=True,
+)
+def confirm_nr_round(n_clicks, round_id, players):
+    # Fills this player's own *unscored* holes with No Return -- any hole
+    # that already has a real strokes value is left untouched (see mark_
+    # round_no_result's docstring), the round and everyone else in it are
+    # untouched either way. The players store is patched locally with the
+    # same rule the backend just applied (only holes with strokes still
+    # None get nr=True) rather than re-fetching the round, same pattern
+    # confirm_scrap_round/confirm_leave_round use for their own updates --
+    # this callback already knows exactly what changed.
+    player_id = session.get("player_id")
+    response = requests.post(f"{API_BASE_URL}/rounds/{round_id}/players/{player_id}/no-result")
+
+    if response.status_code != 200:
+        try:
+            detail = response.json().get("detail", "Couldn't mark No Result.")
+        except ValueError:
+            detail = "Couldn't mark No Result."
+        return detail, dash.no_update, False
+
+    players = [dict(p) for p in (players or [])]
+    for p in players:
+        if p["player_id"] == player_id:
+            holes = {}
+            for hole_number_str, hole in (p.get("holes") or {}).items():
+                hole = dict(hole)
+                if hole.get("strokes") is None:
+                    hole.update({"nr": True, "strokes": None, "putts": None, "fairway_hit": None})
+                holes[hole_number_str] = hole
+            p["holes"] = holes
+
+    return "", players, False
 
 
 @callback(

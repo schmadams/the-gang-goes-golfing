@@ -948,8 +948,16 @@ def _leaderboard_player_scorecard(player, holes):
     built straight from holes_strokes, the same raw per-hole strokes the
     leaderboard's cumulative-to-par columns were derived from, so this
     always matches exactly what the grid is already showing rather than
-    needing its own fetch."""
+    needing its own fetch.
+
+    holes_nr (parallel to holes_strokes -- see _compute_leaderboard_line
+    in backend/services/tournaments.py) is what lets the Score row show
+    "NR" specifically on whichever hole(s) this player marked No Return,
+    instead of just the same blank "-" a hole they simply haven't reached
+    yet would show -- both have strokes=None, only holes_nr tells them
+    apart."""
     strokes = player.get("holes_strokes") or [None] * 18
+    nr_flags = player.get("holes_nr") or [False] * 18
     pars = [h.get("par") for h in holes]
     hole_numbers = [h["hole_number"] for h in holes]
 
@@ -959,6 +967,16 @@ def _leaderboard_player_scorecard(player, holes):
             divider = " t3g-leaderboard-divider" if hole_numbers[i] == 10 else ""
             cells.append(html.Td(str(v) if v is not None else "-", className=divider.strip()))
         return html.Tr(cells, className="t3g-leaderboard-scorecard-score-row" if bold else None)
+
+    def _score_row(label, values, nr_values):
+        cells = [html.Td(label, className="t3g-leaderboard-scorecard-label")]
+        for i, v in enumerate(values):
+            divider = " t3g-leaderboard-divider" if hole_numbers[i] == 10 else ""
+            is_nr_hole = nr_values[i] if i < len(nr_values) else False
+            text = "NR" if is_nr_hole else (str(v) if v is not None else "-")
+            cls = (divider + (" t3g-leaderboard-scorecard-nr-cell" if is_nr_hole else "")).strip()
+            cells.append(html.Td(text, className=cls))
+        return html.Tr(cells, className="t3g-leaderboard-scorecard-score-row")
 
     header_cells = [html.Th("Hole")]
     for hole_number in hole_numbers:
@@ -989,7 +1007,7 @@ def _leaderboard_player_scorecard(player, holes):
                 html.Table(
                     [
                         html.Thead(html.Tr(header_cells)),
-                        html.Tbody([_row("Par", pars), _row("Score", strokes, bold=True)]),
+                        html.Tbody([_row("Par", pars), _score_row("Score", strokes, nr_flags)]),
                     ],
                     className="t3g-leaderboard-table t3g-leaderboard-scorecard-table",
                 ),
@@ -1047,18 +1065,32 @@ def _leaderboard_initials(name):
 def _leaderboard_positions(sorted_players, total_key):
     """Sequential rank with ties sharing a position (and a "T" prefix once
     they do) -- same convention every real leaderboard uses rather than
-    just numbering rows 1..N regardless of equal scores."""
+    just numbering rows 1..N regardless of equal scores.
+
+    Any player flagged is_nr (see get_tournament_leaderboard) gets "NR"
+    instead of a rank -- a No Return card isn't compared against anyone
+    else's score, it just always sorts after every real one (see the
+    mode-aware sort key in _leaderboard_table/_leaderboard_simple_table,
+    which guarantees every NR player is already at the end of sorted_
+    players by the time this runs, so they never affect a real player's
+    tie-detection either)."""
     positions = []
-    for i, p in enumerate(sorted_players):
-        if i > 0 and p[total_key] == sorted_players[i - 1][total_key]:
-            positions.append(positions[-1])
-        else:
-            positions.append(i + 1)
+    real_rank = 0
+    prev_total = None
+    for p in sorted_players:
+        if p.get("is_nr"):
+            positions.append("NR")
+            continue
+        real_rank += 1
+        rank = positions[-1] if (prev_total is not None and p[total_key] == prev_total and positions and positions[-1] != "NR") else real_rank
+        positions.append(rank)
+        prev_total = p[total_key]
 
     counts: dict[int, int] = {}
     for pos in positions:
-        counts[pos] = counts.get(pos, 0) + 1
-    return [f"T{pos}" if counts[pos] > 1 else str(pos) for pos in positions]
+        if pos != "NR":
+            counts[pos] = counts.get(pos, 0) + 1
+    return [pos if pos == "NR" else (f"T{pos}" if counts[pos] > 1 else str(pos)) for pos in positions]
 
 
 def _leaderboard_table(leaderboard_data, mode):
@@ -1072,8 +1104,18 @@ def _leaderboard_table(leaderboard_data, mode):
     prior_key = f"prior_{mode}"
     total_key = f"total_{mode}"
 
-    # Gross/Nett: lowest to-par leads. Stableford: most points leads.
-    sorted_players = sorted(players, key=lambda p: p[total_key], reverse=(mode == "stableford"))
+    # Gross/Nett: lowest to-par leads. Stableford: most points leads. Any
+    # player flagged is_nr always sorts after every real score regardless
+    # of mode -- the (is_nr, ...) tuple key does that in one pass instead
+    # of sorting normally and then re-shuffling NR rows afterward; negating
+    # the stableford value inside the tuple is what keeps "highest points
+    # first" true under an otherwise-ascending sort (reverse=True alone
+    # would also reverse the is_nr half of the tuple, putting NR players
+    # FIRST for stableford specifically, which is exactly backwards).
+    sorted_players = sorted(
+        players,
+        key=lambda p: (p.get("is_nr", False), -p[total_key] if mode == "stableford" else p[total_key]),
+    )
     positions = _leaderboard_positions(sorted_players, total_key)
 
     value_text = (lambda v: str(v)) if mode == "stableford" else _leaderboard_to_par_text
@@ -1092,16 +1134,25 @@ def _leaderboard_table(leaderboard_data, mode):
 
     body_rows = []
     for pos, p in zip(positions, sorted_players):
+        is_nr = bool(p.get("is_nr"))
         is_finished = p["thru"] == 18
         thru_text = "F" if is_finished else (str(p["thru"]) if p["thru"] else "–")
 
         # Tier comes from the *displayed* position (so a tie for 1st -- "T1"
         # -- still reads as top-tier for both rows), not row order, which
-        # would only ever flag the first of a tied pair.
-        tier = int(pos.lstrip("T"))
+        # would only ever flag the first of a tied pair. pos is the literal
+        # string "NR" for an is_nr row (see _leaderboard_positions) -- no
+        # tier to compute there, int("NR") would just raise.
+        tier = None if pos == "NR" else int(pos.lstrip("T"))
         tier_class = {1: " t3g-leaderboard-pos-badge--first",
                       2: " t3g-leaderboard-pos-badge--second",
                       3: " t3g-leaderboard-pos-badge--third"}.get(tier, "")
+
+        total_cell = (
+            html.Span("NR", className="t3g-leaderboard-total-pill t3g-leaderboard-total-pill--nr")
+            if is_nr
+            else html.Span(value_text(p[total_key]), className=_leaderboard_total_pill_class(p[total_key], mode))
+        )
 
         row_cells = [
             html.Td(
@@ -1118,10 +1169,7 @@ def _leaderboard_table(leaderboard_data, mode):
                 ),
                 className="t3g-leaderboard-player-col",
             ),
-            html.Td(
-                html.Span(value_text(p[total_key]), className=_leaderboard_total_pill_class(p[total_key], mode)),
-                className="t3g-leaderboard-total-col",
-            ),
+            html.Td(total_cell, className="t3g-leaderboard-total-col"),
             html.Td(
                 html.Span(thru_text, className="t3g-leaderboard-thru-badge" + (" t3g-leaderboard-thru-badge--finished" if is_finished else ""))
             ),
@@ -1141,8 +1189,11 @@ def _leaderboard_table(leaderboard_data, mode):
                 n_clicks=0,
                 # Position 1 (or every row tied for it) gets its own
                 # highlight on top of the usual clickable-row treatment --
-                # the leader should read as "the leader" at a glance.
-                className="t3g-leaderboard-row" + (" t3g-leaderboard-row--leader" if tier == 1 else ""),
+                # the leader should read as "the leader" at a glance. An
+                # NR row gets its own muted treatment instead -- it's
+                # still clickable (same scorecard modal, showing whatever
+                # partial card they had before NR-ing).
+                className="t3g-leaderboard-row" + (" t3g-leaderboard-row--leader" if tier == 1 else "") + (" t3g-leaderboard-row--nr" if is_nr else ""),
             )
         )
 
@@ -1167,7 +1218,14 @@ def _leaderboard_today_cell(p, mode, total_key, prior_key, value_text):
     styling as the Total column once finished -- it's the same kind of
     number (a to-par score or a points total), just scoped to one round
     instead of the whole tournament -- and the same thru-badge styling the
-    detailed table uses for "not finished yet" everywhere else."""
+    detailed table uses for "not finished yet" everywhere else.
+
+    is_nr short-circuits straight to an "NR" pill -- the total-minus-prior
+    subtraction above isn't meaningful once a round's card is void, and a
+    thru count doesn't tell you anything useful either at that point."""
+    if p.get("is_nr"):
+        return html.Span("NR", className="t3g-leaderboard-total-pill t3g-leaderboard-total-pill--nr")
+
     if p["thru"] == 18:
         round_value = p[total_key] - p[prior_key]
         return html.Span(value_text(round_value), className=_leaderboard_total_pill_class(round_value, mode))
@@ -1201,7 +1259,13 @@ def _leaderboard_simple_table(leaderboard_data, mode, clickable=True):
     total_key = f"total_{mode}"
     prior_key = f"prior_{mode}"
 
-    sorted_players = sorted(players, key=lambda p: p[total_key], reverse=(mode == "stableford"))
+    # Same NR-aware sort as _leaderboard_table -- see that function's
+    # comment for why the tuple key (not a plain reverse=) is what's
+    # needed to keep NR players last regardless of mode.
+    sorted_players = sorted(
+        players,
+        key=lambda p: (p.get("is_nr", False), -p[total_key] if mode == "stableford" else p[total_key]),
+    )
     positions = _leaderboard_positions(sorted_players, total_key)
     value_text = (lambda v: str(v)) if mode == "stableford" else _leaderboard_to_par_text
 
@@ -1209,13 +1273,22 @@ def _leaderboard_simple_table(leaderboard_data, mode, clickable=True):
 
     body_rows = []
     for pos, p in zip(positions, sorted_players):
-        tier = int(pos.lstrip("T"))
+        is_nr = bool(p.get("is_nr"))
+        # pos is the literal string "NR" for an is_nr row (see
+        # _leaderboard_positions) -- no tier to compute there.
+        tier = None if pos == "NR" else int(pos.lstrip("T"))
         tier_class = {1: " t3g-leaderboard-pos-badge--first",
                       2: " t3g-leaderboard-pos-badge--second",
                       3: " t3g-leaderboard-pos-badge--third"}.get(tier, "")
 
+        total_cell = (
+            html.Span("NR", className="t3g-leaderboard-total-pill t3g-leaderboard-total-pill--nr")
+            if is_nr
+            else html.Span(value_text(p[total_key]), className=_leaderboard_total_pill_class(p[total_key], mode))
+        )
+
         row_kwargs = {}
-        row_class = " t3g-leaderboard-row--leader" if tier == 1 else ""
+        row_class = (" t3g-leaderboard-row--leader" if tier == 1 else "") + (" t3g-leaderboard-row--nr" if is_nr else "")
         if clickable:
             row_kwargs["id"] = {"type": "tournament-leaderboard-player-row", "player_id": p["player_id"]}
             row_kwargs["n_clicks"] = 0
@@ -1240,10 +1313,7 @@ def _leaderboard_simple_table(leaderboard_data, mode, clickable=True):
                         ),
                         className="t3g-leaderboard-player-col",
                     ),
-                    html.Td(
-                        html.Span(value_text(p[total_key]), className=_leaderboard_total_pill_class(p[total_key], mode)),
-                        className="t3g-leaderboard-total-col",
-                    ),
+                    html.Td(total_cell, className="t3g-leaderboard-total-col"),
                     html.Td(_leaderboard_today_cell(p, mode, total_key, prior_key, value_text)),
                 ],
                 className=row_class,
@@ -2450,6 +2520,8 @@ def toggle_tournament_leaderboard_scorecard(row_clicks, close_clicks, leaderboar
         raise PreventUpdate
 
     title = f"{player['name']} — Round {leaderboard_data.get('round_number')}"
+    if player.get("is_nr"):
+        title += " (No Return)"
     body = _leaderboard_player_scorecard(player, leaderboard_data.get("holes", []))
     return True, title, body
 

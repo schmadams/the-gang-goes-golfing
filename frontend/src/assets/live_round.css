@@ -553,3 +553,17 @@
 .t3g-holeview-player-row .t3g-score-button {
     margin-left: auto;
 }
+/* No Return (NR) score mark -- tournament rounds only (see components/
+   live_scorecard.py's _score_marking_class / the "NR" save action in the
+   Enter Score modal, and the bulk "NR Round" button). Dashed border
+   (rather than the solid circle/square birdie/bogey marks above) reads
+   as "nothing was actually recorded here" rather than another result on
+   the same traditional-marking scale -- amber, matching the modal's own
+   "NR" button color (Bootstrap warning), so the two stay visually tied
+   together as the same action. */
+.t3g-score-nr {
+    border-radius: 6px;
+    border: 2px dashed #b45309;
+    color: #b45309;
+    font-size: 0.85rem;
+}

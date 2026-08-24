@@ -51,10 +51,21 @@ class HoleScoreUpdate(BaseModel):
     payload.model_dump(exclude_unset=True), so only fields actually sent
     get written -- e.g. saving a score doesn't clobber manual_par etc back
     to null.
+
+    nr (No Return) marks this hole as not completed/recorded, instead of a
+    real stroke count -- the live scorecard's score modal sends
+    {"nr": True, "strokes": None, "putts": None, "fairway_hit": None} for
+    its dedicated "NR" save action (tournament rounds only), and sends
+    {"nr": False, ...real values...} for a normal "Enter" save so a
+    previously-NR'd hole gets cleared the moment a real score is entered
+    again -- there's no separate "undo NR" action, re-scoring the hole
+    just is the undo. See mark_round_no_result in backend/services/
+    rounds.py for the bulk "NR the whole round" version of this same idea.
     """
     strokes: Optional[int] = None
     putts: Optional[int] = None
     fairway_hit: Optional[bool] = None
+    nr: Optional[bool] = None
     manual_par: Optional[int] = None
     manual_yardage: Optional[int] = None
     manual_stroke_index: Optional[int] = None
@@ -100,6 +111,7 @@ class HoleScoreResponse(BaseModel):
     strokes: Optional[int] = None
     putts: Optional[int] = None
     fairway_hit: Optional[bool] = None
+    nr: bool = False
     manual_par: Optional[int] = None
     manual_yardage: Optional[int] = None
     manual_stroke_index: Optional[int] = None
@@ -197,6 +209,7 @@ class RoundHoleSummary(BaseModel):
     strokes: Optional[int] = None
     putts: Optional[int] = None
     fairway_hit: Optional[bool] = None
+    nr: bool = False
     net_strokes: Optional[int] = None
     stableford_points: Optional[int] = None
 

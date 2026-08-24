@@ -322,12 +322,24 @@ def _course_holes_meta(tee_id: str) -> dict[int, dict]:
     return {h["hole_number"]: h for h in (response.data or [])}
 
 
-def _tournament_round_scores_by_player(tournament_round_id: str) -> dict[str, dict[int, int]]:
+def _tournament_round_scores_by_player(
+    tournament_round_id: str,
+) -> tuple[dict[str, dict[int, int]], dict[str, dict[int, bool]]]:
     """Every accepted player's per-hole strokes across *every* grouping's
     live/finished round for one tournament round -- not just one tee time,
     since the leaderboard covers the whole field, not one viewer's own
-    grouping the way the Start Sheet/Live Round tabs do. {player_id:
-    {hole_number: strokes}}, holes with no score yet simply absent."""
+    grouping the way the Start Sheet/Live Round tabs do.
+
+    Returns (scores_by_player, nr_by_player). scores_by_player is
+    {player_id: {hole_number: strokes}}, holes with no score yet -- or
+    marked No Return, see below -- simply absent, same as before this
+    function also tracked NR. nr_by_player is the parallel {player_id:
+    {hole_number: True}} map of which specific holes were marked NR
+    (mark_round_no_result in backend/services/rounds.py, or the live
+    scorecard's per-hole "NR" save action) -- used both to decide whether
+    a player's round-level total counts as NR at all (get_tournament_
+    leaderboard) and to show which hole it happened on in the per-player
+    scorecard (see _compute_leaderboard_line's holes_nr output)."""
     rounds_response = (
         supabase
         .table("rounds")
@@ -337,24 +349,33 @@ def _tournament_round_scores_by_player(tournament_round_id: str) -> dict[str, di
     )
     round_ids = [r["id"] for r in (rounds_response.data or [])]
     if not round_ids:
-        return {}
+        return {}, {}
 
     scores_response = (
         supabase
         .table("round_scores")
-        .select("player_id, hole_number, strokes")
+        .select("player_id, hole_number, strokes, nr")
         .in_("round_id", round_ids)
         .execute()
     )
     by_player: dict[str, dict[int, int]] = {}
+    nr_by_player: dict[str, dict[int, bool]] = {}
     for row in (scores_response.data or []):
+        if row.get("nr"):
+            nr_by_player.setdefault(row["player_id"], {})[row["hole_number"]] = True
+            continue
         if row.get("strokes") is None:
             continue
         by_player.setdefault(row["player_id"], {})[row["hole_number"]] = row["strokes"]
-    return by_player
+    return by_player, nr_by_player
 
 
-def _compute_leaderboard_line(scores_by_hole: dict[int, int], holes_meta: dict[int, dict], handicap: float | None) -> dict:
+def _compute_leaderboard_line(
+    scores_by_hole: dict[int, int],
+    holes_meta: dict[int, dict],
+    handicap: float | None,
+    nr_by_hole: dict[int, bool] | None = None,
+) -> dict:
     """Cumulative gross/nett-to-par and cumulative Stableford points through
     each of the 18 holes for one player in one round -- None for any hole
     they haven't played yet (or that has no par on record), so the
@@ -363,7 +384,21 @@ def _compute_leaderboard_line(scores_by_hole: dict[int, int], holes_meta: dict[i
     actually played so far*, not all 18, same convention every real
     leaderboard uses for an in-progress round -- see _hole_handicap_
     strokes/_stableford_points in backend/services/rounds.py for the
-    handicap-stroke-allocation and points math this reuses."""
+    handicap-stroke-allocation and points math this reuses.
+
+    nr_by_hole ({hole_number: True} for whichever holes this player
+    marked No Return, from _tournament_round_scores_by_player) doesn't
+    change any of the cumulative math above -- an NR'd hole never has a
+    strokes value, so it's already skipped exactly like an unplayed hole.
+    It only drives two extra outputs: holes_nr (the same shape as holes_
+    strokes, for the per-player scorecard modal to show "NR" specifically
+    rather than a blank on that hole) and is_nr (True the moment *any*
+    hole in this round was marked NR) -- get_tournament_leaderboard reads
+    is_nr to decide whether this player's whole round (and, once it's
+    happened in any round up to and including the one being viewed, their
+    tournament-to-date total too) sorts to the bottom of the leaderboard
+    with "NR" in place of a score, instead of ranking them normally."""
+    nr_by_hole = nr_by_hole or {}
     holes_gross: list[int | None] = []
     holes_nett: list[int | None] = []
     holes_stableford: list[int | None] = []
@@ -373,6 +408,7 @@ def _compute_leaderboard_line(scores_by_hole: dict[int, int], holes_meta: dict[i
     # _leaderboard_player_scorecard) renders, so clicking a row doesn't
     # need a second round trip to reconstruct it from the deltas.
     holes_strokes: list[int | None] = []
+    holes_nr: list[bool] = []
 
     running_par = 0
     running_gross = 0
@@ -384,6 +420,7 @@ def _compute_leaderboard_line(scores_by_hole: dict[int, int], holes_meta: dict[i
         strokes = scores_by_hole.get(hole_number)
         hole = holes_meta.get(hole_number)
         par = hole.get("par") if hole else None
+        holes_nr.append(bool(nr_by_hole.get(hole_number)))
 
         if strokes is None or par is None:
             holes_gross.append(None)
@@ -412,6 +449,8 @@ def _compute_leaderboard_line(scores_by_hole: dict[int, int], holes_meta: dict[i
         "holes_nett": holes_nett,
         "holes_stableford": holes_stableford,
         "holes_strokes": holes_strokes,
+        "holes_nr": holes_nr,
+        "is_nr": any(holes_nr),
         "total_gross": holes_gross[thru - 1] if thru else None,
         "total_nett": holes_nett[thru - 1] if thru else None,
         "total_stableford": holes_stableford[thru - 1] if thru else 0,
@@ -459,30 +498,47 @@ def get_tournament_leaderboard(tournament_id: str, round_id: str) -> dict:
     # Prior totals -- sum each earlier round's own line (its own course/
     # tee, so its own holes_meta and its own scores) per format, per
     # player. A player who never played a given earlier round contributes
-    # 0 to it, not a penalty.
+    # 0 to it, not a penalty. prior_is_nr tracks whether a player was
+    # marked No Return in *any* earlier round -- once that's happened,
+    # their tournament-to-date total can't mean anything from that point
+    # forward either (same convention every real competition uses -- an
+    # NR round breaks the cumulative card, not just that one round's own
+    # line), so it carries forward through every later round's view of
+    # the leaderboard regardless of how they scored afterward.
     prior_gross = {e["player_id"]: 0 for e in entrants}
     prior_nett = {e["player_id"]: 0 for e in entrants}
     prior_stableford = {e["player_id"]: 0 for e in entrants}
+    prior_is_nr = {e["player_id"]: False for e in entrants}
 
     for earlier in earlier_rounds:
         holes_meta = _course_holes_meta(earlier["tee_id"])
-        scores_by_player = _tournament_round_scores_by_player(earlier["id"])
+        scores_by_player, nr_by_player = _tournament_round_scores_by_player(earlier["id"])
         for entrant in entrants:
             player_id = entrant["player_id"]
             line = _compute_leaderboard_line(
-                scores_by_player.get(player_id, {}), holes_meta, handicap_by_player[player_id]
+                scores_by_player.get(player_id, {}),
+                holes_meta,
+                handicap_by_player[player_id],
+                nr_by_player.get(player_id, {}),
             )
             prior_gross[player_id] += line["total_gross"] or 0
             prior_nett[player_id] += line["total_nett"] or 0
             prior_stableford[player_id] += line["total_stableford"]
+            if line["is_nr"]:
+                prior_is_nr[player_id] = True
 
     holes_meta = _course_holes_meta(tournament_round["tee_id"])
-    scores_by_player = _tournament_round_scores_by_player(round_id)
+    scores_by_player, nr_by_player = _tournament_round_scores_by_player(round_id)
 
     players = []
     for entrant in entrants:
         player_id = entrant["player_id"]
-        line = _compute_leaderboard_line(scores_by_player.get(player_id, {}), holes_meta, handicap_by_player[player_id])
+        line = _compute_leaderboard_line(
+            scores_by_player.get(player_id, {}),
+            holes_meta,
+            handicap_by_player[player_id],
+            nr_by_player.get(player_id, {}),
+        )
         name = entrant.get("nickname") or f"{entrant.get('first_name', '')} {entrant.get('surname', '')}".strip()
 
         players.append({
@@ -493,6 +549,16 @@ def get_tournament_leaderboard(tournament_id: str, round_id: str) -> dict:
             "holes_nett": line["holes_nett"],
             "holes_stableford": line["holes_stableford"],
             "holes_strokes": line["holes_strokes"],
+            "holes_nr": line["holes_nr"],
+            # True the moment this player is NR in this round or any
+            # earlier one feeding this same cumulative view -- see the
+            # prior_is_nr comment above. Sorting/display (bottom of the
+            # board, "NR" instead of a number) is entirely the frontend's
+            # call based on this one flag; the numeric totals below are
+            # still computed and included regardless, in case they're
+            # ever useful, but shouldn't be shown as a real rank once
+            # this is true.
+            "is_nr": prior_is_nr[player_id] or line["is_nr"],
             "prior_gross": prior_gross[player_id],
             "prior_nett": prior_nett[player_id],
             "prior_stableford": prior_stableford[player_id],

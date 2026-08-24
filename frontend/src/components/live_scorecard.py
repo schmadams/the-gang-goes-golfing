@@ -1,4 +1,4 @@
-# target path: frontend/src/components/live_scorecard.py (new file)
+# target path: frontend/src/components/live_scorecard.py (full replacement)
 """
 The interactive live-round scorecard -- the merged Hole/Yards/S.I./Par +
 per-player Score table, plus everything needed to render one round's full
@@ -54,19 +54,28 @@ def _hole_value(hole, field, manual_field):
     return hole.get(manual_field) if hole.get(manual_field) is not None else hole.get(field)
 
 
-def _score_marking_class(strokes, par):
+def _score_marking_class(strokes, par, nr=False):
     """
     Traditional scorecard marks, applied around the score itself: birdie ->
     circle, eagle (or better) -> double circle, bogey -> square, double
     bogey (or worse) -> double square. No score yet -> the wider "Enter
-    Score" text button, not a shape.
+    Score" text button, not a shape. nr (No Return, tournament rounds
+    only -- see mark_round_no_result/HoleScoreUpdate.nr) always wins over
+    any of that regardless of whether a stale strokes value happens to
+    still be sitting on the hole -- an NR'd hole never actually has one in
+    practice (the modal's "NR" save and the bulk NR Round action both
+    clear strokes at the same time they set nr), but this keeps the mark
+    correct even in that edge case rather than silently falling through to
+    a birdie/bogey mark that shouldn't apply anymore.
 
     Once a score exists, the button switches to a fixed-size square
     (t3g-score-button-filled) regardless of the mark -- a mark drawn with
     border-radius/box-shadow only looks like a true circle or square when
     the box itself is a square, and this button's width otherwise varies
-    with its label ("Enter Score" vs "3").
+    with its label ("Enter Score" vs "3" vs "NR").
     """
+    if nr:
+        return "t3g-score-button t3g-score-button-filled t3g-score-nr"
     if strokes is None:
         return "t3g-score-button"
 
@@ -107,10 +116,11 @@ def _result_badge(strokes, par):
 
 def _score_button(player_id, hole, par):
     strokes = hole.get("strokes")
+    nr = bool(hole.get("nr"))
     return html.Button(
-        str(strokes) if strokes is not None else "Enter Score",
+        "NR" if nr else (str(strokes) if strokes is not None else "Enter Score"),
         id={"type": "live-round-score-button", "player": player_id, "hole": hole["hole_number"]},
-        className=_score_marking_class(strokes, par),
+        className=_score_marking_class(strokes, par, nr),
         n_clicks=0,
     )
 
@@ -130,10 +140,11 @@ def _holeview_score_button(player_id, hole, par):
     toggle_score_modal in live_round.py, whose Input list matches on
     either type."""
     strokes = hole.get("strokes")
+    nr = bool(hole.get("nr"))
     return html.Button(
-        str(strokes) if strokes is not None else "Enter Score",
+        "NR" if nr else (str(strokes) if strokes is not None else "Enter Score"),
         id={"type": "live-round-holeview-score-button", "player": player_id, "hole": hole["hole_number"]},
-        className=_score_marking_class(strokes, par),
+        className=_score_marking_class(strokes, par, nr),
         n_clicks=0,
     )
 
@@ -178,11 +189,18 @@ def _first_unscored_hole(players):
     across the store-shape players list -- picking up scoring exactly
     where a group left off is a much more useful Hole by Hole starting
     point than always opening on Hole 1 partway through a round. Falls
-    back to 18 once every hole for every player already has a score."""
+    back to 18 once every hole for every player already has a score.
+
+    A hole marked nr (No Return) counts as resolved here even though it
+    has no strokes value -- there's nothing left to enter for it, same as
+    a hole with a real score; without this check, a group with an NR'd
+    hole would never advance past it on page load, or in save_score's
+    Hole by Hole auto-advance in live_round.py, which uses the same
+    condition for the same reason."""
     for hole_number in range(1, 19):
         for p in players:
             hole = (p.get("holes") or {}).get(str(hole_number), {})
-            if hole.get("strokes") is None:
+            if hole.get("strokes") is None and not hole.get("nr"):
                 return hole_number
     return 18
 
@@ -426,12 +444,12 @@ def _scorecard_table(players, owner_player, is_manual, is_owner_of_round):
     )
 
 
-def render_live_round_body(round_data, player_id):
+def render_live_round_body(round_data, player_id, initial_view="holebyhole"):
     """Everything below the (optional) tournament back-navigation --
-    stores, the scorecard panel itself, the score/scrap modals -- as a
-    flat list of children, not wrapped in a page-level div. Called by both
-    live_round.py's own layout() (the standalone /live-round page) and
-    tournament.py's _live_round_panel (embedded straight into the
+    stores, the scorecard panel itself, the score/scrap/leave modals -- as
+    a flat list of children, not wrapped in a page-level div. Called by
+    both live_round.py's own layout() (the standalone /live-round page)
+    and tournament.py's _live_round_panel (embedded straight into the
     tournament page's Live Round tab) -- "just show the scorecard of the
     round that is underway" only works if the markup itself is reusable
     like this, not just the page it lives on. Every id in here is a fixed
@@ -439,15 +457,27 @@ def render_live_round_body(round_data, player_id):
     ever have one round -- casual or tournament -- actually rendering this
     at a time; see the tournament_scope split in backend/services/
     rounds.py for why that's also true for tournament rounds specifically,
-    not just casual ones."""
+    not just casual ones.
+
+    initial_view ("holebyhole" or "full") lets a caller open straight into
+    the Full Scorecard instead of the usual default -- live_round.py's
+    layout() passes "full" through when it's reached via the ?view=full
+    query param a rejected sign-off's redirect carries, so the round
+    reopens somewhere a player can see every hole at once to find what
+    needs fixing, rather than having to click through hole by hole.
+    Tournament.py's embedded panel never passes this, so it keeps the
+    plain default."""
     is_manual = round_data.get("is_manual")
     is_owner_of_round = bool(round_data.get("is_owner"))
+    is_tournament_round = bool(round_data.get("tournament_round_id"))
     players = round_data.get("players", [])
     pending_invites = round_data.get("pending_invites", [])
     owner_player = next((p for p in players if p.get("is_owner")), None)
 
     for p in players:
         p["is_viewer"] = p["player_id"] == player_id
+
+    is_viewer_member = any(p.get("is_viewer") for p in players)
 
     # Single source of truth for every player's hole data -- everything
     # reactive on this page (score button labels/marks, OUT/IN/TOTAL score
@@ -481,19 +511,75 @@ def render_live_round_body(round_data, player_id):
     # finished, say) rather than only ever through the "my one active
     # round" lookup, which by construction could never return anything
     # but an in_progress round.
-    if is_owner_of_round and round_data.get("status") == "in_progress":
-        header_actions = [
-            html.Button(
-                "Scrap Round",
-                id="live-round-scrap-button",
-                className="t3g-panel-action-button t3g-panel-action-button--secondary",
-            ),
-            html.Button(
-                "Finish Round",
-                id="live-round-finish-button",
-                className="t3g-panel-action-button",
-            ),
-        ]
+    if round_data.get("status") == "in_progress":
+        if is_tournament_round:
+            # Unchanged from before -- every grouping member is an equal
+            # is_owner=True (see start_tournament_round), so Finish and
+            # Scrap both stay available to anyone in the grouping. No
+            # Leave button here: a tournament round is an official
+            # competition round for the whole tee-time group, not a
+            # casual game any one player can just step out of -- see
+            # leave_round's docstring in backend/services/rounds.py.
+            # NR Round is new -- a self-service "I can't continue" for
+            # tournament rounds specifically, filling this player's own
+            # scorecard with No Return instead of removing them from the
+            # round the way Leave does for a casual one (see mark_round_
+            # no_result's docstring). Every accepted player can use it on
+            # their own card, same reach as Finish/Scrap here.
+            if is_owner_of_round:
+                header_actions = [
+                    html.Button(
+                        "Scrap Round",
+                        id="live-round-scrap-button",
+                        className="t3g-panel-action-button t3g-panel-action-button--secondary",
+                    ),
+                    html.Button(
+                        "NR Round",
+                        id="live-round-nr-button",
+                        className="t3g-panel-action-button t3g-panel-action-button--secondary",
+                    ),
+                    html.Button(
+                        "Finish Round",
+                        id="live-round-finish-button",
+                        className="t3g-panel-action-button",
+                    ),
+                ]
+        else:
+            # Casual round: any accepted player can Finish -- is_owner_of_
+            # round used to gate this too, which for a casual round meant
+            # only its creator ever saw the button at all. Scrap stays
+            # creator-only (is_owner_of_round, which for a casual round
+            # specifically means round.player_id == viewer -- see
+            # _apply_viewer_is_owner) since it deletes the round for
+            # everyone in it, not just themselves. A non-creator accepted
+            # player who wants out gets Leave Round instead, which only
+            # removes their own participation.
+            if is_owner_of_round:
+                header_actions = [
+                    html.Button(
+                        "Scrap Round",
+                        id="live-round-scrap-button",
+                        className="t3g-panel-action-button t3g-panel-action-button--secondary",
+                    ),
+                    html.Button(
+                        "Finish Round",
+                        id="live-round-finish-button",
+                        className="t3g-panel-action-button",
+                    ),
+                ]
+            elif is_viewer_member:
+                header_actions = [
+                    html.Button(
+                        "Leave Round",
+                        id="live-round-leave-button",
+                        className="t3g-panel-action-button t3g-panel-action-button--secondary",
+                    ),
+                    html.Button(
+                        "Finish Round",
+                        id="live-round-finish-button",
+                        className="t3g-panel-action-button",
+                    ),
+                ]
 
     pending_note = None
     if pending_invites:
@@ -506,15 +592,19 @@ def render_live_round_body(round_data, player_id):
     # much better on a phone than the full 18-column table, which is kept
     # around (behind the toggle, still the default in spirit for anyone
     # who wants to see everything at once) rather than replaced outright.
-    holeview_style = {} if players else {"display": "none"}
-    full_style = {"display": "none"} if players else {}
+    # initial_view overrides that default when a caller has a good reason
+    # to (see this function's docstring) -- falls back to "holebyhole"
+    # whenever there's no scorecard to show a view of at all.
+    effective_initial_view = initial_view if players else "holebyhole"
+    holeview_style = {} if (players and effective_initial_view == "holebyhole") else {"display": "none"}
+    full_style = {} if (players and effective_initial_view == "full") else {"display": "none"}
 
     return [
         dcc.Store(id="live-round-id-store", data=round_data["id"]),
         dcc.Store(id="live-round-owner-id-store", data=owner_player["player_id"] if owner_player else None),
         dcc.Store(id="live-round-players-store", data=players_store_data),
         dcc.Store(id="live-round-active-hole-store"),
-        dcc.Store(id="live-round-view-mode-store", data="holebyhole"),
+        dcc.Store(id="live-round-view-mode-store", data=effective_initial_view),
         dcc.Store(id="live-round-holeview-hole-store", data=initial_hole),
         html.Div(
             className="t3g-panel",
@@ -540,7 +630,7 @@ def render_live_round_body(round_data, player_id):
                         if is_manual
                         else None,
                         pending_note,
-                        _scorecard_view_toggle("holebyhole") if players else None,
+                        _scorecard_view_toggle(effective_initial_view) if players else None,
                         html.Div(
                             id="live-round-holeview-container",
                             style=holeview_style,
@@ -652,6 +742,21 @@ def render_live_round_body(round_data, player_id):
                 dbc.ModalFooter(
                     [
                         dbc.Button("Cancel", id="live-round-score-cancel", color="secondary"),
+                    ]
+                    # "NR" is a third save action, tournament rounds only --
+                    # it saves this one hole as No Return regardless of
+                    # whatever's currently sitting in the shots/putts
+                    # steppers, instead of the numeric payload "Enter"
+                    # sends. See save_score in live_round.py, which
+                    # branches on which of these two buttons actually
+                    # triggered it -- everything downstream of that
+                    # (closing the modal, Hole by Hole auto-advance, the
+                    # hole-18 switch to Full Scorecard) is identical either
+                    # way, since marking a hole NR is "done with this hole"
+                    # exactly the same as entering a real score is.
+                    + ([dbc.Button("NR", id="live-round-score-nr-save", color="warning", outline=True)]
+                       if is_tournament_round else [])
+                    + [
                         dbc.Button(
                             "Enter",
                             id="live-round-score-save",
@@ -677,6 +782,51 @@ def render_live_round_body(round_data, player_id):
                         dbc.Button(
                             "Scrap Round",
                             id="live-round-scrap-confirm",
+                            color="danger",
+                        ),
+                    ]
+                ),
+            ],
+        ),
+        dbc.Modal(
+            id="live-round-leave-modal",
+            is_open=False,
+            children=[
+                dbc.ModalHeader(dbc.ModalTitle("Leave this round?")),
+                dbc.ModalBody(
+                    "You'll be removed from this round and lose access to it, but it'll keep going "
+                    "for everyone else still in it. This can't be undone."
+                ),
+                dbc.ModalFooter(
+                    [
+                        dbc.Button("Cancel", id="live-round-leave-cancel", color="secondary"),
+                        dbc.Button(
+                            "Leave Round",
+                            id="live-round-leave-confirm",
+                            color="danger",
+                        ),
+                    ]
+                ),
+            ],
+        ),
+        dbc.Modal(
+            id="live-round-nr-modal",
+            is_open=False,
+            children=[
+                dbc.ModalHeader(dbc.ModalTitle("Mark this round No Result?")),
+                dbc.ModalBody(
+                    "This fills every hole you haven't scored yet on your own scorecard with No "
+                    "Return -- any hole you've already entered a real score for is left exactly as "
+                    "it is. Your round will show as NR on the leaderboard, sorted below every other "
+                    "player. It doesn't affect anyone else still playing, and you can still turn an "
+                    "individual hole back into a real score afterward by entering it again."
+                ),
+                dbc.ModalFooter(
+                    [
+                        dbc.Button("Cancel", id="live-round-nr-cancel", color="secondary"),
+                        dbc.Button(
+                            "NR Round",
+                            id="live-round-nr-confirm",
                             color="danger",
                         ),
                     ]

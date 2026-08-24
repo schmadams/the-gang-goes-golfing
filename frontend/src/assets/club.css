@@ -1191,3 +1191,39 @@
     color: #4c7a1f;
     font-weight: 800;
 }
+/* No Return (NR) leaderboard styling -- a player flagged is_nr (see
+   get_tournament_leaderboard in backend/services/tournaments.py) always
+   sorts below every real score (see the NR-aware sort key in tournament.
+   py's _leaderboard_table/_leaderboard_simple_table) and shows "NR" in
+   place of a rank and a total, rather than a number that would otherwise
+   read as a real (if bad) score. Amber, matching the Enter Score modal's
+   own "NR" button and the live scorecard's dashed NR mark (see live_
+   round.css) -- the same visual language for the same action, wherever
+   it shows up. */
+.t3g-leaderboard-total-pill--nr {
+    background: #fdf3e0;
+    color: #b45309;
+}
+
+/* Muted, not hidden -- an NR row is still real information (who dropped
+   out, and how far they got before that), just deliberately less
+   prominent than anyone still actively competing. Row stays clickable
+   (same scorecard modal), so this can't rely on disabling pointer
+   events or anything that would suggest otherwise. */
+.t3g-leaderboard-row--nr {
+    opacity: 0.6;
+}
+
+.t3g-leaderboard-row--nr:hover {
+    background: #f7f7f9 !important;
+    box-shadow: inset 3px 0 0 #b45309;
+}
+
+/* Per-hole NR cell in the click-through scorecard modal (see tournament.
+   py's _leaderboard_player_scorecard) -- same amber text as everywhere
+   else NR shows up, just inline in the Score row rather than a pill,
+   since every other cell in that row is plain text too. */
+.t3g-leaderboard-scorecard-nr-cell {
+    color: #b45309;
+    font-weight: 800;
+}

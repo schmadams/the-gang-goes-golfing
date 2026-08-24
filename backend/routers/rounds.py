@@ -11,13 +11,17 @@ from backend.models.round import (
     TournamentRoundStartRequest,
 )
 from backend.services.rounds import (
+    CannotLeaveRoundError,
+    CannotMarkNoResultError,
     ManualScorecardValidationError,
     NotFriendsError,
     NotInGroupingError,
+    NotRoundCreatorError,
     NotRoundMemberError,
     RoundAlreadyActiveError,
     RoundInviteNotFoundError,
     RoundNotEditableError,
+    RoundNotInProgressError,
     RoundNotPendingSignoffError,
     TooManyInvitesError,
     TournamentTeeTimeNotFoundError,
@@ -26,9 +30,11 @@ from backend.services.rounds import (
     get_active_round,
     get_player_analysis,
     get_round,
+    leave_round,
     list_pending_round_invites,
     list_pending_signoff_rounds,
     list_player_rounds,
+    mark_round_no_result,
     reject_round_signoff,
     respond_to_round_invite,
     sign_off_round,
@@ -140,11 +146,18 @@ def update_hole_score_route(round_id: str, player_id: str, hole_number: int, pay
 
 
 @router.post("/{round_id}/finish", response_model=RoundDetailResponse)
-def finish_round_route(round_id: str):
+def finish_round_route(round_id: str, requesting_player_id: str):
+    # requesting_player_id -- who's actually tapping Finish, not just
+    # whoever the round_id belongs to -- is what lets finish_round check
+    # they're really an accepted player in the round rather than trusting
+    # anyone who knows the id. Required (no default), same reasoning as
+    # update_hole_score_route's updated_by.
     try:
-        round_ = finish_round(round_id)
+        round_ = finish_round(round_id, requesting_player_id)
     except ManualScorecardValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    except NotRoundMemberError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
     if not round_:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Round not found")
     return round_
@@ -178,6 +191,28 @@ def reject_round_signoff_route(round_id: str, player_id: str):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
 
 
+@router.post("/{round_id}/players/{player_id}/no-result", response_model=RoundDetailResponse)
+def mark_round_no_result_route(round_id: str, player_id: str):
+    # Bulk-fills this player's own 18 holes with No Return -- see mark_
+    # round_no_result's docstring for exactly what this does and doesn't
+    # touch (only this player's own card, only a still-in_progress
+    # tournament round). Returns the full round detail, same as signoff/
+    # reject, so the frontend can refresh straight from the response.
+    try:
+        mark_round_no_result(round_id, player_id)
+    except RoundNotInProgressError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    except CannotMarkNoResultError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
+    except NotRoundMemberError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
+
+    round_ = get_round(round_id, viewer_player_id=player_id)
+    if not round_:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Round not found")
+    return round_
+
+
 @router.get("/{round_id}", response_model=RoundDetailResponse)
 def get_round_route(round_id: str, viewer_player_id: str | None = None):
     # viewer_player_id is optional -- omitting it (the old behavior) just
@@ -193,11 +228,35 @@ def get_round_route(round_id: str, viewer_player_id: str | None = None):
 
 
 @router.delete("/{round_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_round_route(round_id: str):
+def delete_round_route(round_id: str, requesting_player_id: str | None = None):
     # Same endpoint serves two UI actions -- "Scrap Round" on an
-    # in-progress round from the live round page, and "Delete" on a
-    # completed round from Scoring History. Both are just "this round row
-    # (and its scores) shouldn't exist anymore."
-    deleted = delete_round(round_id)
+    # in-progress round (live round page or Scoring History), and
+    # "Delete" on an already-finished round from Scoring History. Both
+    # are just "this round row (and its scores) shouldn't exist anymore."
+    # requesting_player_id is optional -- it's only actually enforced for
+    # the Scrap-a-casual-in-progress-round case (see delete_round's
+    # docstring); every existing caller now passes its own session
+    # player_id regardless, but omitting it just skips that one check
+    # rather than erroring, so this stays backward compatible.
+    try:
+        deleted = delete_round(round_id, requesting_player_id)
+    except NotRoundCreatorError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Round not found")
+
+
+@router.post("/{round_id}/players/{player_id}/leave", status_code=status.HTTP_204_NO_CONTENT)
+def leave_round_route(round_id: str, player_id: str):
+    # Lets a non-creator accepted player exit a still-in_progress casual
+    # round without scrapping it for whoever's still in it -- see
+    # leave_round's docstring for exactly what this does and doesn't
+    # allow (the creator, and any tournament round, are both refused).
+    try:
+        leave_round(round_id, player_id)
+    except RoundNotInProgressError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    except CannotLeaveRoundError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
+    except NotRoundMemberError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
