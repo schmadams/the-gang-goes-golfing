@@ -962,7 +962,7 @@ def layout(**kwargs):
                                         className="mb-2 t3g-course-dropdown",
                                     ),
                                     dcc.Loading(
-                                        custom_spinner=golf_swing_spinner(height="1.5rem"),
+                                        custom_spinner=golf_swing_spinner(height="2rem"),
                                         children=dcc.Dropdown(
                                             id="upload-round-course",
                                             placeholder="Select the course",
@@ -972,7 +972,7 @@ def layout(**kwargs):
                                         ),
                                     ),
                                     dcc.Loading(
-                                        custom_spinner=golf_swing_spinner(height="1.5rem"),
+                                        custom_spinner=golf_swing_spinner(height="2rem"),
                                         children=dcc.Dropdown(
                                             id="upload-round-tee",
                                             placeholder="Select tees",

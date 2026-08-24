@@ -16,25 +16,33 @@
    instead. See that file's module docstring for why. */
 
 .t3g-golf-spinner {
-    position: relative;
     width: 100%;
     /* height set inline per-call via golf_swing_spinner(height=...) */
     display: flex;
     align-items: center;
     justify-content: center;
+    /* Frames sit side by side in normal flex flow now, not stacked on top
+       of each other -- gap keeps them from touching as each one grows to
+       its own natural width (object-fit:contain doesn't fix a width, just
+       an aspect ratio). */
+    gap: 0.75rem;
 }
 
 .t3g-golf-spinner-frame {
-    position: absolute;
-    top: 0;
-    left: 50%;
-    transform: translateX(-50%);
     height: 100%;
     width: auto;
     /* Keeps each frame's own aspect ratio (a narrower overhead finish vs.
        a wider follow-through) from distorting or shifting the spinner's
        box size as frames cycle. */
     object-fit: contain;
+    /* The source PNGs are black silhouettes on a transparent background.
+       brightness(0) crushes every opaque pixel to black (a no-op here,
+       they're already black) while leaving transparency alone, then
+       invert(1) flips that black to white -- recolors the silhouette
+       itself without touching the actual image files, so any future
+       swing frame dropped into assets/loading/ (regardless of what color
+       it was drawn in) comes out white here too. */
+    filter: brightness(0) invert(1);
     opacity: 0;
     animation-name: t3g-golf-fade;
     animation-timing-function: ease-in-out;
@@ -43,15 +51,16 @@
        components/spinner.py, computed from the actual frame count; the
        t3g-golf-fade keyframes themselves are also generated there (see
        _build_keyframes_css) and injected as a sibling <link>, not defined
-       in this file -- see the header comment above. */
+       in this file -- see the header comment above. Opacity-only (not
+       display:none) is what keeps each frame occupying its own slot in
+       the row the whole time, so nothing shifts position as the fade
+       hands off from one frame to the next. */
 }
 
 /* Single-frame fallback (golf_swing_spinner() with exactly one image in
    assets/loading/) -- shown static, no animation, so there's nothing to
    reference a t3g-golf-fade rule that in this case never gets injected. */
 .t3g-golf-spinner-frame--static {
-    position: static;
-    transform: none;
     opacity: 1;
     animation: none;
 }

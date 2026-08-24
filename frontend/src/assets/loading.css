@@ -2,15 +2,30 @@
 
    Dash automatically shows a div with class "_dash-loading" (containing the
    text "Loading...") at the app's root while its JS bundle is downloading
-   and mounting — this is the blank-page moment on first load. We don't
+   and mounting -- this is the blank-page moment on first load. We don't
    control that markup directly, but it's just a CSS class, so we can
    restyle it freely.
 
-   Using the actual golfer emoji here instead of a hand-drawn shape — it's
-   already a properly illustrated pictogram, so we just animate it swinging
-   rather than trying to draw a recognizable body from scratch. */
+   This used to show the golfer emoji here, rotating back and forth. Now
+   it crossfades between the two swing-sequence silhouette PNGs (the same
+   assets/loading/ images components/spinner.py's golf_swing_spinner()
+   uses for every in-page dcc.Loading spot), so the very first thing a
+   fresh page load shows matches the same loading animation used
+   everywhere else in the app instead of a leftover one-off emoji.
+
+   Note this spot is capped at exactly 2 frames, unlike golf_swing_spinner()
+   -- this placeholder is pure CSS rendered before Dash's own JS (and
+   therefore Python) ever runs, so there's no way to dynamically discover
+   however many images happen to be in assets/loading/ the way the Python
+   component does. It only has two pseudo-elements (::before/::after) to
+   work with, one per image. If more swing frames get added to that folder
+   later and you want them included here too, this file needs a small
+   manual update to add another layered pseudo-element/keyframe -- the
+   in-page spinner will keep picking up new frames automatically either
+   way. */
 
 ._dash-loading {
+    position: relative;
     font-size: 0; /* hides the default "Loading..." text */
     min-height: 100vh;
     width: 100%;
@@ -20,17 +35,70 @@
     background: #261c67; /* matches the app's page background, avoids a white flash */
 }
 
+._dash-loading::before,
 ._dash-loading::after {
-    content: "\1F3CC\FE0F";
-    display: block;
-    font-size: 5rem;
-    line-height: 1;
-    transform-origin: 50% 85%;
-    animation: t3g-golf-swing 1.1s ease-in-out infinite;
+    content: "";
+    /* Side by side (normal flow), not stacked on top of each other -- no
+       position:absolute here, so each pseudo-element sits in its own slot
+       next to the other rather than both centered at the same spot. Since
+       this fades via opacity (not display:none), each one keeps its slot
+       the whole time regardless of which is currently visible, so nothing
+       shifts position as the fade hands off. */
+    width: 10rem;
+    height: 10rem;
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: contain;
+    /* Source PNGs are black silhouettes on transparent backgrounds --
+       brightness(0) crushes opaque pixels to black (already are) while
+       leaving transparency alone, invert(1) then flips that to white.
+       Recolors without touching the actual image files. Same trick used
+       on the in-page spinner, see assets/spinner.css. */
+    filter: brightness(0) invert(1);
+    opacity: 0;
+    animation-name: t3g-boot-golf-fade;
+    animation-duration: 3s;
+    animation-timing-function: ease-in-out;
+    animation-iteration-count: infinite;
 }
 
-@keyframes t3g-golf-swing {
-    0%   { transform: rotate(-20deg); }
-    50%  { transform: rotate(20deg); }
-    100% { transform: rotate(-20deg); }
+._dash-loading::before {
+    background-image: url("/assets/loading/swing-1.png");
+    animation-delay: 0s;
+    /* Gap between the two slots -- margin rather than a gap on the
+       parent, since ::before/::after aren't real flex-gap-aware siblings
+       in every browser the same way actual DOM children are. */
+    margin-right: 0.75rem;
+}
+
+._dash-loading::after {
+    background-image: url("/assets/loading/swing-2.png");
+    /* Half the cycle out of phase with ::before -- same edge-to-edge
+       crossfade stagger used in components/spinner.py, just hardcoded
+       for exactly 2 frames instead of computed for however many were
+       found. */
+    animation-delay: -1.5s;
+}
+
+/* Visible for the middle stretch of each layer's own half of the cycle,
+   fading in/out at the edges -- ::before's 0%-50% nonzero span and
+   ::after's matching span (shifted a half-cycle later by its delay above)
+   exactly tile the full loop between them with no gap and no moment where
+   both are fully invisible at once. */
+@keyframes t3g-boot-golf-fade {
+    0% {
+        opacity: 0;
+    }
+    8% {
+        opacity: 1;
+    }
+    42% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0;
+    }
+    100% {
+        opacity: 0;
+    }
 }

@@ -41,8 +41,9 @@ _FRAME_EXTENSIONS = (".png", ".webp", ".jpg", ".jpeg")
 # How long each individual frame gets on screen, including its own fade in
 # and fade out -- the full loop duration is just this times however many
 # frames are found. Slow enough to read as a golf swing rather than a
-# flicker, fast enough not to feel like a stall.
-_SECONDS_PER_FRAME = 1.1
+# flicker, fast enough not to feel like a stall. (Bumped up from 1.1s --
+# the original pace felt a little rushed.)
+_SECONDS_PER_FRAME = 1.5
 
 
 def _discover_frames():
@@ -95,7 +96,7 @@ def _build_keyframes_css(frame_count):
     return f"data:text/css;base64,{encoded}"
 
 
-def golf_swing_spinner(height="3.5rem"):
+def golf_swing_spinner(height="4.5rem"):
     """A dcc.Loading custom_spinner -- pass as
     dcc.Loading(..., custom_spinner=golf_swing_spinner())  instead of
     dcc.Loading(..., type="circle"). height controls the spinner's box

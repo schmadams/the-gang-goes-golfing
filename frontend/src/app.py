@@ -4,9 +4,10 @@ import os
 
 import dash
 import dash_bootstrap_components as dbc
-from dash import html
+from dash import dcc, html
 from flask import session
 
+from components.spinner import golf_swing_spinner
 from layouts.bottom_nav import build_bottom_nav
 from layouts.navbar import build_navbar
 from layouts.subnav import build_subnav
@@ -79,7 +80,27 @@ def serve_layout():
         # once you'd left "/".
         children.append(html.Div(id="subnav-container"))
 
-    children.append(dash.page_container)
+    # dash.page_container's actual content depends on whichever page's
+    # layout() function runs -- most of them make blocking requests.get()
+    # calls to the backend before returning anything -- so there's a real
+    # gap between "the JS bundle finished mounting" (which is as far as
+    # assets/loading.css's ._dash-loading boot placeholder covers -- see
+    # that file) and "this page's content actually arrived". Wrapping
+    # page_container itself in dcc.Loading covers that second gap with the
+    # same golf swing animation, so the spinner holds continuously through
+    # both phases of a hard page load instead of disappearing the instant
+    # React mounts and leaving a blank gap before content pops in. This
+    # also means every client-side navigation (dcc.Link clicks) gets the
+    # same spinner while its target page's layout() is still running,
+    # which is a reasonable bonus rather than a regression -- previously
+    # navigating showed nothing at all during that wait.
+    children.append(
+        dcc.Loading(
+            dash.page_container,
+            custom_spinner=golf_swing_spinner(height="7.5rem"),
+            parent_style={"minHeight": "60vh"},
+        )
+    )
 
     if session.get("logged_in"):
         # Rendered once per hard load, same as build_navbar() above --
