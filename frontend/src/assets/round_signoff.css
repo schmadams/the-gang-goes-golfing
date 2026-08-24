@@ -1,0 +1,160 @@
+/* target path: frontend/src/assets/round_signoff.css (new file)
+   Round sign-off / validation feature -- the navbar's notification pill
+   (layouts/navbar.py), the "PENDING SIGN-OFF" badge that shows up
+   wherever a round card renders elsewhere in the app (components/
+   scorecard.py's pending_signoff_badge(), used by pages/analysis.py),
+   and everything specific to the dedicated review page itself
+   (pages/round_signoff.py). Amber is used throughout for "awaiting
+   people" states specifically so it reads as visually distinct from
+   navbar.css's red "LIVE" (in progress right now) and the flat navy
+   tournament tag -- this is a third, calmer kind of status, not an
+   alarm and not an identity tag. */
+
+/* ---- Navbar pill (mirrors .t3g-live-round-indicator in navbar.css,
+   amber instead of red) ---- */
+
+.t3g-signoff-indicator {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: #ffffff !important;
+    font-weight: 700;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    text-decoration: none !important;
+    background: rgba(217, 143, 27, 0.18);
+    border: 1px solid rgba(217, 143, 27, 0.55);
+    border-radius: 999px;
+    padding: 0.4rem 0.9rem 0.4rem 0.7rem;
+    transition: transform 0.15s ease;
+}
+
+.t3g-signoff-indicator:hover {
+    transform: scale(1.05);
+}
+
+.t3g-signoff-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #d98f1b;
+    /* Static, not pulsing like .t3g-live-dot -- "waiting on people" isn't
+       an urgent, changing-right-now state the way a live round is. */
+}
+
+/* ---- Round card badge (components/scorecard.py's
+   pending_signoff_badge(), shown in analysis.py's Rounds History and on
+   the review page's own cards) ---- */
+
+.t3g-pending-signoff-badge {
+    display: inline-flex;
+    align-items: center;
+    color: #8a5a00;
+    font-weight: 800;
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    background: rgba(217, 143, 27, 0.15);
+    border: 1px solid rgba(217, 143, 27, 0.45);
+    border-radius: 999px;
+    padding: 0.25rem 0.65rem;
+    white-space: nowrap;
+}
+
+/* ---- Per-player sign-off status badge (components/scorecard.py's
+   player_signoff_status_badge(), used on the review page) ---- */
+
+.t3g-signoff-status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-weight: 800;
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    border-radius: 999px;
+    padding: 0.25rem 0.6rem;
+    white-space: nowrap;
+}
+
+.t3g-signoff-status-badge--done {
+    color: #1f7a34;
+    background: rgba(42, 157, 63, 0.12);
+    border: 1px solid rgba(42, 157, 63, 0.4);
+}
+
+.t3g-signoff-status-badge--pending {
+    color: #8a5a00;
+    background: rgba(217, 143, 27, 0.12);
+    border: 1px solid rgba(217, 143, 27, 0.4);
+}
+
+.t3g-signoff-status-icon {
+    font-weight: 800;
+}
+
+/* ---- Review page (pages/round_signoff.py) ---- */
+
+.t3g-signoff-card {
+    display: flex;
+    flex-direction: column;
+}
+
+.t3g-signoff-waiting-note {
+    padding: 0.6rem 1.1rem;
+    color: #6b7280;
+    font-size: 0.78rem;
+    font-style: italic;
+    border-bottom: 1px solid #e2e4ea;
+}
+
+.t3g-signoff-scorecards {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding: 0.75rem 0;
+}
+
+.t3g-signoff-player-scorecard + .t3g-signoff-player-scorecard {
+    border-top: 1px solid #e2e4ea;
+    padding-top: 0.75rem;
+}
+
+.t3g-signoff-player-scorecard-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0 1.1rem;
+}
+
+.t3g-signoff-player-name {
+    color: #1e2a47;
+    font-weight: 700;
+    font-size: 0.85rem;
+}
+
+.t3g-signoff-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.9rem 1.1rem 1.1rem;
+    border-top: 1px solid #e2e4ea;
+}
+
+.t3g-panel-action-button:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.t3g-panel-action-button:disabled:hover {
+    opacity: 0.5;
+}
+
+@media (max-width: 700px), (max-height: 500px) {
+    .t3g-signoff-actions {
+        flex-direction: column;
+        align-items: stretch;
+    }
+}

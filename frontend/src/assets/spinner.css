@@ -1,4 +1,4 @@
-/* target path: frontend/src/assets/spinner.css (new file)
+/* target path: frontend/src/assets/spinner.css (full replacement)
    Dash automatically finds and loads anything in an assets/ folder next to
    app.py -- no need to link this manually.
 
@@ -63,4 +63,35 @@
 .t3g-golf-spinner-frame--static {
     opacity: 1;
     animation: none;
+}
+
+/* Page-level loading overlay (app.py's dcc.Loading wrapping dash.page_
+   container, id="page-loading-spinner") -- fixes the spinner visibly
+   resizing/repositioning between page navigations.
+
+   dcc.Loading's own internal markup puts the spinner in a div that's
+   position:absolute + height:100%, sized against ITS OWN PARENT's
+   height -- and that parent's height is set by whatever page's real
+   content is mounted underneath it (still fully there in the DOM the
+   whole time, just visibility:hidden while loading -- which still
+   occupies its full natural layout height, it doesn't collapse to
+   nothing). Every page is a different height, and the wrapper resizes
+   the instant a new page's content actually mounts underneath, even
+   before the overlay itself lifts -- so with the default height:100%,
+   the golf-swing graphic's own vertical centering point drifts to a
+   different spot on every single navigation depending on how tall the
+   destination page happens to be. That drift is what actually read as
+   "the loading sign changes height a bit".
+
+   Overriding just the height here (leaving Dash's own position:absolute/
+   top:0/display:flex/centering alone) pins the spinner to a fixed-size
+   box anchored to the top of the content area on every navigation,
+   completely independent of the destination page's real height -- same
+   place, every time. 60vh matches app.py's own parent_style minHeight,
+   so the two stay visually consistent with each other. !important is
+   required here since dcc.Loading sets height as an inline style, which
+   otherwise beats any external stylesheet rule regardless of
+   specificity. */
+#page-loading-spinner {
+    height: 60vh !important;
 }

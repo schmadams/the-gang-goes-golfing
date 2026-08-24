@@ -60,13 +60,19 @@ def build_navbar():
                 html.Div(
                     className="t3g-navbar-actions",
                     children=[
+                        html.Div(id="round-signoff-indicator"),
                         html.Div(id="live-round-indicator"),
                         # Polls rather than reacting to navigation, since
                         # this navbar sits outside dash's page_container and
                         # doesn't re-render on client-side page changes --
-                        # this is what lets the indicator appear a few
-                        # seconds after a round is started from any page,
-                        # and disappear again once it's finished.
+                        # this is what lets the indicator(s) appear a few
+                        # seconds after a round is started (or finished, for
+                        # the sign-off pill) from any page, and disappear
+                        # again once it's finished / everything's signed
+                        # off. One shared interval drives both indicators
+                        # (see refresh_live_round_indicator and
+                        # refresh_round_signoff_indicator below) rather than
+                        # each polling on its own.
                         dcc.Interval(id="live-round-poll", interval=10_000, n_intervals=0),
                         html.Button(
                             "Sign out",
@@ -101,6 +107,44 @@ def refresh_live_round_indicator(n_intervals):
         ],
         href="/live-round",
         className="t3g-live-round-indicator",
+    )
+
+
+@callback(
+    Output("round-signoff-indicator", "children"),
+    Input("live-round-poll", "n_intervals"),
+)
+def refresh_round_signoff_indicator(n_intervals):
+    # Same shared 10s poll as the live-round indicator next to it -- see
+    # that callback's comment. Counts rounds this player is an accepted
+    # participant in, still pending_signoff, and hasn't signed off on yet
+    # (GET /rounds/pending-signoff/{player_id} already excludes anything
+    # this player already approved -- see list_pending_signoff_rounds in
+    # backend/services/rounds.py), so the pill disappears the moment
+    # there's genuinely nothing left for this player to review, not just
+    # when every round is fully completed.
+    player_id = session.get("player_id")
+    if not player_id:
+        return None
+
+    response = requests.get(f"{API_BASE_URL}/rounds/pending-signoff/{player_id}")
+    if response.status_code != 200:
+        return None
+
+    pending_rounds = response.json()
+    if not pending_rounds:
+        return None
+
+    count = len(pending_rounds)
+    label = "1 round needs your sign-off" if count == 1 else f"{count} rounds need your sign-off"
+
+    return dcc.Link(
+        [
+            html.Span(className="t3g-signoff-dot"),
+            html.Span(label),
+        ],
+        href="/round-signoff",
+        className="t3g-signoff-indicator",
     )
 
 

@@ -1,4 +1,4 @@
-# target path: backend/services/whs.py (new file)
+# target path: backend/services/whs.py (full replacement)
 """
 World Handicap System (WHS) Handicap Index calculation -- Rules of
 Handicapping, USGA/R&A, effective January 2024. Implements:
@@ -41,6 +41,19 @@ Deliberately NOT implemented:
     every completed round here is 18 holes.
   - Handicap Committee discretionary adjustments (Rule 5.2a clarifications
     5.2a/1, 5.2a/2) -- those are human judgment calls, not a formula.
+
+This app-specific rule sits on top of the real WHS spec, not in it: a
+solo round -- played with no one else, nobody to sign off on it or
+corroborate the scores -- never contributes a Score Differential, no
+matter how complete or well-rated it is. Only a round played with at
+least one other accepted participant counts, and even then only once
+every player involved has signed off on it (see add_round_signoff.sql
+and backend/services/rounds.py's finish_round / sign_off_round -- a
+multiplayer round doesn't reach status='completed', which is what
+_gather_round_inputs below filters on, until sign-off is unanimous).
+Enforced in _gather_round_inputs, not in the pure calculation functions
+above it, so calculate_handicap_index/get_handicap_breakdown themselves
+stay agnostic to where their RoundInput list came from.
 """
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -312,10 +325,14 @@ def get_handicap_breakdown(rounds_chronological: list[RoundInput]) -> dict:
 def _gather_round_inputs(player_id: str) -> list[RoundInput]:
     """
     Pulls every completed round this player belongs to (owner or accepted
-    participant), oldest to newest, and hydrates each into a RoundInput --
+    participant) that was played with at least one other accepted
+    participant, oldest to newest, and hydrates each into a RoundInput --
     skipping any round that can't produce a valid differential (no
-    rating/slope on its tee, or an incomplete scorecard). Shared by
-    recalculate_and_store_handicap (writes the result) and
+    rating/slope on its tee, or an incomplete scorecard). A solo round --
+    nobody else in it -- is excluded outright, regardless of how complete
+    or well-rated it is: only a round played with other people counts
+    toward a player's Handicap Index (see the module docstring above).
+    Shared by recalculate_and_store_handicap (writes the result) and
     get_player_handicap_breakdown (just reads it) so the two can never
     disagree about which rounds are eligible.
     """
@@ -342,13 +359,41 @@ def _gather_round_inputs(player_id: str) -> list[RoundInput]:
     )
     completed_rounds = rounds_response.data or []
 
+    completed_round_ids = [r["id"] for r in completed_rounds]
+
+    # Solo-round exclusion -- counted straight from round_players rather
+    # than trusting some other hydration's already-built players list,
+    # since this function works off bare round ids, not a hydrated round.
+    # A round with exactly one accepted participant (this player, and no
+    # one else) never contributes a differential; anything with two or
+    # more does, once it's actually reached status='completed' -- which,
+    # for a multiplayer round, only happens after everyone's signed off
+    # (see add_round_signoff.sql / backend/services/rounds.py's
+    # finish_round + sign_off_round), so that half of "only rounds with
+    # other people, once validated" is already covered by the status
+    # filter above; this is the other half.
+    if completed_round_ids:
+        participants_response = (
+            supabase
+            .table("round_players")
+            .select("round_id")
+            .in_("round_id", completed_round_ids)
+            .eq("status", "accepted")
+            .execute()
+        )
+        participant_counts: dict[str, int] = {}
+        for row in (participants_response.data or []):
+            participant_counts[row["round_id"]] = participant_counts.get(row["round_id"], 0) + 1
+
+        completed_rounds = [r for r in completed_rounds if participant_counts.get(r["id"], 0) > 1]
+        completed_round_ids = [r["id"] for r in completed_rounds]
+
     # Batched instead of 3 queries *per round* (tee, its holes, this
     # player's scores) -- with a handful of completed rounds that was
     # already 15+ sequential round trips, and the handicap breakdown is
     # recomputed on every home page load, so it was the single slowest
     # thing on that page. Same fix as rounds.py's
     # _batch_fetch_round_hydration for the same reason.
-    completed_round_ids = [r["id"] for r in completed_rounds]
     tee_ids = list({r["tee_id"] for r in completed_rounds if r.get("tee_id")})
 
     tee_by_id: dict[str, dict] = {}
@@ -439,13 +484,17 @@ def recalculate_and_store_handicap(player_id: str) -> dict | None:
     player_handicaps -- what every other "current handicap" display in
     the app already reads from.
 
-    Called after every round finish (see finish_round in rounds.py). Safe
-    to call any time since it always recomputes from scratch rather than
+    Called after a multiplayer round finishes sign-off (see
+    sign_off_round in rounds.py) -- never after a solo round finishes,
+    since a solo round is excluded from _gather_round_inputs entirely and
+    recalculating after one would just recompute the exact same index
+    from the same eligible rounds as before. Safe to call any time
+    regardless, since it always recomputes from scratch rather than
     incrementally patching a stored value -- there's no risk of drifting
     from what the full history actually says.
     """
     # Local import -- avoids a circular import with backend.services.rounds,
-    # which needs to call *this* module from finish_round.
+    # which needs to call *this* module from sign_off_round.
     from backend.database import supabase
     from backend.services.handicaps import get_current_player_handicap
 

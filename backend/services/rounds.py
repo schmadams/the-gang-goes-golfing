@@ -50,10 +50,10 @@ class NotInGroupingError(Exception):
 
 class NotRoundMemberError(Exception):
     """Raised when a player who isn't an accepted participant in a round
-    tries to update one of its hole scores -- being able to see a
-    round_id/player_id/hole_number combination (e.g. from the URL) isn't
-    enough on its own; the *requester* has to actually belong to the round
-    too, not just the player whose hole is being scored."""
+    tries to update one of its hole scores, or sign off on / reject it --
+    being able to see a round_id/player_id combination (e.g. from the URL)
+    isn't enough on its own; the *requester* has to actually belong to the
+    round too, not just the player whose hole is being scored."""
 
 
 class EarlierRoundNotFinishedError(Exception):
@@ -66,6 +66,23 @@ class EarlierRoundNotFinishedError(Exception):
     def __init__(self, round_number: int):
         self.round_number = round_number
         super().__init__(f"Finish Round {round_number} before starting this round.")
+
+
+class RoundNotPendingSignoffError(Exception):
+    """Raised when signing off on, or rejecting, a round that isn't
+    currently awaiting sign-off -- e.g. it's still in_progress (nobody's
+    submitted a scorecard to approve yet), a solo round that finished
+    straight to completed, or already fully signed off by everyone."""
+
+
+class RoundNotEditableError(Exception):
+    """Raised when trying to update a hole score on a round that isn't
+    in_progress. Once a multiplayer round moves to pending_signoff, its
+    scorecard is meant to be a frozen, submitted-for-review snapshot --
+    not something any player can keep quietly editing while others are
+    deciding whether to approve it. A rejected round resets back to
+    in_progress (see reject_round_signoff) and becomes editable again from
+    there."""
 
 
 @contextmanager
@@ -130,7 +147,9 @@ def _expire_stale_rounds() -> None:
     called at the top of the read/write paths that care whether a round is
     "really" still active (active-round lookups, starting a round,
     accepting an invite), and it self-heals from there rather than needing
-    real infrastructure."""
+    real infrastructure. Only ever targets in_progress -- a round sitting
+    in pending_signoff waiting on people is never auto-scrapped just for
+    taking a while to collect everyone's sign-off."""
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=_EXPIRY_HOURS)).isoformat()
     with _timed(f"find rounds in_progress since before {cutoff}"):
         response = (
@@ -160,7 +179,14 @@ def _get_active_round_id_for_player(player_id: str, tournament_scope: bool = Fal
     round running at the same time without either blocking the other --
     see add_tournament_live_rounds.sql's comment on the rescoped
     rounds_one_active_per_player index, which enforces the same split at
-    the database level for the casual side."""
+    the database level for the casual side.
+
+    Deliberately only ever matches status='in_progress' -- a round sitting
+    in pending_signoff isn't "active" in the sense this guards (you can't
+    still be adding scores to it), so it doesn't block starting a new one.
+    The thing that *does* block starting a new tournament round while an
+    earlier one awaits sign-off is _first_unfinished_prior_round_number's
+    status != 'completed' check, not this."""
     _expire_stale_rounds()
 
     with _timed(f"select accepted round_players for player {player_id}"):
@@ -272,6 +298,10 @@ def _hydrate_round(round_row: dict) -> dict:
             "first_name": player_info.get("first_name"),
             "surname": player_info.get("surname"),
             "nickname": player_info.get("nickname"),
+            # None for a solo round (never needed sign-off) or a
+            # multiplayer round this player hasn't signed off on yet --
+            # see add_round_signoff.sql / sign_off_round.
+            "signed_off_at": rp.get("signed_off_at"),
         }
 
         if rp["status"] != "accepted":
@@ -364,17 +394,24 @@ def get_round(round_id: str, viewer_player_id: str | None = None) -> dict | None
 
     hydrated = _hydrate_round(round_row)
     if viewer_player_id is not None:
-        if round_row.get("tournament_round_id"):
-            # Tournament rounds don't have a single privileged owner the
-            # way casual rounds do -- every grouping member was made an
-            # equal accepted participant when the round was started (see
-            # start_tournament_round), so "can this viewer Finish/Scrap
-            # it" means "are they one of the accepted players", not
-            # "are they specifically whoever happened to tap Start first".
-            hydrated["is_owner"] = any(p["player_id"] == viewer_player_id for p in hydrated["players"])
-        else:
-            hydrated["is_owner"] = round_row["player_id"] == viewer_player_id
+        _apply_viewer_is_owner(hydrated, round_row, viewer_player_id)
     return hydrated
+
+
+def _apply_viewer_is_owner(hydrated: dict, round_row: dict, viewer_player_id: str) -> None:
+    """Sets hydrated["is_owner"] relative to whichever player is looking
+    at this round -- shared by get_round and list_pending_signoff_rounds
+    so both compute it the same way instead of drifting."""
+    if round_row.get("tournament_round_id"):
+        # Tournament rounds don't have a single privileged owner the way
+        # casual rounds do -- every grouping member was made an equal
+        # accepted participant when the round was started (see
+        # start_tournament_round), so "can this viewer Finish/Scrap/sign
+        # off on it" means "are they one of the accepted players", not
+        # "are they specifically whoever happened to tap Start first".
+        hydrated["is_owner"] = any(p["player_id"] == viewer_player_id for p in hydrated["players"])
+    else:
+        hydrated["is_owner"] = round_row["player_id"] == viewer_player_id
 
 
 def list_pending_round_invites(player_id: str) -> list[dict]:
@@ -637,10 +674,11 @@ def list_player_rounds(player_id: str, limit: int = 20) -> list[dict]:
     List for the Rounds History panel (compact) and Scoring History page
     (detailed) -- both read from this one function. Covers every round
     this player belongs to, as owner or accepted participant, not just
-    ones they started. Includes any in-progress round (first in the list)
-    alongside up to `limit` completed rounds -- the `status` field is what
-    lets the frontend show a "live" marker instead of needing a separate
-    lookup.
+    ones they started. Includes any in-progress round and any
+    pending_signoff round (both surfaced ahead of the completed bucket,
+    unlimited) alongside up to `limit` completed rounds -- the `status`
+    field is what lets the frontend show a "live" marker or a "pending
+    sign-off" badge instead of needing a separate lookup.
     """
     _expire_stale_rounds()
 
@@ -668,6 +706,18 @@ def list_player_rounds(player_id: str, limit: int = 20) -> list[dict]:
         )
     active_rounds = active_response.data or []
 
+    with _timed(f"select pending_signoff rounds among player {player_id}'s rounds"):
+        pending_signoff_response = (
+            supabase
+            .table("rounds")
+            .select("*")
+            .in_("id", round_ids)
+            .eq("status", "pending_signoff")
+            .order("completed_at", desc=True)
+            .execute()
+        )
+    pending_signoff_rounds = pending_signoff_response.data or []
+
     with _timed(f"select completed rounds among player {player_id}'s rounds"):
         completed_response = (
             supabase
@@ -681,7 +731,7 @@ def list_player_rounds(player_id: str, limit: int = 20) -> list[dict]:
         )
     completed_rounds = completed_response.data or []
 
-    rounds = active_rounds + completed_rounds
+    rounds = active_rounds + pending_signoff_rounds + completed_rounds
 
     with _timed(f"fetch current handicap for player {player_id}"):
         handicap_row = get_current_player_handicap(player_id)
@@ -914,7 +964,12 @@ def _first_unfinished_prior_round_number(
     isn't one. A player who was never grouped into a given earlier round at
     all (joined the field late, say, or it's a single-round event) isn't
     blocked by it -- only a round they were actually assigned to and left
-    unfinished counts. Mirrored on the frontend by tournament.py's
+    unfinished counts. An earlier round sitting in pending_signoff still
+    counts as unfinished here -- status != 'completed' covers both
+    in_progress and pending_signoff the same way, which is exactly what
+    "can't progress to the next round until everyone has signed off on the
+    previous round" needs; nothing changed here to get that, the existing
+    check already does it. Mirrored on the frontend by tournament.py's
     _first_unfinished_prior_round, which uses this same logic against
     already-fetched tournament data to disable/explain the Start Live
     Round button before the click; this copy is the real, authoritative
@@ -955,12 +1010,13 @@ def _first_unfinished_prior_round_number(
 def fetch_live_rounds_by_tee_time(tee_time_ids: list[str]) -> dict[str, dict]:
     """Batched (one query, not one per group) lookup used by tournament_
     tee_times.py's fetch_tee_times_by_round to attach each grouping's live
-    round status -- {"id": ..., "status": "in_progress"/"completed"} or
-    absent if that grouping's never started one -- so the tournament page's
-    Live Round tab can render Start/Continue/Finished without a separate
-    round-trip per grouping. Deliberately doesn't filter by status; a
-    finished tournament round should still show as "Finished" rather than
-    disappearing and looking like it was never played."""
+    round status -- {"id": ..., "status": "in_progress"/"pending_signoff"/
+    "completed"} or absent if that grouping's never started one -- so the
+    tournament page's Live Round tab can render Start/Continue/Awaiting
+    Sign-off/Finished without a separate round-trip per grouping.
+    Deliberately doesn't filter by status; a finished tournament round
+    should still show as "Finished" rather than disappearing and looking
+    like it was never played."""
     if not tee_time_ids:
         return {}
 
@@ -1094,6 +1150,30 @@ def update_hole_score(
     if not membership or membership["status"] != "accepted":
         raise NotRoundMemberError("Only players in this round can update its scores.")
 
+    # A round waiting on (or already past) sign-off is meant to be a
+    # frozen, submitted-for-review scorecard -- previously nothing server-
+    # side stopped an accepted member from quietly editing scores while
+    # others were deciding whether to approve them, only the frontend UI
+    # hid the controls. Rejecting a pending sign-off resets the round back
+    # to in_progress (see reject_round_signoff) and reopens it here again.
+    with _timed(f"check round status for editability round={round_id}"):
+        round_status_response = (
+            supabase
+            .table("rounds")
+            .select("status")
+            .eq("id", round_id)
+            .maybe_single()
+            .execute()
+        )
+    round_status_row = round_status_response.data if round_status_response is not None else None
+    if not round_status_row:
+        return None
+    if round_status_row["status"] != "in_progress":
+        raise RoundNotEditableError(
+            "This round's scorecard is locked while it's awaiting sign-off (or already completed). "
+            "Reject the sign-off to reopen it for edits."
+        )
+
     if not updates:
         return get_round(round_id, viewer_player_id=player_id)
 
@@ -1211,28 +1291,202 @@ def finish_round(round_id: str) -> dict | None:
     if not round_data:
         return None
 
+    # Idempotent no-op if this round's already past in_progress -- the
+    # frontend only shows Finish on a live round, but nothing stops a
+    # slow double-tap/retry reaching this twice, and blindly re-running
+    # the block below a second time would reset completed_at and could
+    # re-trigger handicap recalculation needlessly.
+    if round_data["status"] != "in_progress":
+        return round_data
+
     if round_data["is_manual"] and not round_data.get("tee_id"):
         owner_entry = next((p for p in round_data["players"] if p["is_owner"]), None)
         if owner_entry:
             _create_course_from_manual_entry(round_data, owner_entry["holes"])
             round_data = get_round(round_id)
 
-    with _timed(f"mark round {round_id} completed"):
+    # A round with more than one accepted player -- a casual round played
+    # with friends, or any tournament round (always multi-player, see
+    # start_tournament_round) -- isn't final the moment the last hole's
+    # entered; every player involved has to sign off on the scorecard
+    # first (see sign_off_round below). It still moves out of in_progress
+    # right here, and completed_at is still set now too -- that's when
+    # play actually finished; sign-off arriving later doesn't change
+    # *when it was played*, only when it's accepted -- it just lands on
+    # pending_signoff instead of completed. A solo round has nobody else
+    # who needs to approve it, so it goes straight to completed -- but
+    # that's the only thing finishing immediately does for it. A solo
+    # round never contributes to anyone's Handicap Index at all, at any
+    # point -- see _gather_round_inputs in whs.py, which excludes any
+    # round with only one accepted participant outright, regardless of
+    # status. Only a round played with other people counts, and only
+    # once it's genuinely completed (which, for a multiplayer round,
+    # means fully signed off).
+    is_multiplayer = len(round_data["players"]) > 1
+    new_status = "pending_signoff" if is_multiplayer else "completed"
+
+    with _timed(f"mark round {round_id} {new_status}"):
         supabase.table("rounds").update({
-            "status": "completed",
+            "status": new_status,
             "completed_at": datetime.now(timezone.utc).isoformat(),
         }).eq("id", round_id).execute()
 
-    # Every accepted player just got a real, final scorecard -- recompute
-    # each of their Handicap Indexes from their full round history, not
-    # just the round owner's. Best-effort: the score data above is already
-    # safely saved, so a WHS calculation failure shouldn't block the round
-    # from finishing -- there's no logging/monitoring infra in this app
-    # yet to alert on it, so this print is the only trace if it ever fires.
-    for player in round_data["players"]:
-        try:
-            recalculate_and_store_handicap(player["player_id"])
-        except Exception as exc:
-            print(f"[WHS] Failed to recalculate handicap for player {player['player_id']}: {exc}")
+    # No recalculation triggered here for either branch. A solo round is
+    # permanently excluded from _gather_round_inputs, so recalculating
+    # right after one finishes would just recompute the exact same
+    # Handicap Index from the same eligible (multiplayer) rounds as
+    # before -- work for no possible change. A multiplayer round's
+    # players get recalculated later, once every player has signed off
+    # (see sign_off_round below) -- that round doesn't even reach
+    # status='completed' until then, so there's nothing for
+    # _gather_round_inputs to pick up yet regardless.
 
     return get_round(round_id)
+
+
+def sign_off_round(round_id: str, player_id: str) -> dict:
+    """Records this player's approval of a pending_signoff round's final
+    scorecard. Once every accepted player has signed off, the round
+    itself flips to completed (completed_at is left as whenever play
+    actually finished, set back in finish_round -- not touched again
+    here) and every accepted player's Handicap Index is recalculated for
+    the first time from this round -- mirrors finish_round's own
+    best-effort recalc loop for the solo case, just deferred to this
+    later point instead of running immediately."""
+    with _timed(f"select round {round_id} for signoff"):
+        round_response = supabase.table("rounds").select("*").eq("id", round_id).maybe_single().execute()
+    round_row = round_response.data if round_response is not None else None
+    if not round_row or round_row["status"] != "pending_signoff":
+        raise RoundNotPendingSignoffError("This round isn't currently awaiting sign-off.")
+
+    with _timed(f"select round_player round={round_id} player={player_id} for signoff"):
+        rp_response = (
+            supabase
+            .table("round_players")
+            .select("*")
+            .eq("round_id", round_id)
+            .eq("player_id", player_id)
+            .maybe_single()
+            .execute()
+        )
+    round_player = rp_response.data if rp_response is not None else None
+    if not round_player or round_player["status"] != "accepted":
+        raise NotRoundMemberError("Only players in this round can sign off on it.")
+
+    now = datetime.now(timezone.utc).isoformat()
+    with _timed(f"record signoff round={round_id} player={player_id}"):
+        supabase.table("round_players").update(
+            {"signed_off_at": now}
+        ).eq("round_id", round_id).eq("player_id", player_id).execute()
+
+    with _timed(f"check outstanding signoffs for round {round_id}"):
+        outstanding_response = (
+            supabase
+            .table("round_players")
+            .select("player_id")
+            .eq("round_id", round_id)
+            .eq("status", "accepted")
+            .is_("signed_off_at", "null")
+            .execute()
+        )
+    still_pending = outstanding_response.data or []
+
+    if not still_pending:
+        with _timed(f"mark round {round_id} completed (all signed off)"):
+            supabase.table("rounds").update({"status": "completed"}).eq("id", round_id).execute()
+
+        with _timed(f"select accepted players for round {round_id} to recalculate handicaps"):
+            accepted_response = (
+                supabase
+                .table("round_players")
+                .select("player_id")
+                .eq("round_id", round_id)
+                .eq("status", "accepted")
+                .execute()
+            )
+        for row in (accepted_response.data or []):
+            try:
+                recalculate_and_store_handicap(row["player_id"])
+            except Exception as exc:
+                print(f"[WHS] Failed to recalculate handicap for player {row['player_id']}: {exc}")
+
+    return get_round(round_id, viewer_player_id=player_id)
+
+
+def reject_round_signoff(round_id: str, player_id: str) -> dict:
+    """Sends a pending_signoff round back for edits -- resets it to
+    in_progress (which naturally reopens it to update_hole_score again,
+    see RoundNotEditableError above) and clears every accepted player's
+    signed_off_at, not just the rejecting player's. The scorecard is
+    about to change, so anyone who already approved it needs to look at
+    it again once it's resubmitted -- their earlier approval was of a
+    version that's now being edited."""
+    with _timed(f"select round {round_id} for signoff rejection"):
+        round_response = supabase.table("rounds").select("*").eq("id", round_id).maybe_single().execute()
+    round_row = round_response.data if round_response is not None else None
+    if not round_row or round_row["status"] != "pending_signoff":
+        raise RoundNotPendingSignoffError("This round isn't currently awaiting sign-off.")
+
+    with _timed(f"select round_player round={round_id} player={player_id} for signoff rejection"):
+        rp_response = (
+            supabase
+            .table("round_players")
+            .select("*")
+            .eq("round_id", round_id)
+            .eq("player_id", player_id)
+            .maybe_single()
+            .execute()
+        )
+    round_player = rp_response.data if rp_response is not None else None
+    if not round_player or round_player["status"] != "accepted":
+        raise NotRoundMemberError("Only players in this round can reject its sign-off.")
+
+    with _timed(f"reopen round {round_id} to in_progress (rejected)"):
+        supabase.table("rounds").update({"status": "in_progress"}).eq("id", round_id).execute()
+
+    with _timed(f"clear signoffs for round {round_id}"):
+        supabase.table("round_players").update(
+            {"signed_off_at": None}
+        ).eq("round_id", round_id).eq("status", "accepted").execute()
+
+    return get_round(round_id, viewer_player_id=player_id)
+
+
+def list_pending_signoff_rounds(player_id: str) -> list[dict]:
+    """Every pending_signoff round this player is an accepted participant
+    in and hasn't signed off on yet -- what powers the navbar notification
+    pill's count and the dedicated review panel's list. A round this
+    player already signed off on (just waiting on someone else) isn't
+    included -- there's nothing left for this player to do on those."""
+    with _timed(f"select unsigned accepted round_players for player {player_id}"):
+        rp_response = (
+            supabase
+            .table("round_players")
+            .select("round_id")
+            .eq("player_id", player_id)
+            .eq("status", "accepted")
+            .is_("signed_off_at", "null")
+            .execute()
+        )
+    round_ids = [r["round_id"] for r in (rp_response.data or [])]
+    if not round_ids:
+        return []
+
+    with _timed(f"select pending_signoff rounds among player {player_id}'s rounds"):
+        rounds_response = (
+            supabase
+            .table("rounds")
+            .select("*")
+            .in_("id", round_ids)
+            .eq("status", "pending_signoff")
+            .order("completed_at", desc=True)
+            .execute()
+        )
+    round_rows = rounds_response.data or []
+
+    hydrated_rounds = []
+    for round_row in round_rows:
+        hydrated = _hydrate_round(round_row)
+        _apply_viewer_is_owner(hydrated, round_row, player_id)
+        hydrated_rounds.append(hydrated)
+    return hydrated_rounds

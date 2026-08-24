@@ -17,6 +17,8 @@ from backend.services.rounds import (
     NotRoundMemberError,
     RoundAlreadyActiveError,
     RoundInviteNotFoundError,
+    RoundNotEditableError,
+    RoundNotPendingSignoffError,
     TooManyInvitesError,
     TournamentTeeTimeNotFoundError,
     delete_round,
@@ -25,8 +27,11 @@ from backend.services.rounds import (
     get_player_analysis,
     get_round,
     list_pending_round_invites,
+    list_pending_signoff_rounds,
     list_player_rounds,
+    reject_round_signoff,
     respond_to_round_invite,
+    sign_off_round,
     start_round,
     start_tournament_round,
     update_hole_score,
@@ -103,6 +108,17 @@ def decline_round_invite_route(round_id: str, player_id: str):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 
 
+# Pending-signoff listing is registered before the plain "/{round_id}"
+# route below it in this file's source order -- FastAPI (like Dash Pages,
+# see frontend/src/app.py's page_registry sort) matches routes in
+# registration order and stops at the first match, and "/{round_id}"'s
+# single path segment would otherwise happily swallow "pending-signoff"
+# as if it were a round id before this route ever got a chance to match.
+@router.get("/pending-signoff/{player_id}", response_model=list[RoundDetailResponse])
+def list_pending_signoff_rounds_route(player_id: str):
+    return list_pending_signoff_rounds(player_id)
+
+
 @router.patch("/{round_id}/players/{player_id}/holes/{hole_number}", response_model=RoundDetailResponse)
 def update_hole_score_route(round_id: str, player_id: str, hole_number: int, payload: HoleScoreUpdate, updated_by: str):
     # updated_by is a plain query param (not part of HoleScoreUpdate's
@@ -116,6 +132,8 @@ def update_hole_score_route(round_id: str, player_id: str, hole_number: int, pay
         round_ = update_hole_score(round_id, player_id, hole_number, payload.model_dump(exclude_unset=True), updated_by)
     except NotRoundMemberError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
+    except RoundNotEditableError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     if not round_:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Round or hole not found")
     return round_
@@ -130,6 +148,34 @@ def finish_round_route(round_id: str):
     if not round_:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Round not found")
     return round_
+
+
+@router.post("/{round_id}/players/{player_id}/signoff", response_model=RoundDetailResponse)
+def sign_off_round_route(round_id: str, player_id: str):
+    # Approves this round's final scorecard on this player's behalf. Once
+    # every accepted player's signed off, the round itself flips to
+    # completed and every player's Handicap Index is recalculated for the
+    # first time from it -- see sign_off_round's docstring.
+    try:
+        return sign_off_round(round_id, player_id)
+    except RoundNotPendingSignoffError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    except NotRoundMemberError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
+
+
+@router.post("/{round_id}/players/{player_id}/reject", response_model=RoundDetailResponse)
+def reject_round_signoff_route(round_id: str, player_id: str):
+    # Sends the round back for edits -- reopens it to in_progress and
+    # clears everyone's sign-off, not just this player's, since the
+    # scorecard they approved is about to change. See reject_round_
+    # signoff's docstring.
+    try:
+        return reject_round_signoff(round_id, player_id)
+    except RoundNotPendingSignoffError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    except NotRoundMemberError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
 
 
 @router.get("/{round_id}", response_model=RoundDetailResponse)

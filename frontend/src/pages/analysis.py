@@ -18,7 +18,13 @@ from dash import ALL, Input, Output, State, callback, dcc, html
 from dash.exceptions import PreventUpdate
 from flask import session
 
-from components.scorecard import format_handicap, history_score_mark_class, live_badge, round_header_label
+from components.scorecard import (
+    format_handicap,
+    history_score_mark_class,
+    live_badge,
+    pending_signoff_badge,
+    round_header_label,
+)
 from config import API_BASE_URL
 
 dash.register_page(__name__, path="/analysis", name="Analysis")
@@ -98,6 +104,7 @@ def _round_scorecard_card(round_data, player_initial, player_label):
     button in the header."""
     round_id = round_data["id"]
     is_live = round_data.get("status") == "in_progress"
+    is_pending_signoff = round_data.get("status") == "pending_signoff"
 
     holes_by_number = {h["hole_number"]: h for h in (round_data.get("holes") or [])}
     front9 = [holes_by_number.get(n, {"hole_number": n}) for n in range(1, 10)]
@@ -259,6 +266,12 @@ def _round_scorecard_card(round_data, player_initial, player_label):
     header_actions = []
     if is_live:
         header_actions.append(live_badge())
+    elif is_pending_signoff:
+        # A round can carry this status here even though the player
+        # themself has already signed off on it -- it just means someone
+        # else in the round hasn't yet. See pages/round_signoff.css.py for
+        # actually approving it; this is read-only context here.
+        header_actions.append(pending_signoff_badge())
     header_actions.append(
         html.Button(
             "Scrap" if is_live else "Delete",

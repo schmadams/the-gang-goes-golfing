@@ -2,9 +2,9 @@
 """
 Shared building blocks for anything that renders a round as a mini
 traditional scorecard -- currently the home page's Rounds History panel
-(compact) and the Scoring History page (detailed). Kept here instead of
-duplicated in both pages so the birdie/bogey mark logic and round header
-formatting only exist once.
+(compact), the Scoring History page (detailed), and the sign-off review
+page. Kept here instead of duplicated across pages so the birdie/bogey
+mark logic and round header formatting only exist once.
 """
 from dash import html
 
@@ -74,6 +74,20 @@ def live_badge():
     )
 
 
+def pending_signoff_badge():
+    """Marks a round as status='pending_signoff' -- finished being played,
+    but not yet accepted into anyone's history/handicap because not every
+    player has approved the final scorecard yet (see add_round_signoff.sql
+    / backend/services/rounds.py finish_round + sign_off_round). Shown
+    anywhere round_header_label appears for a round in this state -- the
+    Rounds History panel, Scoring History, and the sign-off review page's
+    own cards -- so it never looks like just another quietly-completed
+    round. Deliberately not red/pulsing like live_badge() -- this isn't
+    "in progress right now", it's "waiting on people", a calmer, more
+    static kind of pending."""
+    return html.Span("PENDING SIGN-OFF", className="t3g-pending-signoff-badge")
+
+
 def tournament_round_badge():
     """Small tag marking a round as tournament-linked -- shown alongside
     live_badge() for a round in progress, or on its own for a completed
@@ -86,6 +100,23 @@ def tournament_round_badge():
     two separate cards there that need to read as clearly different kinds
     of thing, not just two rounds that happen to have different titles."""
     return html.Span("TOURNAMENT", className="t3g-tournament-round-badge")
+
+
+def player_signoff_status_badge(signed_off_at):
+    """Per-player approval status within a round awaiting sign-off --
+    used on the sign-off review page (pages/round_signoff.css.py) to show, at
+    a glance, who's already approved a scorecard and who's still holding
+    it up. Not used anywhere sign-off doesn't apply (a solo round, or a
+    round that's already fully completed) -- those never carry this."""
+    if signed_off_at:
+        return html.Span(
+            [html.Span("✓", className="t3g-signoff-status-icon"), html.Span("Signed off")],
+            className="t3g-signoff-status-badge t3g-signoff-status-badge--done",
+        )
+    return html.Span(
+        "Awaiting",
+        className="t3g-signoff-status-badge t3g-signoff-status-badge--pending",
+    )
 
 
 def format_handicap(handicap):

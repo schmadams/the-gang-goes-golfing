@@ -16,7 +16,6 @@ from components.scorecard import (
     round_header_label,
     tournament_round_badge,
 )
-from components.spinner import golf_swing_spinner
 from config import API_BASE_URL
 from layouts.panel_navbar import build_panel_navbar
 
@@ -961,25 +960,19 @@ def layout(**kwargs):
                                         clearable=True,
                                         className="mb-2 t3g-course-dropdown",
                                     ),
-                                    dcc.Loading(
-                                        custom_spinner=golf_swing_spinner(height="2rem"),
-                                        children=dcc.Dropdown(
-                                            id="upload-round-course",
-                                            placeholder="Select the course",
-                                            options=[],
-                                            disabled=True,
-                                            className="mb-2 t3g-course-dropdown",
-                                        ),
+                                    dcc.Dropdown(
+                                        id="upload-round-course",
+                                        placeholder="Select the course",
+                                        options=[],
+                                        disabled=True,
+                                        className="mb-2 t3g-course-dropdown",
                                     ),
-                                    dcc.Loading(
-                                        custom_spinner=golf_swing_spinner(height="2rem"),
-                                        children=dcc.Dropdown(
-                                            id="upload-round-tee",
-                                            placeholder="Select tees",
-                                            options=[],
-                                            disabled=True,
-                                            className="mb-1 t3g-course-dropdown",
-                                        ),
+                                    dcc.Dropdown(
+                                        id="upload-round-tee",
+                                        placeholder="Select tees",
+                                        options=[],
+                                        disabled=True,
+                                        className="mb-1 t3g-course-dropdown",
                                     ),
                                     html.Div(id="upload-round-tee-status", className="t3g-empty-state mt-1"),
                                 ],

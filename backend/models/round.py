@@ -122,6 +122,12 @@ class RoundPlayerScorecard(BaseModel):
     first_name: Optional[str] = None
     surname: Optional[str] = None
     nickname: Optional[str] = None
+    # When this player approved the round's scorecard while it was
+    # pending_signoff -- None means either the round never needed
+    # sign-off (solo round, straight to completed) or this player hasn't
+    # signed off yet. See backend/services/rounds.py sign_off_round /
+    # reject_round_signoff and add_round_signoff.sql.
+    signed_off_at: Optional[datetime] = None
     holes: list[HoleScoreResponse] = []
 
 
@@ -133,6 +139,15 @@ class RoundResponse(BaseModel):
     is_manual: bool
     manual_club_name: Optional[str] = None
     manual_tee_name: Optional[str] = None
+    # 'in_progress' -> (for a round with more than one accepted player)
+    # 'pending_signoff' -> 'completed', or 'in_progress' -> 'completed'
+    # directly for a solo round -- see finish_round / sign_off_round in
+    # backend/services/rounds.py. 'pending_signoff' still feeds the live
+    # tournament leaderboard exactly like 'in_progress'/'completed' always
+    # have (get_tournament_leaderboard reads round_scores directly, with
+    # no status filtering at all), it just isn't in anyone's Handicap
+    # Index yet and blocks that tournament's next round from starting
+    # until it clears.
     status: str
     started_at: datetime
     completed_at: Optional[datetime] = None
@@ -191,10 +206,10 @@ class RoundSummaryResponse(RoundResponse):
     always the *viewing* player's own scorecard within a round they own or
     were an accepted participant in, not everyone's. A full mini scorecard
     (par/strokes/putts/fairway/net/Stableford per hole) plus round-level
-    totals. Covers both completed rounds and any in-progress round the
+    totals. Covers in-progress, pending_signoff, and completed rounds the
     player belongs to (status distinguishes them, inherited from
-    RoundResponse) so a live round can show up in the same list, marked as
-    live, instead of needing a separate lookup."""
+    RoundResponse) so a live or awaiting-signoff round can show up in the
+    same list, marked accordingly, instead of needing a separate lookup."""
     club_name: Optional[str] = None
     course_name: Optional[str] = None
     tee_name: Optional[str] = None

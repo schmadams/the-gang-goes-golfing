@@ -94,11 +94,56 @@ def serve_layout():
     # same spinner while its target page's layout() is still running,
     # which is a reasonable bonus rather than a regression -- previously
     # navigating showed nothing at all during that wait.
+    #
+    # delay_hide=2000 -- once this spinner does show, keep it up for at
+    # least 2 seconds even if the page actually finished loading sooner.
+    # Without this, a fast page (or a client-side dcc.Link nav that
+    # resolves almost instantly) made the golf swing animation flash on
+    # and cut off mid-swing, which read as glitchy rather than smooth --
+    # dcc.Loading's default behavior shows/hides strictly based on actual
+    # loading state with no minimum, so any load under 2s would flash
+    # instead of playing even one full swing. delay_show is left at its
+    # default (0) on purpose -- the ask was only "don't let it disappear
+    # too fast once it's up", not "wait before showing it", so a genuinely
+    # slow load still shows the spinner immediately rather than adding
+    # more dead time up front.
+    #
+    # target_components={"_pages_content": "children"} -- without this,
+    # dcc.Loading shows for ANY pending callback anywhere in the app whose
+    # Output lives inside page_container, which in practice is nearly
+    # every callback that exists (a score save on the live round page, a
+    # dropdown search, a hole-by-hole nav click, etc.), since they're all
+    # rendered somewhere under page_container. That's what made this
+    # spinner feel "over-reactive" -- it was covering the whole page for
+    # routine in-page interactions, not just real navigations. "_pages_
+    # content" is Dash Pages' own internal id (dash.dash._ID_CONTENT) for
+    # the div whose children get swapped on an actual page load/
+    # navigation -- scoping target_components to just that one id+prop
+    # means this spinner now only reacts to genuine page loads, and every
+    # other callback on the page updates normally with no overlay at all.
+    #
+    # id="page-loading-spinner" -- pairs with a CSS override in assets/
+    # spinner.css. dcc.Loading's own DOM has the spinner sit in a div
+    # that's position:absolute + height:100% inside this wrapper --
+    # "100%" of the wrapper's own height, which is set by whichever
+    # page's real content is mounted underneath (still there the whole
+    # time, just visibility:hidden while loading, which still occupies
+    # its full layout height). Every page is a different height, and the
+    # wrapper resizes the instant the destination page's content actually
+    # mounts (even before the overlay lifts) -- so the spinner's own
+    # vertical centering point was drifting between navigations, which is
+    # what actually read as "the loading sign changes height a bit".
+    # Pinning that spinner div to a fixed height via CSS (see spinner.css)
+    # keeps it centered in the exact same spot on every navigation,
+    # completely independent of the destination page's real height.
     children.append(
         dcc.Loading(
             dash.page_container,
+            id="page-loading-spinner",
             custom_spinner=golf_swing_spinner(height="7.5rem"),
             parent_style={"minHeight": "60vh"},
+            delay_hide=2000,
+            target_components={"_pages_content": "children"},
         )
     )
 

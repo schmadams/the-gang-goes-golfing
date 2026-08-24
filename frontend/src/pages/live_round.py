@@ -175,6 +175,104 @@ def _find_player(players, player_id):
     return next((p for p in (players or []) if p["player_id"] == player_id), None)
 
 
+def _modal_open_state(player, hole_number, source):
+    """Everything the Enter Score modal needs to open pre-filled for one
+    player's one hole -- shared by toggle_score_modal (a fresh tap on a
+    score button) and save_score's Hole by Hole auto-advance (jumping
+    straight to the next player without the user tapping anything), so
+    both populate the modal identically. Returns the exact 12-tuple
+    toggle_score_modal's Outputs expect, in that same order: is_open,
+    title, par, shots value, shots display, putts value, putts display,
+    fairway radio value, fairway row style, badge text, badge className,
+    active-hole-store data.
+
+    `source` ("full" or "holebyhole") records which view this open came
+    from, carried on live-round-active-hole-store's own data -- that's
+    what lets save_score later tell whether THIS save should auto-advance
+    at all: only a Hole by Hole open should ever chain to the next
+    player/hole; a Full Scorecard tap should always just close back to
+    the Full Scorecard, however the score got there.
+    """
+    holes = player.get("holes") or {}
+    hole = holes.get(str(hole_number), {})
+    par = _hole_par(hole)
+    strokes = hole.get("strokes")
+    putts = hole.get("putts")
+
+    # Nothing entered for this hole yet -- start the steppers at a
+    # sensible guess (par, 2 putts) instead of blank, so most holes are
+    # just a tap or two away instead of building the number from zero. A
+    # hole that's already been scored always shows its real values.
+    if strokes is None and par is not None:
+        strokes = par
+    if putts is None:
+        putts = 2
+
+    badge_text, badge_class = _result_badge(strokes, par)
+
+    # Fairway hit isn't a meaningful stat on a par 3 -- there's normally
+    # no lay-up shot to a fairway, you're going straight at the green --
+    # so hide the toggle rather than ask a question that doesn't apply.
+    fairway_row_style = {"display": "none"} if par == 3 else {}
+
+    title = f"{player.get('display_name', 'Player')} · Hole {hole_number}"
+    if par is not None:
+        title += f" · Par {par}"
+
+    return (
+        True,
+        title,
+        par,
+        strokes,
+        str(strokes) if strokes is not None else "-",
+        putts,
+        str(putts) if putts is not None else "-",
+        _FAIRWAY_BOOL_TO_RADIO.get(hole.get("fairway_hit")),
+        fairway_row_style,
+        badge_text,
+        badge_class,
+        {"player_id": player.get("player_id"), "hole_number": hole_number, "source": source},
+    )
+
+
+def _next_unscored_player(players, hole_number, after_player_id):
+    """Cycles through `players` (already updated in-memory with whatever
+    was just saved) starting right after after_player_id and wrapping
+    around the whole group, returning the first one still missing a
+    strokes value for hole_number -- or None once everyone has one. This
+    -- not just literal list-order "the next index" -- is what "take you
+    to the next player" means in practice: skip straight past anyone
+    already scored, including looping back around to someone earlier in
+    row order who hasn't been reached yet."""
+    ids_in_order = [p["player_id"] for p in players]
+    start = ids_in_order.index(after_player_id) + 1 if after_player_id in ids_in_order else 0
+    ordered = players[start:] + players[:start]
+    for p in ordered:
+        hole = (p.get("holes") or {}).get(str(hole_number), {})
+        if hole.get("strokes") is None:
+            return p
+    return None
+
+
+def _view_switch_state(view):
+    """(view, holeview_style, full_style, holebyhole_class, full_class)
+    for switching the scorecard between Full Scorecard and Hole by Hole --
+    shared by switch_scorecard_view (the toggle buttons, below) and
+    save_score's own auto-switch to Full Scorecard once hole 18 is fully
+    scored, so both ways of landing on a view build the exact same
+    style/className state instead of two copies of this logic drifting
+    apart from each other."""
+    holeview_style = {} if view == "holebyhole" else {"display": "none"}
+    full_style = {"display": "none"} if view == "holebyhole" else {}
+    holebyhole_class = "t3g-scorecard-view-toggle-button" + (
+        " t3g-scorecard-view-toggle-button--active" if view == "holebyhole" else ""
+    )
+    full_class = "t3g-scorecard-view-toggle-button" + (
+        " t3g-scorecard-view-toggle-button--active" if view == "full" else ""
+    )
+    return view, holeview_style, full_style, holebyhole_class, full_class
+
+
 @callback(
     Output("live-round-score-modal", "is_open"),
     Output("live-round-score-modal-title", "children"),
@@ -198,9 +296,12 @@ def toggle_score_modal(button_clicks, holeview_button_clicks, cancel_clicks, pla
     # Full Scorecard and Hole by Hole each have their own score buttons
     # (distinct id "type"s -- see _holeview_score_button's docstring in
     # components/live_scorecard.py for why they can't share one), but both
-    # open this exact same modal the exact same way -- whichever one fired
-    # carries the same {player, hole} shape, so everything below this
-    # point doesn't need to know or care which view the click came from.
+    # open this exact same modal the exact same way via the shared
+    # _modal_open_state helper -- the only thing that differs is which
+    # "source" gets tagged onto live-round-active-hole-store's data.
+    # save_score (below) reads that back afterwards to decide whether
+    # saving should just close the modal (Full Scorecard) or chain
+    # straight on to the next player/hole (Hole by Hole).
     triggered_id = dash.ctx.triggered_id
     no_update = dash.no_update
 
@@ -222,47 +323,10 @@ def toggle_score_modal(button_clicks, holeview_button_clicks, cancel_clicks, pla
 
         hole_number = triggered_id["hole"]
         clicked_player_id = triggered_id["player"]
-        player = _find_player(players, clicked_player_id) or {}
-        hole = (player.get("holes") or {}).get(str(hole_number), {})
-        par = _hole_par(hole)
-        strokes = hole.get("strokes")
-        putts = hole.get("putts")
+        player = _find_player(players, clicked_player_id) or {"player_id": clicked_player_id}
+        source = "holebyhole" if triggered_id["type"] == "live-round-holeview-score-button" else "full"
 
-        # Nothing entered for this hole yet -- start the steppers at a
-        # sensible guess (par, 2 putts) instead of blank, so most holes are
-        # just a tap or two away instead of building the number from zero.
-        # A hole that's already been scored always shows its real values.
-        if strokes is None and par is not None:
-            strokes = par
-        if putts is None:
-            putts = 2
-
-        badge_text, badge_class = _result_badge(strokes, par)
-
-        # Fairway hit isn't a meaningful stat on a par 3 -- there's
-        # normally no lay-up shot to a fairway, you're going straight at
-        # the green -- so hide the toggle rather than ask a question that
-        # doesn't apply.
-        fairway_row_style = {"display": "none"} if par == 3 else {}
-
-        title = f"{player.get('display_name', 'Player')} · Hole {hole_number}"
-        if par is not None:
-            title += f" · Par {par}"
-
-        return (
-            True,
-            title,
-            par,
-            strokes,
-            str(strokes) if strokes is not None else "-",
-            putts,
-            str(putts) if putts is not None else "-",
-            _FAIRWAY_BOOL_TO_RADIO.get(hole.get("fairway_hit")),
-            fairway_row_style,
-            badge_text,
-            badge_class,
-            {"player_id": clicked_player_id, "hole_number": hole_number},
-        )
+        return _modal_open_state(player, hole_number, source)
 
     raise PreventUpdate
 
@@ -312,10 +376,56 @@ def adjust_putts(plus_clicks, minus_clicks, current):
     return value, str(value) if value is not None else "-"
 
 
-@callback(
+# The full ordered set of save_score's outputs, and matching names used
+# by _save_score_result below to build each branch's return tuple by
+# name instead of by position. save_score's branches each touch a wildly
+# different subset of these 20 outputs (an error only touches 3 of them;
+# chaining to the next Hole by Hole player touches a different dozen than
+# advancing to the next hole does) -- building the tuple from a
+# dash.no_update-everywhere dict and overriding just what changed avoids
+# hand-counting no_update placeholders per branch, which is exactly the
+# kind of thing that quietly goes stale the next time an output gets
+# added or reordered.
+_SAVE_SCORE_OUTPUTS = (
     Output("live-round-score-modal", "is_open", allow_duplicate=True),
     Output("live-round-players-store", "data", allow_duplicate=True),
     Output("live-round-error", "children", allow_duplicate=True),
+    Output("live-round-active-hole-store", "data", allow_duplicate=True),
+    Output("live-round-holeview-hole-store", "data", allow_duplicate=True),
+    Output("live-round-view-mode-store", "data", allow_duplicate=True),
+    Output("live-round-holeview-container", "style", allow_duplicate=True),
+    Output("live-round-full-view-container", "style", allow_duplicate=True),
+    Output("live-round-view-holebyhole-button", "className", allow_duplicate=True),
+    Output("live-round-view-full-button", "className", allow_duplicate=True),
+    Output("live-round-score-modal-title", "children", allow_duplicate=True),
+    Output("live-round-score-modal-par-store", "data", allow_duplicate=True),
+    Output("live-round-score-shots-store", "data", allow_duplicate=True),
+    Output("live-round-score-shots-display", "children", allow_duplicate=True),
+    Output("live-round-score-putts-store", "data", allow_duplicate=True),
+    Output("live-round-score-putts-display", "children", allow_duplicate=True),
+    Output("live-round-score-fairway-input", "value", allow_duplicate=True),
+    Output("live-round-score-fairway-row", "style", allow_duplicate=True),
+    Output("live-round-score-result-badge", "children", allow_duplicate=True),
+    Output("live-round-score-result-badge", "className", allow_duplicate=True),
+)
+_SAVE_SCORE_OUTPUT_NAMES = (
+    "modal_is_open", "players_store", "error", "active_hole_store",
+    "holeview_hole_store", "view_mode_store", "holeview_container_style",
+    "full_view_container_style", "holebyhole_button_class", "full_button_class",
+    "modal_title", "modal_par_store", "shots_store", "shots_display",
+    "putts_store", "putts_display", "fairway_value", "fairway_row_style",
+    "badge_children", "badge_className",
+)
+
+
+def _save_score_result(**overrides):
+    values = {name: dash.no_update for name in _SAVE_SCORE_OUTPUT_NAMES}
+    values.update(overrides)
+    return tuple(values[name] for name in _SAVE_SCORE_OUTPUT_NAMES)
+
+
+@callback(
+    *_SAVE_SCORE_OUTPUTS,
     Input("live-round-score-save", "n_clicks"),
     State("live-round-active-hole-store", "data"),
     State("live-round-id-store", "data"),
@@ -332,6 +442,13 @@ def save_score(n_clicks, active_hole, round_id, shots, putts, fairway_radio, par
 
     target_player_id = active_hole["player_id"]
     hole_number = active_hole["hole_number"]
+    # Rounds finished before this "source" tracking existed would have
+    # no key here, but active_hole is always freshly set by
+    # toggle_score_modal right before this can ever fire in practice, so
+    # this default is really just a defensive fallback, not an expected
+    # path -- falling back to "full" (no auto-advance) is the safe
+    # choice if it's ever missing.
+    source = active_hole.get("source", "full")
 
     # Par 3s don't get a fairway hit toggle in the UI -- also ignore
     # whatever's in the radio's stale value here, rather than trusting a
@@ -349,7 +466,7 @@ def save_score(n_clicks, active_hole, round_id, shots, putts, fairway_radio, par
             detail = response.json().get("detail", "Couldn't save that score.")
         except ValueError:
             detail = "Couldn't save that score."
-        return dash.no_update, dash.no_update, detail
+        return _save_score_result(error=detail)
 
     players = [dict(p) for p in (players or [])]
     for p in players:
@@ -360,7 +477,72 @@ def save_score(n_clicks, active_hole, round_id, shots, putts, fairway_radio, par
             holes[str(hole_number)] = hole
             p["holes"] = holes
 
-    return False, players, ""
+    # A Full Scorecard save has nothing to chain to -- the view never
+    # changed to open this modal in the first place, so there's nothing
+    # to navigate; just close it and land right back on the Full
+    # Scorecard, exactly where the tap that opened it came from. This is
+    # also what makes "no loading icon" true here in practice: none of
+    # this callback's outputs touch "_pages_content", so app.py's
+    # page-level spinner (now scoped via target_components -- see that
+    # file) never fires for a save regardless of which view it came from.
+    if source != "holebyhole":
+        return _save_score_result(
+            modal_is_open=False, players_store=players, error="", active_hole_store=None,
+        )
+
+    # Hole by Hole: chain straight to whichever player still needs a
+    # score for this same hole, wrapping the group starting right after
+    # whoever was just scored -- lets one person rattle straight through
+    # everyone's score for a hole without re-tapping each score button by
+    # hand.
+    next_player = _next_unscored_player(players, hole_number, target_player_id)
+    if next_player is not None:
+        (
+            modal_is_open, title, modal_par, shots_val, shots_display,
+            putts_val, putts_display, fairway_value, fairway_row_style,
+            badge_children, badge_className, active_hole_data,
+        ) = _modal_open_state(next_player, hole_number, "holebyhole")
+        return _save_score_result(
+            modal_is_open=modal_is_open,
+            players_store=players,
+            error="",
+            active_hole_store=active_hole_data,
+            modal_title=title,
+            modal_par_store=modal_par,
+            shots_store=shots_val,
+            shots_display=shots_display,
+            putts_store=putts_val,
+            putts_display=putts_display,
+            fairway_value=fairway_value,
+            fairway_row_style=fairway_row_style,
+            badge_children=badge_children,
+            badge_className=badge_className,
+        )
+
+    # Everyone's scored for this hole -- move on. Hole 18 finishing is
+    # treated as "the round's essentially done" -- land on the Full
+    # Scorecard to review the whole card instead of trying to advance to
+    # a hole 19 that doesn't exist. Any earlier hole just advances Hole
+    # by Hole to the next one with the modal closed, ready for the group
+    # to tap into that hole's first player whenever they get there --
+    # deliberately not auto-opening the next hole's modal too, since
+    # walking to the next tee takes a beat in real life and there's no
+    # "next player" to chain to yet until someone actually taps in.
+    if hole_number >= 18:
+        view, holeview_style, full_style, holebyhole_class, full_class = _view_switch_state("full")
+        return _save_score_result(
+            modal_is_open=False, players_store=players, error="", active_hole_store=None,
+            view_mode_store=view,
+            holeview_container_style=holeview_style,
+            full_view_container_style=full_style,
+            holebyhole_button_class=holebyhole_class,
+            full_button_class=full_class,
+        )
+
+    return _save_score_result(
+        modal_is_open=False, players_store=players, error="", active_hole_store=None,
+        holeview_hole_store=hole_number + 1,
+    )
 
 
 @callback(
@@ -557,18 +739,7 @@ def confirm_scrap_round(n_clicks, round_id):
 )
 def switch_scorecard_view(holebyhole_clicks, full_clicks):
     view = "full" if dash.ctx.triggered_id == "live-round-view-full-button" else "holebyhole"
-
-    holeview_style = {} if view == "holebyhole" else {"display": "none"}
-    full_style = {"display": "none"} if view == "holebyhole" else {}
-
-    holebyhole_class = "t3g-scorecard-view-toggle-button" + (
-        " t3g-scorecard-view-toggle-button--active" if view == "holebyhole" else ""
-    )
-    full_class = "t3g-scorecard-view-toggle-button" + (
-        " t3g-scorecard-view-toggle-button--active" if view == "full" else ""
-    )
-
-    return view, holeview_style, full_style, holebyhole_class, full_class
+    return _view_switch_state(view)
 
 
 @callback(
@@ -611,6 +782,11 @@ def render_holeview_panel(hole_number, players):
     # content call, just made once up front) -- this callback only needs
     # to run for what happens *after* that: navigating to a different hole,
     # or a score getting saved (from either view) updating players-store.
+    # save_score (above) can update both of this callback's Inputs in the
+    # same round trip when it auto-advances Hole by Hole to the next hole
+    # -- Dash batches simultaneous input changes into one call here, so
+    # this still only fires once and renders the new hole with the
+    # already-updated scores, not twice with a stale hole/players mix.
     if not hole_number or not players:
         raise PreventUpdate
     return _hole_by_hole_panel_content(hole_number, players)
