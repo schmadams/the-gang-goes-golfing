@@ -485,7 +485,18 @@ def _tee_times_panel(tournament, is_admin, player_id):
                         id={"type": "tournament-teetime-redirect", "round_id": round_id}, refresh=True
                     ),
                     management_table,
-                    html.Div(group_rows, className="t3g-teetime-group-list"),
+                    # Wrapped in .t3g-teetime-group-list-scroll (not just
+                    # the inner .t3g-teetime-group-list card itself) so the
+                    # recap table can scroll sideways on mobile once a
+                    # round's group_size goes past 3 players, instead of
+                    # squeezing every player column narrower and narrower --
+                    # see the mobile block for .t3g-teetime-group-list-
+                    # scroll / .t3g-teetime-recap-row / .t3g-teetime-recap-
+                    # cell in club.css.
+                    html.Div(
+                        html.Div(group_rows, className="t3g-teetime-group-list"),
+                        className="t3g-teetime-group-list-scroll",
+                    ),
                 ],
             )
         )

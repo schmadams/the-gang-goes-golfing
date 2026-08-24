@@ -1,4 +1,4 @@
-/* target path: frontend/src/assets/club.css (new file) */
+/* target path: frontend/src/assets/club.css (full replacement) */
 
 .t3g-club-directory-table {
     width: 100%;
@@ -542,6 +542,22 @@
     margin-top: 0.5rem;
 }
 
+/* .t3g-teetime-group-list-scroll wraps .t3g-teetime-group-list only on
+   mobile (see the wrapper Div tournament.py's _tee_times_panel adds
+   around group_rows) -- letting the recap table scroll sideways once a
+   round's group_size goes past 3 players, rather than the player columns
+   just squeezing narrower and narrower and truncating names down to a
+   couple of characters. Same horizontal-scroll pattern the Leaderboard's
+   Detailed view already uses for its 18 hole columns (see
+   .t3g-leaderboard-wrap in this same file) -- proven elsewhere in the
+   app, reused here rather than inventing a second approach. No-op on
+   desktop/tablet, where there's normally enough width that scrolling
+   never actually kicks in. */
+.t3g-teetime-group-list-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
 .t3g-teetime-recap-row {
     display: flex;
     align-items: center;
@@ -729,6 +745,131 @@
     padding: 0.35rem 0.7rem;
     border-radius: 999px;
     white-space: nowrap;
+}
+
+/* Start Sheet on mobile -- the round cards, "your tee time" row, badges,
+   and read-only recap table all use the same roomy padding/font sizes as
+   desktop by default, which reads oversized and cramped-feeling all at
+   once on a phone (screenshot: huge card padding, a big "Your tee time"
+   row, and a recap table so wide its player columns truncate to a
+   couple characters). Scoped to .t3g-teetime-round-section specifically
+   (not the bare .t3g-modal-section it also carries) so the Create/Edit
+   Tournament modal's own section padding is untouched -- same reasoning
+   for scoping the heading rule under .t3g-teetime-round-section rather
+   than the bare .t3g-tournament-rounds-label, which the modal also uses.
+   Shrinking the recap cell font is what actually fixes the truncation
+   in the screenshot -- more characters fit before the ellipsis kicks in
+   at the same column width -- and trimming the fixed time column width
+   frees up a bit more room for the player columns alongside it. */
+@media (max-width: 700px), (max-height: 500px) {
+    .t3g-teetime-round-section {
+        padding: 0.7rem 0.8rem;
+        margin-bottom: 0.7rem;
+    }
+
+    .t3g-teetime-round-section .t3g-tournament-rounds-label {
+        font-size: 0.68rem;
+    }
+
+    .t3g-teetime-generate-row {
+        gap: 0.4rem;
+        margin: 0.4rem 0 0.6rem;
+    }
+
+    .t3g-teetime-time-input {
+        padding: 0.3rem 0.5rem;
+        font-size: 0.8rem;
+    }
+
+    .t3g-liveround-group {
+        gap: 0.5rem;
+        padding: 0.55rem 0.75rem;
+    }
+
+    .t3g-liveround-group-meta {
+        font-size: 0.78rem;
+    }
+
+    .t3g-liveround-finished-badge,
+    .t3g-liveround-inprogress-badge {
+        font-size: 0.7rem;
+        padding: 0.28rem 0.55rem;
+    }
+
+    .t3g-teetime-recap-row {
+        gap: 0.35rem;
+        padding: 0.4rem 0.6rem;
+    }
+
+    .t3g-teetime-recap-row--header .t3g-teetime-recap-cell {
+        font-size: 0.6rem;
+    }
+
+    .t3g-teetime-recap-cell {
+        font-size: 0.72rem;
+    }
+
+    .t3g-teetime-recap-cell--time {
+        flex: 0 0 3.4rem;
+    }
+
+    .t3g-teetime-recap-divider {
+        font-size: 0.7rem;
+    }
+
+    /* Below this breakpoint, each recap row stops shrinking its player
+       columns to fit the viewport -- instead every column (time +
+       however many players the round's group_size calls for) keeps a
+       fixed, still-legible width, the row itself grows to fit all of
+       them, and .t3g-teetime-group-list-scroll (the wrapper just outside
+       .t3g-teetime-group-list) scrolls sideways for whatever doesn't fit
+       on screen at once. Without this, a 4-ball (or bigger) round's
+       Player D/E column would just keep squeezing narrower than a
+       3-ball's ever does, truncating names down to a character or two --
+       scrolling instead means every name gets the same comfortable
+       width regardless of how many players are in the group. */
+    .t3g-teetime-recap-row {
+        width: max-content;
+        min-width: 100%;
+    }
+
+    /* :not(...) rather than relying on source order to keep this from
+       fighting .t3g-teetime-recap-cell--time's own flex override right
+       above -- both selectors have identical specificity (one class
+       each), so whichever happened to come later in the file would
+       otherwise win outright regardless of which one actually makes
+       sense for a given cell. */
+    .t3g-teetime-recap-cell:not(.t3g-teetime-recap-cell--time) {
+        flex: 0 0 5.4rem;
+    }
+
+    /* The outer "Tee Times" card itself (white background, drop shadow,
+       header bar) is just one more layer of chrome once every round
+       inside it is already its own shaded tile (.t3g-teetime-round-
+       section) -- on a full-size screen that outer card visually groups
+       the whole tab, but on a phone it mostly just eats width and
+       vertical space without adding information the round tiles and the
+       Start Sheet subnav tab above them don't already convey. Scoped to
+       #tournament-tab-panel-startsheet (the Start Sheet tab's own root
+       id, set in tournament.py's layout()) rather than .t3g-panel itself,
+       so every other page's panels (Home, Clubs, My Account, the
+       Tournament Info/Leaderboard/Live Round tabs) keep their normal
+       card treatment -- this only ever matches the Start Sheet tab's
+       specific wrapper. */
+    #tournament-tab-panel-startsheet .t3g-panel {
+        background: transparent;
+        border-radius: 0;
+        box-shadow: none;
+        margin-bottom: 0;
+    }
+
+    #tournament-tab-panel-startsheet .t3g-panel-navbar {
+        display: none;
+    }
+
+    #tournament-tab-panel-startsheet .t3g-panel-body {
+        padding: 0;
+    }
 }
 
 /* Leaderboard tab -- round selector + Gross/Stableford/Nett format toggle
