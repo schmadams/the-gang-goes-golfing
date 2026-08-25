@@ -20,4 +20,5 @@ class ClubResponse(BaseModel):
     name: str
     description: str | None = None
     club_admin: UUID | None = None
+    photo_url: str | None = None
     created_at: datetime | None = None

@@ -11,6 +11,7 @@ from backend.services.players import (
     update_player,
     upload_profile_picture,
 )
+from backend.services.storage import ImageUploadError
 
 router = APIRouter(
     prefix="/players",
@@ -83,7 +84,16 @@ def update_player_route(player_id: str, player: PlayerUpdate):
 @router.post("/{player_id}/profile-picture", response_model=PlayerResponse)
 async def upload_profile_picture_route(player_id: str, file: UploadFile = File(...)):
     file_bytes = await file.read()
-    updated = upload_profile_picture(player_id, file_bytes, file.filename, file.content_type)
+    try:
+        updated = upload_profile_picture(player_id, file_bytes, file.filename, file.content_type)
+    except ImageUploadError as exc:
+        # 502 (not 500) -- this app's own code ran fine, it's the upstream
+        # Supabase Storage call that failed (see ImageUploadError's
+        # docstring, usually a missing/non-public bucket). str(exc) is
+        # deliberately in the response body here rather than swallowed,
+        # so whoever's debugging this doesn't need backend log access to
+        # see it.
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
 
     if not updated:
         raise HTTPException(

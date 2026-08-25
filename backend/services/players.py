@@ -1,6 +1,4 @@
 # target path: backend/services/players.py (full replacement)
-import os
-
 from backend.database import supabase
 from backend.services.friends import are_friends
 from backend.services.handicaps import (
@@ -8,7 +6,14 @@ from backend.services.handicaps import (
     get_handicap_breakdown,
     list_player_handicaps,
 )
-from backend.services.rounds import get_player_analysis, get_player_scoring_profile, list_player_rounds
+from backend.services.rounds import (
+    get_player_analysis,
+    get_player_distance_profile,
+    get_player_scoring_history,
+    get_player_scoring_profile,
+    list_player_rounds,
+)
+from backend.services.storage import extension_for, upload_image
 
 PROFILE_PICTURE_BUCKET = "profile-pictures"
 
@@ -83,20 +88,8 @@ def update_player(player_id: str, updates: dict) -> dict | None:
 def upload_profile_picture(
     player_id: str, file_bytes: bytes, filename: str | None, content_type: str | None
 ) -> dict | None:
-    extension = os.path.splitext(filename or "")[1] or ".jpg"
-    storage_path = f"{player_id}{extension}"
-
-    # NOTE: the exact file_options key for "overwrite if it already exists"
-    # has changed across supabase-py versions ("upsert" vs "x-upsert"). If
-    # this raises an error about an unrecognized option, check what your
-    # installed version expects.
-    supabase.storage.from_(PROFILE_PICTURE_BUCKET).upload(
-        storage_path,
-        file_bytes,
-        {"content-type": content_type or "image/jpeg", "upsert": "true"},
-    )
-
-    public_url = supabase.storage.from_(PROFILE_PICTURE_BUCKET).get_public_url(storage_path)
+    storage_path = f"{player_id}{extension_for(filename)}"
+    public_url = upload_image(PROFILE_PICTURE_BUCKET, storage_path, file_bytes, content_type)
 
     return update_player(player_id, {"profile_picture_url": public_url})
 
@@ -169,6 +162,8 @@ def get_player_profile(player_id: str, viewer_player_id: str) -> dict | None:
         "recent_rounds": list_player_rounds(player_id, limit=5),
         "analysis_points": get_player_analysis(player_id),
         "scoring_profile": get_player_scoring_profile(player_id),
+        "distance_profile": get_player_distance_profile(player_id),
+        "scoring_history": get_player_scoring_history(player_id),
     }
 
 

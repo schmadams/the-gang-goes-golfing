@@ -36,6 +36,14 @@
     padding: 1rem 1.1rem;
 }
 
+/* Player Comparison panel reuses analysis.css's .t3g-analysis-grid/-card
+   (same responsive collapse to one column below 900px, same card
+   chrome) -- its default 2rem gap reads a little loose against this
+   page's tighter overall spacing above, so it's pulled in to match. */
+.t3g-club-page .t3g-analysis-grid {
+    gap: 1.25rem;
+}
+
 /* Admin status strip -- styled after layouts/subnav.py's full-width bar,
    but red, and only ever rendered for the club's admin. */
 .t3g-club-admin-banner {

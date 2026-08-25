@@ -10,13 +10,6 @@
     margin-bottom: 2rem;
 }
 
-.t3g-analysis-tab-title {
-    margin: 0 0 1.25rem;
-    color: #1e2a47;
-    font-weight: 800;
-    font-size: 1.1rem;
-}
-
 .t3g-analysis-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;

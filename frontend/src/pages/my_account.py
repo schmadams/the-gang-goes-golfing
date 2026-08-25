@@ -16,6 +16,43 @@ from layouts.panel_navbar import build_panel_navbar
 dash.register_page(__name__, path="/my-account", name="My Account")
 
 
+# Tournament-style pill subnav shared between this page and friends.py --
+# real navigation (dcc.Link, not a client-side tab toggle), since these
+# stay two separate registered pages/routes each with their own auth
+# check and callbacks rather than being merged into one. Same "small
+# duplicated pure render function per page" convention as the rest of
+# the app (see analysis.py/profile.py's own docstrings) rather than
+# cross-importing. The bottom nav's own "Account" tab still just links
+# straight to /my-account -- this subnav is what actually lets you get
+# to Friends from there (and back) without a fifth bottom-nav icon.
+_ACCOUNT_TAB_BASE = "t3g-tournament-tab"
+_ACCOUNT_TAB_ACTIVE = "t3g-tournament-tab t3g-tournament-tab--active"
+
+
+def _account_subnav(active):
+    return html.Div(
+        className="t3g-tournament-subnav",
+        children=html.Div(
+            className="t3g-tournament-subnav-inner",
+            children=html.Div(
+                className="t3g-tournament-tabs",
+                children=[
+                    dcc.Link(
+                        "My Account",
+                        href="/my-account",
+                        className=_ACCOUNT_TAB_ACTIVE if active == "account" else _ACCOUNT_TAB_BASE,
+                    ),
+                    dcc.Link(
+                        "Friends",
+                        href="/friends",
+                        className=_ACCOUNT_TAB_ACTIVE if active == "friends" else _ACCOUNT_TAB_BASE,
+                    ),
+                ],
+            ),
+        ),
+    )
+
+
 def _refresh_href():
     # dcc.Location only actually reloads the browser when the value it's
     # given differs from what's already loaded -- outputting the same
@@ -110,6 +147,7 @@ def layout(**kwargs):
     return html.Div(
         className="t3g-page",
         children=[
+            _account_subnav("account"),
             html.Div(
                 className="t3g-panel",
                 children=[
@@ -429,7 +467,19 @@ def handle_photo_upload(contents, filename):
         )
 
     if response.status_code != 200:
-        return "Couldn't upload that photo. Try again.", dash.no_update
+        # Surface the backend's real error detail when there is one
+        # (upload_profile_picture_route returns a specific message via
+        # ImageUploadError for a Supabase Storage failure, e.g. a missing
+        # bucket) rather than always showing the same generic message --
+        # same "read response.json().get('detail', ...)" pattern already
+        # used for club invites below.
+        try:
+            detail = response.json().get("detail", "Couldn't upload that photo. Try again.")
+            if not isinstance(detail, str):
+                detail = "Couldn't upload that photo. Try again."
+        except ValueError:
+            detail = "Couldn't upload that photo. Try again."
+        return detail, dash.no_update
 
     # Reload the page so the new photo, freshly fetched, shows up. Cache-bust
     # via _refresh_href() rather than the plain "/my-account" path -- if

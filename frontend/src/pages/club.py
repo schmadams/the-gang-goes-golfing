@@ -1,8 +1,10 @@
 # target path: frontend/src/pages/club.py (replace entire file)
+import base64
 import time
 
 import dash
 import dash_bootstrap_components as dbc
+import plotly.graph_objects as go
 import requests
 from dash import ALL, MATCH, Input, Output, State, callback, dcc, html
 from flask import session
@@ -12,6 +14,449 @@ from config import API_BASE_URL
 from layouts.panel_navbar import build_panel_navbar
 
 dash.register_page(__name__, path_template="/clubs/<slug>", name="Club")
+
+# Player Comparison charts (below) are read-only Plotly config, same as
+# analysis.py/profile.py's GRAPH_CONFIG -- no modebar clutter, still
+# responsive to its container so it doesn't overflow on mobile.
+_GRAPH_CONFIG = {"displayModeBar": False, "responsive": True}
+
+# One color per player, cycled by index (players sorted by name, same
+# order the backend already returns them in) -- kept distinct from each
+# other rather than matched to brand colors, since this chart's whole
+# point is telling players apart at a glance. Reused across every one of
+# the 6 comparison charts below so a given player is always the same
+# color no matter which chart you're looking at.
+_PLAYER_COLORS = [
+    "#1e2a47", "#c21861", "#1f9d55", "#e2a80a",
+    "#4062bb", "#a45ee5", "#e0623c", "#0e9594",
+]
+
+_SCORING_CATEGORY_ORDER = ["birdie_or_better", "par", "bogey", "double_bogey_plus"]
+_SCORING_CATEGORY_LABELS = {
+    "birdie_or_better": "Birdie+",
+    "par": "Par",
+    "bogey": "Bogey",
+    "double_bogey_plus": "Double+",
+}
+
+_DISTANCE_BIN_ORDER = ["< 150y", "150-249y", "250-349y", "350-449y", "450y+"]
+
+
+def _apply_comparison_chart_theme(fig, height=300):
+    """Same minimal-axis look as analysis.py/profile.py's _apply_chart_theme
+    (right-side dashed gridlines, muted small tick labels, transparent
+    background, no legend) -- players are told apart by color plus the
+    player name baked into each trace's hovertemplate, same as every
+    other chart in this app relying on hover rather than a legend."""
+    fig.update_layout(
+        autosize=True,
+        margin=dict(l=8, r=40, t=8, b=32),
+        height=height,
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#1e2a47"),
+        showlegend=False,
+        hoverlabel=dict(bgcolor="#1e2a47", bordercolor="#1e2a47", font=dict(color="#ffffff")),
+    )
+    fig.update_xaxes(showgrid=False, zeroline=False, tickfont=dict(size=10, color="#9aa0b0"))
+    fig.update_yaxes(
+        side="right",
+        showgrid=True,
+        gridcolor="#e7e9f0",
+        griddash="dash",
+        gridwidth=1,
+        zeroline=False,
+        nticks=4,
+        tickfont=dict(size=10, color="#9aa0b0"),
+    )
+
+
+def _leaderboard_initials(name):
+    """Same initials rule as tournament.py's own leaderboard avatars --
+    duplicated here rather than imported since club.py and tournament.py
+    don't share a components module for this."""
+    words = [w for w in (name or "").split() if w]
+    if not words:
+        return "?"
+    if len(words) == 1:
+        return words[0][:2].upper()
+    return (words[0][0] + words[-1][0]).upper()
+
+
+def _leaderboard_positions(values):
+    """Sequential rank with ties sharing a position (T-prefixed once they
+    do) -- same convention tournament.py's own leaderboard uses. Expects
+    `values` already sorted best-to-worst."""
+    positions = []
+    rank = 0
+    prev = object()  # sentinel -- never equal to a real value, so row 0 always ranks 1
+    for i, v in enumerate(values):
+        if v != prev:
+            rank = i + 1
+        positions.append(rank)
+        prev = v
+
+    counts: dict[int, int] = {}
+    for p in positions:
+        counts[p] = counts.get(p, 0) + 1
+    return [f"T{p}" if counts[p] > 1 else str(p) for p in positions]
+
+
+def _stat_leaderboard(players, series_by_player, value_field, ascending, value_suffix="", decimals=1):
+    """Ranks players by their average value_field across this club's
+    qualifying rounds -- ascending=True for stats where lower is better
+    (Putts per round), False where higher is better (Fairways Hit %).
+    Averages the raw per-round values directly rather than reading the
+    already-smoothed *_rolling_avg fields the comparison payload also
+    carries (those exist for the Scoring History trend line, not for a
+    single season-to-date standing) -- a straight average across every
+    qualifying round is the number a leaderboard actually needs.
+    Reuses the same table chrome (t3g-leaderboard-table) as the
+    tournament leaderboard, just Pos/Player/Avg/Rounds columns instead
+    of a full scorecard grid."""
+    rows = []
+    for player in players:
+        pid = player["player_id"]
+        values = [p[value_field] for p in series_by_player.get(pid, []) if p.get(value_field) is not None]
+        if not values:
+            continue
+        rows.append((player, round(sum(values) / len(values), decimals), len(values)))
+
+    if not rows:
+        return None
+
+    rows.sort(key=lambda r: r[1], reverse=not ascending)
+    positions = _leaderboard_positions([r[1] for r in rows])
+
+    header_row = html.Tr([html.Th(""), html.Th("Player"), html.Th("Avg"), html.Th("Rounds")])
+    body_rows = []
+    for pos, (player, avg_value, rounds_played) in zip(positions, rows):
+        tier = int(pos.lstrip("T"))
+        tier_class = {1: " t3g-leaderboard-pos-badge--first", 2: " t3g-leaderboard-pos-badge--second", 3: " t3g-leaderboard-pos-badge--third"}.get(tier, "")
+        row_class = "t3g-leaderboard-row--leader" if tier == 1 else ""
+        body_rows.append(
+            html.Tr(
+                [
+                    html.Td(html.Span(pos, className="t3g-leaderboard-pos-badge" + tier_class), className="t3g-leaderboard-pos"),
+                    html.Td(
+                        html.Div(
+                            [
+                                html.Span(_leaderboard_initials(player["name"]), className="t3g-leaderboard-avatar"),
+                                html.Span(player["name"]),
+                            ],
+                            className="t3g-leaderboard-player-cell",
+                        ),
+                        className="t3g-leaderboard-player-col",
+                    ),
+                    html.Td(f"{avg_value:g}{value_suffix}"),
+                    html.Td(str(rounds_played)),
+                ],
+                className=row_class,
+            )
+        )
+
+    return html.Div(
+        html.Table(
+            [html.Thead(header_row), html.Tbody(body_rows)],
+            className="t3g-leaderboard-table t3g-leaderboard-table--simple",
+        ),
+        className="t3g-leaderboard-wrap",
+    )
+
+
+def _category_scatter_figure(players, series_by_player, category_key, category_order, category_labels, value_key, height=300):
+    """One marker per player per category (hole type / scoring bucket /
+    distance bin) rather than grouped bars -- with up to 8 players on one
+    chart, grouped bars per category get cramped fast, while a scatter
+    just needs color to tell players apart and reads fine even fairly
+    dense. Skips any category a player has no value for (rather than
+    plotting a 0, which would misread as "actually scored this well")."""
+    fig = go.Figure()
+    ordered_labels = [category_labels.get(c, c) for c in category_order]
+
+    for i, player in enumerate(players):
+        pid = player["player_id"]
+        by_category = {row[category_key]: row.get(value_key) for row in series_by_player.get(pid, [])}
+        xs = [category_labels.get(c, c) for c in category_order if by_category.get(c) is not None]
+        ys = [by_category[c] for c in category_order if by_category.get(c) is not None]
+        if not ys:
+            continue
+        color = _PLAYER_COLORS[i % len(_PLAYER_COLORS)]
+        fig.add_trace(go.Scatter(
+            x=xs,
+            y=ys,
+            mode="markers",
+            name=player["name"],
+            marker=dict(color=color, size=10, line=dict(color="#ffffff", width=1.5)),
+            hovertemplate=f"{player['name']}<br>%{{x}}: %{{y}}<extra></extra>",
+        ))
+
+    if not fig.data:
+        return None
+
+    _apply_comparison_chart_theme(fig, height=height)
+    fig.update_xaxes(categoryorder="array", categoryarray=ordered_labels)
+    return fig
+
+
+_PAR_TYPE_TABS = [(3, "Par 3"), (4, "Par 4"), (5, "Par 5")]
+_DEFAULT_PAR_TYPE_TAB = 4
+
+
+def _to_par_text(value):
+    """Same E/+N/-N convention tournament.py's own leaderboard uses for a
+    to-par number, just fed a float (avg_score_to_par can be a fractional
+    average across several rounds, e.g. +0.8) instead of an integer round
+    total."""
+    if value is None:
+        return "--"
+    if value == 0:
+        return "E"
+    sign = "+" if value > 0 else ""
+    return f"{sign}{value:g}"
+
+
+def _par_type_tab_classes(active_par):
+    return {
+        par: (
+            "t3g-leaderboard-format-tab t3g-leaderboard-format-tab--active"
+            if par == active_par
+            else "t3g-leaderboard-format-tab"
+        )
+        for par, _label in _PAR_TYPE_TABS
+    }
+
+
+def _par_type_leaderboard(players, par_type_by_player, par):
+    """Same leaderboard chrome as _stat_leaderboard, but pivoted on one
+    hole type (par 3/4/5) at a time out of the par_type series each
+    player already carries, rather than one flat per-player average --
+    that's what the Par 3/4/5 tabs switch between. Ranked ascending
+    (closer to -- or under -- par first), same direction golf leaderboards
+    already sort by."""
+    rows = []
+    for player in players:
+        pid = player["player_id"]
+        entry = next((r for r in par_type_by_player.get(pid, []) if r.get("par") == par), None)
+        if not entry or entry.get("avg_score_to_par") is None:
+            continue
+        rows.append((player, entry["avg_score_to_par"]))
+
+    if not rows:
+        return None
+
+    rows.sort(key=lambda r: r[1])
+    positions = _leaderboard_positions([r[1] for r in rows])
+
+    header_row = html.Tr([html.Th(""), html.Th("Player"), html.Th("Avg to Par")])
+    body_rows = []
+    for pos, (player, avg_value) in zip(positions, rows):
+        tier = int(pos.lstrip("T"))
+        tier_class = {1: " t3g-leaderboard-pos-badge--first", 2: " t3g-leaderboard-pos-badge--second", 3: " t3g-leaderboard-pos-badge--third"}.get(tier, "")
+        row_class = "t3g-leaderboard-row--leader" if tier == 1 else ""
+        body_rows.append(
+            html.Tr(
+                [
+                    html.Td(html.Span(pos, className="t3g-leaderboard-pos-badge" + tier_class), className="t3g-leaderboard-pos"),
+                    html.Td(
+                        html.Div(
+                            [
+                                html.Span(_leaderboard_initials(player["name"]), className="t3g-leaderboard-avatar"),
+                                html.Span(player["name"]),
+                            ],
+                            className="t3g-leaderboard-player-cell",
+                        ),
+                        className="t3g-leaderboard-player-col",
+                    ),
+                    html.Td(_to_par_text(avg_value)),
+                ],
+                className=row_class,
+            )
+        )
+
+    return html.Div(
+        html.Table(
+            [html.Thead(header_row), html.Tbody(body_rows)],
+            className="t3g-leaderboard-table t3g-leaderboard-table--simple",
+        ),
+        className="t3g-leaderboard-wrap",
+    )
+
+
+def _par_type_leaderboard_card(players, par_type_by_player):
+    """Score to Par by Hole Type -- Par 3/4/5 tab bar (same pill styling
+    as the tournament Leaderboard's Gross/Stableford/Nett tabs) over a
+    ranked table for whichever hole type is selected, defaulting to
+    Par 4. switch_club_par_type_tab (below) swaps the table and active
+    tab on click without a server round-trip -- the whole per-player,
+    per-par breakdown is small enough to ship down once in a Store."""
+    tab_classes = _par_type_tab_classes(_DEFAULT_PAR_TYPE_TAB)
+    table = _par_type_leaderboard(players, par_type_by_player, _DEFAULT_PAR_TYPE_TAB)
+
+    return html.Div(
+        className="t3g-analysis-card",
+        children=[
+            html.H4("Score to Par by Hole Type", className="t3g-analysis-card-title"),
+            dcc.Store(id="club-partype-store", data=par_type_by_player),
+            dcc.Store(id="club-partype-players-store", data=players),
+            html.Div(
+                className="t3g-leaderboard-format-tabs mb-2",
+                children=[
+                    html.Button(label, id=f"club-partype-tab-{par}", className=tab_classes[par], n_clicks=0)
+                    for par, label in _PAR_TYPE_TABS
+                ],
+            ),
+            html.Div(
+                id="club-partype-table",
+                children=table if table is not None else html.P(
+                    "No par-3/4/5 breakdown available yet -- needs holes with a known par.",
+                    className="t3g-empty-state",
+                ),
+            ),
+        ],
+    )
+
+
+@callback(
+    Output("club-partype-table", "children"),
+    Output("club-partype-tab-3", "className"),
+    Output("club-partype-tab-4", "className"),
+    Output("club-partype-tab-5", "className"),
+    Input("club-partype-tab-3", "n_clicks"),
+    Input("club-partype-tab-4", "n_clicks"),
+    Input("club-partype-tab-5", "n_clicks"),
+    State("club-partype-store", "data"),
+    State("club-partype-players-store", "data"),
+    prevent_initial_call=True,
+)
+def switch_club_par_type_tab(clicks_3, clicks_4, clicks_5, par_type_by_player, players):
+    triggered_id = dash.ctx.triggered_id
+    par = {"club-partype-tab-3": 3, "club-partype-tab-4": 4, "club-partype-tab-5": 5}.get(
+        triggered_id, _DEFAULT_PAR_TYPE_TAB
+    )
+    table = _par_type_leaderboard(players or [], par_type_by_player or {}, par)
+    if table is None:
+        table = html.P(f"No Par {par} data yet for this club's rounds.", className="t3g-empty-state")
+    classes = _par_type_tab_classes(par)
+    return table, classes[3], classes[4], classes[5]
+
+def _club_comparison_panel(comparison):
+    """Player Analysis tab body -- the club-scoped, multi-player sibling
+    of the Player Analysis charts on analysis.py/profile.py. Only rounds
+    tied to this specific club count (its own tournament rounds, or a
+    casual round explicitly tagged with it -- see get_club_player_
+    comparison in backend/services/rounds.py), and only members with at
+    least one qualifying round show up at all.
+
+    No outer .t3g-panel/build_panel_navbar chrome -- now that this lives
+    on its own subnav tab (see _club_subnav), that card-around-the-cards
+    wrapper is redundant the same way it was on analysis.py's own
+    Analysis tab (t3g-analysis-tab-panel replaced it there too)."""
+    players = comparison.get("players") or []
+
+    if not players:
+        return html.Div(
+            className="t3g-analysis-tab-panel",
+            children=html.P(
+                "No club rounds recorded yet -- once members play a club "
+                "tournament round, or tag a casual round with this club when "
+                "starting it, their stats will show up here side by side.",
+                className="t3g-empty-state",
+            ),
+        )
+
+    # Putts and Fairway are leaderboard tables (ranked average, best to
+    # worst) rather than charts -- a season-standing "who's best" reads
+    # more naturally as a ranked list than as lines on a graph, and it
+    # sidesteps needing a legend to tell players apart. The remaining
+    # three chart types don't have as natural a single ranking number
+    # (a strokes-per-round trend, or a breakdown across several
+    # categories at once), so they stay as charts.
+    #
+    # Every one of the 6 stats always gets its own card, even when there's
+    # nothing to show -- a stat with no qualifying data (e.g. fairway_hit
+    # was never recorded on any of this club's rounds, even though putts
+    # and strokes were) used to just silently vanish from the grid, which
+    # read as "broken" rather than "no data yet". An explicit empty-state
+    # message per card makes that distinction visible instead of leaving
+    # a gap the same as the "no players at all" case above.
+    table_specs = [
+        (
+            "Putts per Round",
+            _stat_leaderboard(players, comparison.get("putts") or {}, "putts_total", ascending=True),
+            "No putts recorded yet for this club's rounds.",
+        ),
+        (
+            "Fairways Hit %",
+            _stat_leaderboard(players, comparison.get("fairway") or {}, "fairway_pct", ascending=False, value_suffix="%"),
+            "No fairway-hit data recorded yet for this club's rounds.",
+        ),
+        (
+            "Scoring History",
+            _stat_leaderboard(players, comparison.get("scoring_history") or {}, "total_strokes", ascending=True),
+            "No completed scorecards yet for this club's rounds.",
+        ),
+    ]
+
+    chart_specs = [
+        (
+            "Scoring Breakdown (avg per round)",
+            _category_scatter_figure(
+                players, comparison.get("scoring_breakdown") or {}, "category",
+                _SCORING_CATEGORY_ORDER, _SCORING_CATEGORY_LABELS, "avg_per_round",
+            ),
+            "No scoring breakdown available yet for this club's rounds.",
+        ),
+        (
+            "Avg Shots by Hole Distance",
+            _category_scatter_figure(
+                players, comparison.get("distance_profile") or {}, "bin", _DISTANCE_BIN_ORDER,
+                {label: label for label in _DISTANCE_BIN_ORDER}, "avg_strokes",
+            ),
+            "No hole yardage data available yet for this club's rounds.",
+        ),
+    ]
+
+    cards = [
+        html.Div(
+            className="t3g-analysis-card",
+            children=[
+                html.H4(title, className="t3g-analysis-card-title"),
+                table if table is not None else html.P(empty_message, className="t3g-empty-state"),
+            ],
+        )
+        for title, table, empty_message in table_specs
+    ] + [
+        # Score to Par by Hole Type is its own tabbed leaderboard card
+        # (Par 3/4/5 tabs, see _par_type_leaderboard_card) rather than a
+        # plain (title, component, empty_message) tuple in the list above
+        # -- it needs its own Store + tab bar + swappable table body, the
+        # same reason profile.py's Scoring History card was always built
+        # inline instead of going through its generic per-page loop.
+        _par_type_leaderboard_card(players, comparison.get("par_type") or {}),
+    ] + [
+        html.Div(
+            className="t3g-analysis-card",
+            children=[
+                html.H4(title, className="t3g-analysis-card-title"),
+                (
+                    dcc.Graph(figure=fig, config=_GRAPH_CONFIG, style={"width": "100%", "height": "340px"})
+                    if fig is not None
+                    else html.P(empty_message, className="t3g-empty-state")
+                ),
+            ],
+        )
+        for title, fig, empty_message in chart_specs
+    ]
+
+    return html.Div(
+        className="t3g-analysis-tab-panel",
+        children=(
+            html.Div(className="t3g-analysis-grid", children=cards)
+            if cards
+            else html.P("Not enough data yet to compare players.", className="t3g-empty-state")
+        ),
+    )
 
 _SORT_BUTTON_BASE = "t3g-panel-action-button t3g-panel-action-button--secondary"
 _SORT_BUTTON_ACTIVE = "t3g-panel-action-button"
@@ -161,6 +606,49 @@ def _invite_panel(club, player_id):
                         className="t3g-panel-action-button mt-2",
                         n_clicks=0,
                     ),
+                ],
+            ),
+        ],
+    )
+
+
+def _club_photo_panel(club, is_admin):
+    """Admin-only club photo upload -- same dcc.Upload -> base64-decode ->
+    POST multipart -> reload pattern as my_account.py's own Profile
+    Picture panel, just POSTing to /clubs/{id}/photo (which checks
+    admin_id server-side, see upload_club_photo's admin gate) instead of
+    /players/{id}/profile-picture. Renders nothing for non-admins, same
+    as _invite_panel just above -- the photo itself (once uploaded) is
+    public and already shows up wherever club.get("photo_url") is read
+    (home.py's clubs grid, frontend/src/pages/clubs.py's index), this
+    panel is only the upload control."""
+    if not is_admin:
+        return None
+
+    photo_url = club.get("photo_url")
+    return html.Div(
+        className="t3g-panel",
+        children=[
+            build_panel_navbar("Club Photo"),
+            html.Div(
+                className="t3g-panel-body t3g-photo-panel-body",
+                children=[
+                    html.Img(
+                        id="club-photo-preview",
+                        src=photo_url or "",
+                        className="t3g-profile-photo",
+                        style={} if photo_url else {"display": "none"},
+                    ),
+                    dcc.Upload(
+                        id="club-photo-upload",
+                        children=html.Button(
+                            "Upload Photo", className="t3g-panel-action-button"
+                        ),
+                        accept="image/*",
+                        style={"display": "inline-block"},
+                    ),
+                    html.Div(id="club-photo-error", className="text-danger mt-2"),
+                    dcc.Location(id="club-photo-redirect", refresh=True),
                 ],
             ),
         ],
@@ -434,7 +922,92 @@ def _not_found_page():
     )
 
 
-def layout(slug=None, **kwargs):
+_CLUB_TAB_KEYS = ("directory", "tournaments", "comparison")
+_CLUB_TAB_BUTTON_BASE = "t3g-tournament-tab"
+_CLUB_TAB_BUTTON_ACTIVE = "t3g-tournament-tab t3g-tournament-tab--active"
+
+
+def _club_tab_visibility(active_tab):
+    """(styles, classes) for the club page's three tabs at page-load
+    time -- same ?tab= query param pattern tournament.py's own subnav
+    uses (see _tab_visibility there), picked once at load instead of
+    always defaulting to Directory, so a link elsewhere in the app can
+    open straight onto Tournaments or Player Comparison. switch_club_tab
+    below owns in-page click-driven switching after that."""
+    hidden = {"display": "none"}
+    shown = {}
+    key = active_tab if active_tab in _CLUB_TAB_KEYS else "directory"
+    index = _CLUB_TAB_KEYS.index(key)
+
+    styles = tuple(shown if i == index else hidden for i in range(3))
+    classes = tuple(_CLUB_TAB_BUTTON_ACTIVE if i == index else _CLUB_TAB_BUTTON_BASE for i in range(3))
+    return styles, classes
+
+
+def _club_subnav(tab_classes):
+    """Page-level subnav for the club page -- Directory/Tournaments/
+    Player Comparison as client-side tabs, all three panel groups always
+    in the DOM and toggled by style (see switch_club_tab below), same
+    approach and same .t3g-tournament-subnav/-tabs/-tab styling as
+    tournament.py's own subnav. No "Return to X" link here -- unlike the
+    tournament page, this already is the club's own top-level page."""
+    directory_class, tournaments_class, comparison_class = tab_classes
+    return html.Div(
+        className="t3g-tournament-subnav",
+        children=html.Div(
+            className="t3g-tournament-subnav-inner",
+            children=html.Div(
+                className="t3g-tournament-tabs",
+                children=[
+                    html.Button(
+                        "Directory",
+                        id="club-tab-directory-button",
+                        className=directory_class,
+                        n_clicks=0,
+                    ),
+                    html.Button(
+                        "Tournaments",
+                        id="club-tab-tournaments-button",
+                        className=tournaments_class,
+                        n_clicks=0,
+                    ),
+                    html.Button(
+                        "Player Analysis",
+                        id="club-tab-comparison-button",
+                        className=comparison_class,
+                        n_clicks=0,
+                    ),
+                ],
+            ),
+        ),
+    )
+
+
+@callback(
+    Output("club-tab-panel-directory", "style"),
+    Output("club-tab-panel-tournaments", "style"),
+    Output("club-tab-panel-comparison", "style"),
+    Output("club-tab-directory-button", "className"),
+    Output("club-tab-tournaments-button", "className"),
+    Output("club-tab-comparison-button", "className"),
+    Input("club-tab-directory-button", "n_clicks"),
+    Input("club-tab-tournaments-button", "n_clicks"),
+    Input("club-tab-comparison-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+def switch_club_tab(directory_clicks, tournaments_clicks, comparison_clicks):
+    hidden = {"display": "none"}
+    shown = {}
+    triggered_id = dash.ctx.triggered_id
+
+    if triggered_id == "club-tab-tournaments-button":
+        return hidden, shown, hidden, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_ACTIVE, _CLUB_TAB_BUTTON_BASE
+    if triggered_id == "club-tab-comparison-button":
+        return hidden, hidden, shown, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_ACTIVE
+    return shown, hidden, hidden, _CLUB_TAB_BUTTON_ACTIVE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE
+
+
+def layout(slug=None, tab=None, **kwargs):
     player_id = session.get("player_id")
 
     if not session.get("logged_in") or not player_id:
@@ -457,6 +1030,11 @@ def layout(slug=None, **kwargs):
     tournaments_resp = requests.get(f"{API_BASE_URL}/tournaments/club/{club['id']}")
     tournaments = tournaments_resp.json() if tournaments_resp.status_code == 200 else []
 
+    comparison_resp = requests.get(f"{API_BASE_URL}/clubs/{club['id']}/player-comparison")
+    comparison = comparison_resp.json() if comparison_resp.status_code == 200 else {}
+
+    (directory_style, tournaments_style, comparison_style), tab_classes = _club_tab_visibility(tab)
+
     return html.Div(
         # t3g-club-page scopes the more compact panel spacing in club.css
         # -- .t3g-panel/-navbar/-body are shared with every other page, so
@@ -466,10 +1044,13 @@ def layout(slug=None, **kwargs):
         children=[
             dcc.Store(id="club-id-store", data=club["id"]),
             _admin_banner(is_admin),
-            _invite_panel(club, player_id),
+            _club_subnav(tab_classes),
             html.Div(
-                className="t3g-panel-grid",
+                id="club-tab-panel-directory",
+                style=directory_style,
                 children=[
+                    _invite_panel(club, player_id),
+                    _club_photo_panel(club, is_admin),
                     html.Div(
                         className="t3g-panel",
                         children=[
@@ -498,8 +1079,17 @@ def layout(slug=None, **kwargs):
                             ),
                         ],
                     ),
-                    _tournaments_panel(is_admin, tournaments, slug),
                 ],
+            ),
+            html.Div(
+                id="club-tab-panel-tournaments",
+                style=tournaments_style,
+                children=_tournaments_panel(is_admin, tournaments, slug),
+            ),
+            html.Div(
+                id="club-tab-panel-comparison",
+                style=comparison_style,
+                children=_club_comparison_panel(comparison),
             ),
             _tournament_modal(),
             dcc.Location(id="tournament-redirect", refresh=True),
@@ -581,6 +1171,53 @@ def send_club_invite_callback(n_clicks, invitee_id, club_id):
 )
 def close_club_invite_sent_modal(n_clicks):
     return False, ""
+
+
+@callback(
+    Output("club-photo-error", "children"),
+    Output("club-photo-redirect", "href"),
+    Input("club-photo-upload", "contents"),
+    State("club-photo-upload", "filename"),
+    State("club-id-store", "data"),
+    State("_pages_location", "pathname"),
+    prevent_initial_call=True,
+)
+def handle_club_photo_upload(contents, filename, club_id, current_pathname):
+    if not contents:
+        return "", dash.no_update
+
+    player_id = session.get("player_id")
+
+    header, encoded = contents.split(",", 1)
+    file_bytes = base64.b64decode(encoded)
+    content_type = header.split(";")[0].replace("data:", "") or "image/jpeg"
+
+    response = requests.post(
+        f"{API_BASE_URL}/clubs/{club_id}/photo",
+        data={"admin_id": player_id},
+        files={"file": (filename or "photo.jpg", file_bytes, content_type)},
+    )
+
+    if response.status_code != 200:
+        # Same "surface the real backend detail" treatment as
+        # my_account.py's handle_photo_upload -- upload_club_photo_route
+        # returns a specific message via ImageUploadError for a Supabase
+        # Storage failure (e.g. a missing bucket), or NotClubAdminError/
+        # ClubNotFoundError for the other failure paths, rather than
+        # always showing the same generic line.
+        try:
+            detail = response.json().get("detail", "Couldn't upload that photo. Try again.")
+            if not isinstance(detail, str):
+                detail = "Couldn't upload that photo. Try again."
+        except ValueError:
+            detail = "Couldn't upload that photo. Try again."
+        return detail, dash.no_update
+
+    # Same cache-busting reload as create_tournament_submit and the rest
+    # of this file's own redirect-on-success callbacks (see the comment
+    # there) -- dcc.Location only reloads when the value differs from
+    # what's already loaded, and the pathname itself doesn't change here.
+    return "", f"{current_pathname}?_r={time.time()}"
 
 
 @callback(

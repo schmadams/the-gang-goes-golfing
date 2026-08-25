@@ -25,6 +25,14 @@ class RoundStartRequest(BaseModel):
     # accept before their scorecard exists (see backend/services/rounds.py
     # start_round / respond_to_round_invite).
     invited_player_ids: list[str] = []
+    # Optional -- tags this round as belonging to one of the player's
+    # clubs (see add_round_club_id.sql), so it's pulled into that club's
+    # player comparison analysis alongside its tournament rounds. Not
+    # validated against club membership here; get_club_player_comparison
+    # only ever reads rounds tagged with a club a player actually belongs
+    # to, so a stray/incorrect club_id on a round just means it's inert
+    # for comparison purposes rather than a security concern.
+    club_id: Optional[str] = None
 
     @field_validator("invited_player_ids")
     @classmethod

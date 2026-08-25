@@ -29,6 +29,8 @@ from backend.services.rounds import (
     finish_round,
     get_active_round,
     get_player_analysis,
+    get_player_distance_profile,
+    get_player_scoring_history,
     get_player_scoring_profile,
     get_round,
     leave_round,
@@ -98,6 +100,23 @@ def get_player_scoring_profile_route(player_id: str):
     bogeys/double-bogeys-plus per round -- powers the two extra Player
     Analysis charts (see get_player_scoring_profile's docstring)."""
     return get_player_scoring_profile(player_id)
+
+
+@router.get("/player/{player_id}/distance-profile")
+def get_player_distance_profile_route(player_id: str):
+    """Average shots taken per hole-distance bin -- powers the Player
+    Analysis page's "Avg Shots by Hole Distance" chart (see
+    get_player_distance_profile's docstring)."""
+    return get_player_distance_profile(player_id)
+
+
+@router.get("/player/{player_id}/scoring-history")
+def get_player_scoring_history_route(player_id: str):
+    """Chronological round-by-round total strokes, with validated/
+    tournament flags -- powers the Player Analysis page's Scoring History
+    chart and its Validated/Tournament/All tabs (see
+    get_player_scoring_history's docstring)."""
+    return get_player_scoring_history(player_id)
 
 
 @router.get("/invites/{player_id}", response_model=list[RoundInviteResponse])

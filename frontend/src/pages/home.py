@@ -433,25 +433,37 @@ def _handicap_trend_figure(history):
         x=dates,
         y=values,
         mode="lines+markers",
-        line=dict(color="#c21861", width=3, shape="spline", smoothing=0.6),
-        marker=dict(color="#c21861", size=7, line=dict(color="#ffffff", width=2)),
-        fill="tozeroy",
-        fillcolor="rgba(194, 24, 97, 0.08)",
+        line=dict(color="#c21861", width=2, shape="spline", smoothing=0.6),
+        marker=dict(color="#c21861", size=6, line=dict(color="#ffffff", width=1.5)),
         hovertemplate="%{x}<br>Handicap %{y}<extra></extra>",
     ))
     fig.update_layout(
         autosize=True,
-        margin=dict(l=45, r=20, t=16, b=40),
+        # No yaxis_title -- the panel's own navbar already says "Handicap",
+        # and dropping the rotated axis label frees up the left margin
+        # (below) for the plot itself, same fix as analysis.py's charts.
+        margin=dict(l=8, r=40, t=28, b=28),
         height=280,
-        yaxis_title="Handicap Index",
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
         font=dict(color="#1e2a47"),
         showlegend=False,
         hoverlabel=dict(bgcolor="#1e2a47", bordercolor="#1e2a47", font=dict(color="#ffffff")),
     )
-    fig.update_xaxes(showgrid=False, zeroline=False, tickformat="%b %d")
-    fig.update_yaxes(showgrid=True, gridcolor="#f0f1f5", zeroline=False, range=_padded_range(values))
+    fig.update_xaxes(
+        showgrid=False, zeroline=False, tickformat="%b %d", nticks=4, tickfont=dict(size=10, color="#9aa0b0")
+    )
+    fig.update_yaxes(
+        side="right",
+        showgrid=True,
+        gridcolor="#e7e9f0",
+        griddash="dash",
+        gridwidth=1,
+        zeroline=False,
+        range=_padded_range(values),
+        nticks=4,
+        tickfont=dict(size=10, color="#9aa0b0"),
+    )
     if values:
         # Solid pill "current value" tag, matching analysis.py's trend
         # chart badges, instead of plain floating text.
@@ -460,12 +472,12 @@ def _handicap_trend_figure(history):
             y=values[-1],
             text=f"<b>{values[-1]}</b>",
             showarrow=False,
-            xanchor="left",
-            xshift=16,
-            font=dict(color="#ffffff", size=12),
+            xanchor="center",
+            yshift=20,  # floats the badge above the point instead of off to its side
+            font=dict(color="#ffffff", size=11),
             bgcolor="#c21861",
             bordercolor="#c21861",
-            borderpad=5,
+            borderpad=4,
         )
     return fig
 
@@ -641,6 +653,14 @@ def layout(**kwargs):
         {"label": f.get("nickname") or f"{f.get('first_name', '')} {f.get('surname', '')}".strip(), "value": f["player_id"]}
         for f in friends
     ]
+
+    # Reuses the same `clubs` list the Clubs grid above is built from --
+    # only clubs this player is already a member of are offered here.
+    # Tagging a casual round with a club (rounds.club_id, see
+    # add_round_club_id.sql) is what lets it show up in that club's
+    # player comparison analysis alongside its tournament rounds -- see
+    # get_club_player_comparison in backend/services/rounds.py.
+    club_tag_options = [{"label": c["name"], "value": c["id"]} for c in clubs]
 
     with _timed(f"GET /rounds/invites/{player_id}"):
         round_invites_resp = requests.get(f"{API_BASE_URL}/rounds/invites/{player_id}")
@@ -1084,6 +1104,22 @@ def layout(**kwargs):
                             ),
                             dcc.Store(id="upload-round-manual-mode", data=False),
                             html.Label(
+                                "Playing for a club? (optional)",
+                                className="t3g-modal-label mt-2",
+                            )
+                            if club_tag_options
+                            else None,
+                            dcc.Dropdown(
+                                id="upload-round-club-tag",
+                                placeholder="None -- just a personal round",
+                                options=club_tag_options,
+                                value=None,
+                                clearable=True,
+                                className="mb-2 t3g-course-dropdown",
+                            )
+                            if club_tag_options
+                            else None,
+                            html.Label(
                                 "Add up to 3 friends to this round (optional)",
                                 className="t3g-modal-label mt-2",
                             ),
@@ -1232,6 +1268,7 @@ def handle_create_club(open_clicks, cancel_clicks, submit_clicks, name, descript
     Output("upload-round-manual-fields", "style", allow_duplicate=True),
     Output("upload-round-course-fields", "style", allow_duplicate=True),
     Output("upload-round-friends-store", "data", allow_duplicate=True),
+    Output("upload-round-club-tag", "value", allow_duplicate=True),
     Input("upload-round-button", "n_clicks"),
     Input("upload-round-cancel", "n_clicks"),
     prevent_initial_call=True,
@@ -1241,8 +1278,9 @@ def toggle_upload_round_modal(open_clicks, cancel_clicks):
     # through the whole chain -- load_courses_for_club(None) clears the
     # course dropdown, which in turn triggers load_tees_for_course(None)
     # clearing the tee dropdown -- so the modal always starts fresh
-    # (manual mode off, no friends carried over from last time, too)
-    # rather than showing a stale selection.
+    # (manual mode off, no friends carried over from last time, and no
+    # leftover club tag from a previous round) rather than showing a
+    # stale selection.
     triggered_id = dash.ctx.triggered_id
     reset_manual = (False, {"display": "none"}, {})
 
@@ -1256,11 +1294,11 @@ def toggle_upload_round_modal(open_clicks, cancel_clicks):
             # instead of opening the modal. The backend would reject a
             # second one anyway (one-active-round-per-player), but this
             # avoids making them fill out the form just to be told no.
-            return (False, dash.no_update, "/live-round", *reset_manual, [])
+            return (False, dash.no_update, "/live-round", *reset_manual, [], None)
 
-        return (True, None, dash.no_update, *reset_manual, [])
+        return (True, None, dash.no_update, *reset_manual, [], None)
 
-    return (False, dash.no_update, dash.no_update, *reset_manual, dash.no_update)
+    return (False, dash.no_update, dash.no_update, *reset_manual, dash.no_update, dash.no_update)
 
 
 @callback(
@@ -1407,12 +1445,13 @@ def toggle_continue_button(course_id, tee_id, is_manual, manual_club, manual_tee
     State("upload-round-manual-tee", "value"),
     State("upload-round-manual-rating", "value"),
     State("upload-round-manual-slope", "value"),
+    State("upload-round-club-tag", "value"),
     State("upload-round-friends-store", "data"),
     prevent_initial_call=True,
 )
 def handle_continue_round(
     n_clicks, course_id, tee_id, is_manual, manual_club, manual_tee,
-    manual_rating, manual_slope, invited_player_ids,
+    manual_rating, manual_slope, club_tag_id, invited_player_ids,
 ):
     player_id = session.get("player_id")
     invited_player_ids = invited_player_ids or []
@@ -1427,6 +1466,7 @@ def handle_continue_round(
         "player_id": player_id,
         "is_manual": bool(is_manual),
         "invited_player_ids": invited_player_ids,
+        "club_id": club_tag_id,
     }
 
     if is_manual:

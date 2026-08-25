@@ -334,20 +334,34 @@ def _round_scorecard_card(round_data, player_initial, player_label, player_id):
 # to every figure this page builds (trend lines and the two new bar
 # charts alike) so they all read as one consistent chart language rather
 # than each looking like a different tool made them.
-def _apply_chart_theme(fig, y_title, height=340):
+def _apply_chart_theme(fig, height=340):
+    # Restyled after feedback that the charts read as too heavy/busy --
+    # smaller, muted tick text; a dashed (not solid) gridline so the grid
+    # recedes into the background instead of competing with the data; and
+    # the y-axis moved to the right, which is both a lighter/more modern
+    # placement and means the left edge no longer needs any margin at all
+    # for tick labels.
     fig.update_layout(
         autosize=True,
-        margin=dict(l=45, r=20, t=16, b=40),
+        margin=dict(l=8, r=40, t=28, b=28),
         height=height,
-        yaxis_title=y_title,
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
         font=dict(color="#1e2a47"),
         showlegend=False,
         hoverlabel=dict(bgcolor="#1e2a47", bordercolor="#1e2a47", font=dict(color="#ffffff")),
     )
-    fig.update_xaxes(showgrid=False, zeroline=False)
-    fig.update_yaxes(showgrid=True, gridcolor="#f0f1f5", zeroline=False)
+    fig.update_xaxes(showgrid=False, zeroline=False, nticks=4, tickfont=dict(size=10, color="#9aa0b0"))
+    fig.update_yaxes(
+        side="right",
+        showgrid=True,
+        gridcolor="#e7e9f0",
+        griddash="dash",
+        gridwidth=1,
+        zeroline=False,
+        nticks=4,
+        tickfont=dict(size=10, color="#9aa0b0"),
+    )
 
 
 # Every dcc.Graph in this module passes this exact dict -- responsive:
@@ -385,7 +399,7 @@ def _padded_range(values, factor=1.5):
     return [lo - extra, hi + extra]
 
 
-def _build_figure(points, raw_field, avg_field, y_title, hover_suffix=""):
+def _build_figure(points, raw_field, avg_field, hover_suffix=""):
     # Only plot rounds where this particular stat has a rolling average --
     # that's exactly the subset the backend computed the average over, so
     # a round missing putts data (say) doesn't show up as a gap or a zero.
@@ -404,25 +418,24 @@ def _build_figure(points, raw_field, avg_field, y_title, hover_suffix=""):
         y=raw_values,
         mode="markers",
         name="Per round",
-        marker=dict(color=_RAW_POINT_COLOR, size=6, opacity=0.6, line=dict(width=0)),
+        marker=dict(color=_RAW_POINT_COLOR, size=5, opacity=0.5, line=dict(width=0)),
         hovertemplate=f"%{{x}}<br>%{{y}}{hover_suffix}<extra></extra>",
     ))
     # The rolling average is the one line doing the actual storytelling --
-    # a smoothed spline with a soft gradient fill underneath it, and a
-    # white-ringed marker (rather than a flat dot sitting directly in the
-    # fill) so each point still reads clearly against its own gradient.
+    # a thin smoothed spline with a small white-ringed ("halo") marker.
+    # No area fill underneath it any more -- a lighter, line-only look
+    # reads as less "busy" than a gradient fill competing with the grid
+    # and the raw points for attention.
     fig.add_trace(go.Scatter(
         x=dates,
         y=avg_values,
         mode="lines+markers",
         name="5-round rolling avg",
-        line=dict(color=_ROLLING_AVG_COLOR, width=3, shape="spline", smoothing=0.6),
-        marker=dict(color=_ROLLING_AVG_COLOR, size=7, line=dict(color="#ffffff", width=2)),
-        fill="tozeroy",
-        fillcolor="rgba(194, 24, 97, 0.08)",
+        line=dict(color=_ROLLING_AVG_COLOR, width=2, shape="spline", smoothing=0.6),
+        marker=dict(color=_ROLLING_AVG_COLOR, size=6, line=dict(color="#ffffff", width=1.5)),
         hovertemplate=f"%{{x}}<br>%{{y}}{hover_suffix} avg<extra></extra>",
     ))
-    _apply_chart_theme(fig, y_title)
+    _apply_chart_theme(fig)
     fig.update_xaxes(tickformat="%b %d")
     fig.update_yaxes(range=_padded_range(raw_values + avg_values))
     if avg_values:
@@ -436,12 +449,12 @@ def _build_figure(points, raw_field, avg_field, y_title, hover_suffix=""):
             y=avg_values[-1],
             text=f"<b>{avg_values[-1]}{hover_suffix}</b>",
             showarrow=False,
-            xanchor="left",
-            xshift=16,
-            font=dict(color="#ffffff", size=12),
+            xanchor="center",
+            yshift=20,  # floats the badge above the point instead of off to its side
+            font=dict(color="#ffffff", size=11),
             bgcolor=_ROLLING_AVG_COLOR,
             bordercolor=_ROLLING_AVG_COLOR,
-            borderpad=5,
+            borderpad=4,
         )
     return fig
 
@@ -504,7 +517,7 @@ def _par_type_figure(par_type_breakdown):
         hovertemplate="%{x}<br>%{text} to par<extra></extra>",
         width=0.55,
     ))
-    _apply_chart_theme(fig, "Avg Score to Par", height=300)
+    _apply_chart_theme(fig, height=300)
     # A real reference line at "level par" (not just wherever y=0 happens
     # to land from the axis's own auto-range) -- makes it immediately
     # obvious which bars are actually costing strokes versus gaining them
@@ -553,19 +566,149 @@ def _scoring_breakdown_figure(scoring_breakdown):
         hovertemplate="%{x}: %{y} per round<extra></extra>",
         width=0.55,
     ))
-    _apply_chart_theme(fig, "Avg per Round", height=300)
+    _apply_chart_theme(fig, height=300)
     _add_bar_badges(fig, labels, values, colors, lambda v: f"{v:g}")
     return fig
 
 
-def _build_analysis_body(points, scoring_profile=None):
+# Order matches backend/services/rounds.py's _DISTANCE_BINS -- short holes
+# to long, left to right, same as par_type_figure orders Par 3/4/5 short
+# to long rather than by whatever order the backend dict happens to
+# iterate in.
+_DISTANCE_BIN_ORDER = ["< 150y", "150-249y", "250-349y", "350-449y", "450y+"]
+
+
+def _distance_profile_figure(distance_breakdown):
+    by_bin = {b["bin"]: b for b in distance_breakdown}
+    played = [by_bin[b] for b in _DISTANCE_BIN_ORDER if b in by_bin and by_bin[b].get("holes_played")]
+    if not played:
+        return None
+
+    labels = [b["bin"] for b in played]
+    values = [b["avg_strokes"] for b in played]
+
+    fig = go.Figure(go.Bar(
+        x=labels,
+        y=values,
+        marker=dict(color=_ROLLING_AVG_COLOR, cornerradius=8),
+        text=[f"{v:g}" for v in values],
+        textposition="none",  # kept on the trace for hovertemplate only -- see _add_bar_badges for the visible label
+        hovertemplate="%{x}<br>%{text} shots avg<extra></extra>",
+        width=0.55,
+    ))
+    _apply_chart_theme(fig, height=300)
+    _add_bar_badges(fig, labels, values, [_ROLLING_AVG_COLOR] * len(labels), lambda v: f"{v:g}")
+    return fig
+
+
+# Three ways to slice the same underlying round list (see backend's
+# get_player_scoring_history) rather than three separate API calls --
+# "validated" (status == completed, i.e. counts toward Handicap Index)
+# is the default since that's the number that actually matters for
+# handicap purposes; "tournament" and "all" are one tap away via the
+# same toggle row the Handicap panel's Trend/Contributing Rounds switch
+# already uses (.t3g-handicap-toggle).
+_SCORING_HISTORY_VIEWS = ("validated", "tournament", "all")
+
+
+def _filter_scoring_history(points, view):
+    if view == "validated":
+        return [p for p in points if p.get("validated")]
+    if view == "tournament":
+        return [p for p in points if p.get("is_tournament")]
+    return list(points)
+
+
+def _scoring_history_figure(points, view="validated", window=10):
+    """One bar per round, in play order -- round number on the x-axis
+    rather than the actual date, so a gap of a few weeks between rounds
+    doesn't stretch the bars apart or bunch a run of rounds played on
+    consecutive days together. The real date is still there on hover
+    (via customdata), just not driving the axis. A trailing `window`-
+    round rolling average line sits on top of the bars -- computed over
+    whichever view is currently filtered to (Validated/Tournament/All),
+    since a 10-round average of validated rounds and a 10-round average
+    of tournament rounds are two different numbers even for the same
+    player."""
+    filtered = _filter_scoring_history(points, view)
+    if not filtered:
+        return None
+
+    dates = [p["date"] for p in filtered]
+    values = [p["total_strokes"] for p in filtered]
+    round_numbers = list(range(1, len(filtered) + 1))
+
+    rolling_avg = []
+    for i in range(len(values)):
+        window_vals = values[max(0, i - window + 1):i + 1]
+        rolling_avg.append(round(sum(window_vals) / len(window_vals), 1))
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=round_numbers,
+        y=values,
+        customdata=dates,
+        marker=dict(color="#1e2a47", cornerradius=6),
+        hovertemplate="%{customdata}<br>%{y} shots<extra></extra>",
+    ))
+    # Same raw-vs-rolling-average color language as the Putts/Fairway
+    # trend charts (navy bars here standing in for _RAW_POINT_COLOR's
+    # raw dots there, magenta line for the average either way) -- drawn
+    # second so it renders on top of the bars.
+    fig.add_trace(go.Scatter(
+        x=round_numbers,
+        y=rolling_avg,
+        customdata=dates,
+        mode="lines+markers",
+        line=dict(color=_ROLLING_AVG_COLOR, width=2, shape="spline", smoothing=0.6),
+        marker=dict(color=_ROLLING_AVG_COLOR, size=6, line=dict(color="#ffffff", width=1.5)),
+        hovertemplate=f"%{{customdata}}<br>%{{y}} avg (last {window})<extra></extra>",
+    ))
+    _apply_chart_theme(fig, height=300)
+    fig.update_yaxes(range=_padded_range(values + rolling_avg))
+    if rolling_avg:
+        fig.add_annotation(
+            x=round_numbers[-1],
+            y=rolling_avg[-1],
+            text=f"<b>{rolling_avg[-1]}</b>",
+            showarrow=False,
+            xanchor="center",
+            yshift=20,
+            font=dict(color="#ffffff", size=11),
+            bgcolor=_ROLLING_AVG_COLOR,
+            bordercolor=_ROLLING_AVG_COLOR,
+            borderpad=4,
+        )
+    return fig
+
+
+def _build_analysis_body(points, scoring_profile=None, distance_profile=None, scoring_history=None):
     scoring_profile = scoring_profile or {}
+    distance_profile = distance_profile or {}
+    scoring_history = scoring_history or []
     has_putts = any(p.get("putts_rolling_avg") is not None for p in points)
     has_fairway = any(p.get("fairway_rolling_avg") is not None for p in points)
     par_type_fig = _par_type_figure(scoring_profile.get("par_type_breakdown") or [])
     scoring_fig = _scoring_breakdown_figure(scoring_profile.get("scoring_breakdown") or [])
+    distance_fig = _distance_profile_figure(distance_profile.get("distance_breakdown") or [])
+    # Whichever of the three views has data first, so the chart never
+    # opens on an empty "no rounds in this view yet" state when a
+    # different tab would've shown something -- validated is still tried
+    # first since it's the default/most useful view when there's a choice.
+    default_scoring_history_view = next(
+        (v for v in _SCORING_HISTORY_VIEWS if _filter_scoring_history(scoring_history, v)),
+        "validated",
+    )
+    scoring_history_fig = _scoring_history_figure(scoring_history, default_scoring_history_view)
 
-    if not has_putts and not has_fairway and not par_type_fig and not scoring_fig:
+    if (
+        not has_putts
+        and not has_fairway
+        and not par_type_fig
+        and not scoring_fig
+        and not distance_fig
+        and not scoring_history_fig
+    ):
         return html.P(
             "No completed rounds with scoring data yet -- play a round and "
             "enter scores as you go to see trends here.",
@@ -594,7 +737,7 @@ def _build_analysis_body(points, scoring_profile=None):
                 children=[
                     html.H4("Putts per Round", className="t3g-analysis-card-title"),
                     dcc.Graph(
-                        figure=_build_figure(points, "putts_total", "putts_rolling_avg", "Putts"),
+                        figure=_build_figure(points, "putts_total", "putts_rolling_avg"),
                         config=GRAPH_CONFIG,
                         style={"width": "100%", "height": "340px"},
                     ),
@@ -606,10 +749,10 @@ def _build_analysis_body(points, scoring_profile=None):
             html.Div(
                 className="t3g-analysis-card",
                 children=[
-                    html.H4("Fairways Hit", className="t3g-analysis-card-title"),
+                    html.H4("Fairways Hit (%)", className="t3g-analysis-card-title"),
                     dcc.Graph(
                         figure=_build_figure(
-                            points, "fairway_pct", "fairway_rolling_avg", "Fairway Hit %", hover_suffix="%"
+                            points, "fairway_pct", "fairway_rolling_avg", hover_suffix="%"
                         ),
                         config=GRAPH_CONFIG,
                         style={"width": "100%", "height": "340px"},
@@ -622,7 +765,7 @@ def _build_analysis_body(points, scoring_profile=None):
             html.Div(
                 className="t3g-analysis-card",
                 children=[
-                    html.H4("Score to Par by Hole Type", className="t3g-analysis-card-title"),
+                    html.H4("Avg Score to Par by Hole Type", className="t3g-analysis-card-title"),
                     dcc.Graph(
                         figure=par_type_fig,
                         config=GRAPH_CONFIG,
@@ -636,9 +779,74 @@ def _build_analysis_body(points, scoring_profile=None):
             html.Div(
                 className="t3g-analysis-card",
                 children=[
-                    html.H4("Scoring Breakdown", className="t3g-analysis-card-title"),
+                    html.H4("Scoring Breakdown (avg per round)", className="t3g-analysis-card-title"),
                     dcc.Graph(
                         figure=scoring_fig,
+                        config=GRAPH_CONFIG,
+                        style={"width": "100%", "height": "300px"},
+                    ),
+                ],
+            )
+        )
+    if distance_fig is not None:
+        cards.append(
+            html.Div(
+                className="t3g-analysis-card",
+                children=[
+                    html.H4("Avg Shots by Hole Distance", className="t3g-analysis-card-title"),
+                    dcc.Graph(
+                        figure=distance_fig,
+                        config=GRAPH_CONFIG,
+                        style={"width": "100%", "height": "300px"},
+                    ),
+                ],
+            )
+        )
+    if scoring_history_fig is not None:
+        cards.append(
+            html.Div(
+                className="t3g-analysis-card",
+                children=[
+                    html.H4("Scoring History", className="t3g-analysis-card-title"),
+                    dcc.Store(id="analysis-scoring-history-store", data=scoring_history),
+                    html.Div(
+                        className="t3g-handicap-toggle",
+                        children=[
+                            html.Button(
+                                "Validated",
+                                id="analysis-scoring-history-view-validated",
+                                className=(
+                                    "t3g-handicap-toggle-button t3g-handicap-toggle-button--active"
+                                    if default_scoring_history_view == "validated"
+                                    else "t3g-handicap-toggle-button"
+                                ),
+                                n_clicks=0,
+                            ),
+                            html.Button(
+                                "Tournament",
+                                id="analysis-scoring-history-view-tournament",
+                                className=(
+                                    "t3g-handicap-toggle-button t3g-handicap-toggle-button--active"
+                                    if default_scoring_history_view == "tournament"
+                                    else "t3g-handicap-toggle-button"
+                                ),
+                                n_clicks=0,
+                            ),
+                            html.Button(
+                                "All",
+                                id="analysis-scoring-history-view-all",
+                                className=(
+                                    "t3g-handicap-toggle-button t3g-handicap-toggle-button--active"
+                                    if default_scoring_history_view == "all"
+                                    else "t3g-handicap-toggle-button"
+                                ),
+                                n_clicks=0,
+                            ),
+                        ],
+                    ),
+                    dcc.Graph(
+                        id="analysis-scoring-history-graph",
+                        figure=scoring_history_fig,
                         config=GRAPH_CONFIG,
                         style={"width": "100%", "height": "300px"},
                     ),
@@ -668,6 +876,12 @@ def layout(tab=None, **kwargs):
 
     scoring_profile_resp = requests.get(f"{API_BASE_URL}/rounds/player/{player_id}/scoring-profile")
     scoring_profile = scoring_profile_resp.json() if scoring_profile_resp.status_code == 200 else {}
+
+    distance_profile_resp = requests.get(f"{API_BASE_URL}/rounds/player/{player_id}/distance-profile")
+    distance_profile = distance_profile_resp.json() if distance_profile_resp.status_code == 200 else {}
+
+    scoring_history_resp = requests.get(f"{API_BASE_URL}/rounds/player/{player_id}/scoring-history")
+    scoring_history = scoring_history_resp.json() if scoring_history_resp.status_code == 200 else []
 
     tab_styles, tab_classes = _tab_visibility(tab)
 
@@ -715,9 +929,7 @@ def layout(tab=None, **kwargs):
                 id="scoring-tab-panel-analysis",
                 style=tab_styles[1],
                 className="t3g-analysis-tab-panel",
-                children=[
-                    _build_analysis_body(analysis_points, scoring_profile),
-                ],
+                children=_build_analysis_body(analysis_points, scoring_profile, distance_profile, scoring_history),
             ),
             dbc.Modal(
                 id="scoring-history-delete-modal",
@@ -864,3 +1076,41 @@ def confirm_delete(n_clicks, target, rounds_history, player_info):
 
     remaining = [r for r in (rounds_history or []) if r["id"] != round_id]
     return remaining, False
+
+
+@callback(
+    Output("analysis-scoring-history-graph", "figure"),
+    Output("analysis-scoring-history-view-validated", "className"),
+    Output("analysis-scoring-history-view-tournament", "className"),
+    Output("analysis-scoring-history-view-all", "className"),
+    Input("analysis-scoring-history-view-validated", "n_clicks"),
+    Input("analysis-scoring-history-view-tournament", "n_clicks"),
+    Input("analysis-scoring-history-view-all", "n_clicks"),
+    State("analysis-scoring-history-store", "data"),
+    prevent_initial_call=True,
+)
+def switch_scoring_history_view(validated_clicks, tournament_clicks, all_clicks, points):
+    base_class = "t3g-handicap-toggle-button"
+    active_class = f"{base_class} t3g-handicap-toggle-button--active"
+
+    triggered_id = dash.ctx.triggered_id
+    view = {
+        "analysis-scoring-history-view-validated": "validated",
+        "analysis-scoring-history-view-tournament": "tournament",
+        "analysis-scoring-history-view-all": "all",
+    }.get(triggered_id, "validated")
+
+    fig = _scoring_history_figure(points or [], view)
+    if fig is None:
+        # No rounds at all in this particular view (e.g. no tournament
+        # rounds yet) -- leave the previous figure up rather than
+        # replacing it with nothing, since an empty chart reads as
+        # broken rather than "switch back, there's nothing here".
+        raise PreventUpdate
+
+    return (
+        fig,
+        active_class if view == "validated" else base_class,
+        active_class if view == "tournament" else base_class,
+        active_class if view == "all" else base_class,
+    )

@@ -99,3 +99,54 @@
         font-size: 0.82rem;
     }
 }
+
+/* Game Analysis panel pagination -- one chart shown at a time (the rest
+   sit in the DOM with display:none, toggled by profile.py's
+   paginate_profile_analysis callback), with Prev/Next arrow buttons and
+   an "X of N" label centered underneath. Scoped to this page only --
+   analysis.py's own Analysis tab keeps the plain grid of all four
+   charts at once. */
+.t3g-analysis-paginated {
+    position: relative;
+}
+
+.t3g-analysis-pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    margin-top: 1rem;
+}
+
+.t3g-analysis-pagination-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 1px solid #dbe1ea;
+    background: #ffffff;
+    color: #1e2a47;
+    font-size: 1.2rem;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+    transition: background 0.15s ease, transform 0.08s ease;
+}
+
+.t3g-analysis-pagination-button:hover {
+    background: #f4f5f9;
+}
+
+.t3g-analysis-pagination-button:active {
+    transform: scale(0.92);
+}
+
+.t3g-analysis-pagination-label {
+    min-width: 64px;
+    text-align: center;
+    color: #6b7280;
+    font-size: 0.82rem;
+    font-weight: 700;
+}

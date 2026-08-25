@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
 from backend.database import supabase
+from backend.services.club_players import list_players_in_club
 from backend.services.friends import list_friends
 from backend.services.handicaps import get_current_player_handicap
 from backend.services.whs import recalculate_and_store_handicap
@@ -613,7 +614,7 @@ def _batch_fetch_round_hydration(rounds: list[dict], player_id: str) -> tuple[di
             scores_response = (
                 supabase
                 .table("round_scores")
-                .select("round_id, hole_number, strokes, putts, fairway_hit")
+                .select("round_id, hole_number, strokes, putts, fairway_hit, nr")
                 .in_("round_id", round_ids)
                 .eq("player_id", player_id)
                 .order("hole_number")
@@ -676,6 +677,7 @@ def _build_round_summary(
             "hole_number": hole_number,
             "par": par,
             "stroke_index": stroke_index,
+            "yardage": course_hole.get("yardage"),
             "strokes": strokes,
             "putts": score.get("putts"),
             "fairway_hit": score.get("fairway_hit"),
@@ -964,6 +966,491 @@ def get_player_scoring_profile(player_id: str) -> dict:
     }
 
 
+# Bin boundaries for get_player_distance_profile -- covers a typical
+# short par 3 up through a long par 5, in the same rough bands a real
+# scorecard's "yardage" column falls into. (label, lo, hi) with either
+# bound as None meaning unbounded on that side (open-ended top bucket for
+# 450y+, no lower bound needed for the first bucket since yardage can't
+# be negative).
+_DISTANCE_BINS = [
+    ("< 150y", None, 149),
+    ("150-249y", 150, 249),
+    ("250-349y", 250, 349),
+    ("350-449y", 350, 449),
+    ("450y+", 450, None),
+]
+
+
+def _distance_bin_label(yardage: int) -> str | None:
+    for label, lo, hi in _DISTANCE_BINS:
+        if (lo is None or yardage >= lo) and (hi is None or yardage <= hi):
+            return label
+    return None
+
+
+def get_player_distance_profile(player_id: str) -> dict:
+    """
+    Average shots (raw strokes taken, not score-to-par -- see the
+    existing par_type_breakdown above for the to-par view) per hole-
+    distance bin, across every completed round this player belongs to.
+    Skips any hole missing strokes, an NR mark, or a known yardage (a
+    manual round with no course data attached has no yardage to bin by,
+    so those holes just don't contribute here -- they still count
+    everywhere else that doesn't need distance).
+    """
+    with _timed(f"select accepted round_players for player {player_id} (distance profile)"):
+        rp_response = (
+            supabase
+            .table("round_players")
+            .select("round_id")
+            .eq("player_id", player_id)
+            .eq("status", "accepted")
+            .execute()
+        )
+    round_ids = [r["round_id"] for r in (rp_response.data or [])]
+    if not round_ids:
+        return {"distance_breakdown": []}
+
+    with _timed(f"select completed rounds among player {player_id}'s rounds (distance profile)"):
+        response = (
+            supabase
+            .table("rounds")
+            .select("*")
+            .in_("id", round_ids)
+            .eq("status", "completed")
+            .order("completed_at", desc=False)
+            .limit(200)
+            .execute()
+        )
+    completed_rounds = response.data or []
+    if not completed_rounds:
+        return {"distance_breakdown": []}
+
+    tee_by_id, holes_by_tee_id, scores_by_round_id = _batch_fetch_round_hydration(completed_rounds, player_id)
+
+    strokes_by_bin = {label: [] for label, _, _ in _DISTANCE_BINS}
+
+    for round_row in completed_rounds:
+        summary = _build_round_summary(
+            round_row, player_id, None, tee_by_id, holes_by_tee_id, scores_by_round_id
+        )
+        for hole in summary["holes"]:
+            if hole.get("nr") or hole.get("strokes") is None or hole.get("yardage") is None:
+                continue
+            label = _distance_bin_label(hole["yardage"])
+            if label is not None:
+                strokes_by_bin[label].append(hole["strokes"])
+
+    distance_breakdown = [
+        {
+            "bin": label,
+            "holes_played": len(strokes),
+            "avg_strokes": round(sum(strokes) / len(strokes), 2) if strokes else None,
+        }
+        for label, strokes in strokes_by_bin.items()
+    ]
+
+    return {"distance_breakdown": distance_breakdown}
+
+
+def get_player_scoring_history(player_id: str) -> list[dict]:
+    """
+    Chronological (oldest -> newest) round-level scoring points for the
+    Scoring History chart's Validated / Tournament / All tabs -- one
+    entry per round with just enough metadata (validated, is_tournament)
+    for the frontend to filter into whichever tab is active client-side,
+    rather than three separate backend calls for what's really one
+    underlying list.
+
+    Includes completed AND pending_signoff rounds -- a pending_signoff
+    round already has a full scorecard (every player just hasn't signed
+    off on it yet), so it has a real score to show on the "All" tab, it
+    just isn't "validated" (counted toward Handicap Index) yet. "Validated"
+    filters this same list down to status == "completed" only; "Tournament"
+    filters down to rounds with a tournament_round_id.
+    """
+    with _timed(f"select accepted round_players for player {player_id} (scoring history)"):
+        rp_response = (
+            supabase
+            .table("round_players")
+            .select("round_id")
+            .eq("player_id", player_id)
+            .eq("status", "accepted")
+            .execute()
+        )
+    round_ids = [r["round_id"] for r in (rp_response.data or [])]
+    if not round_ids:
+        return []
+
+    with _timed(f"select completed/pending_signoff rounds among player {player_id}'s rounds (scoring history)"):
+        response = (
+            supabase
+            .table("rounds")
+            .select("*")
+            .in_("id", round_ids)
+            .in_("status", ["completed", "pending_signoff"])
+            .order("completed_at", desc=False)
+            .limit(200)
+            .execute()
+        )
+    rounds = response.data or []
+    if not rounds:
+        return []
+
+    tee_by_id, holes_by_tee_id, scores_by_round_id = _batch_fetch_round_hydration(rounds, player_id)
+
+    points = []
+    for round_row in rounds:
+        summary = _build_round_summary(
+            round_row, player_id, None, tee_by_id, holes_by_tee_id, scores_by_round_id
+        )
+        if summary["total_strokes"] is None:
+            continue  # no recorded strokes at all yet -- nothing to plot
+        points.append({
+            "date": (round_row.get("completed_at") or "")[:10],
+            "total_strokes": summary["total_strokes"],
+            "validated": round_row.get("status") == "completed",
+            "is_tournament": bool(round_row.get("tournament_round_id")),
+        })
+
+    return points
+
+
+def _batch_fetch_multi_player_hydration(rounds: list[dict]) -> tuple[dict, dict, dict]:
+    """
+    Same tee/course_holes lookups as _batch_fetch_round_hydration, but the
+    scores lookup isn't scoped to a single player -- get_club_player_
+    comparison needs every accepted player's scorecard for each round in
+    scope, not just one player's. scores_by_round_and_player is keyed
+    round_id -> player_id -> hole_number, one extra level of nesting
+    versus _batch_fetch_round_hydration's round_id -> hole_number.
+    """
+    tee_ids = list({r["tee_id"] for r in rounds if r.get("tee_id")})
+    round_ids = [r["id"] for r in rounds]
+
+    tee_by_id: dict[str, dict] = {}
+    holes_by_tee_id: dict[str, dict[int, dict]] = {}
+    if tee_ids:
+        with _timed(f"fetch {len(tee_ids)} tee(s) (+courses) for club comparison batch"):
+            tees_response = (
+                supabase
+                .table("course_tees")
+                .select("*, courses(club_name, course_name)")
+                .in_("id", tee_ids)
+                .execute()
+            )
+        tee_by_id = {t["id"]: t for t in (tees_response.data or [])}
+
+        with _timed(f"fetch course_holes for {len(tee_ids)} tee(s) in club comparison batch"):
+            holes_response = (
+                supabase
+                .table("course_holes")
+                .select("*")
+                .in_("tee_id", tee_ids)
+                .order("hole_number")
+                .execute()
+            )
+        for hole in (holes_response.data or []):
+            holes_by_tee_id.setdefault(hole["tee_id"], {})[hole["hole_number"]] = hole
+
+    scores_by_round_and_player: dict[str, dict[str, dict[int, dict]]] = {}
+    if round_ids:
+        with _timed(f"fetch round_scores for {len(round_ids)} round(s) (club comparison, all players)"):
+            scores_response = (
+                supabase
+                .table("round_scores")
+                .select("round_id, player_id, hole_number, strokes, putts, fairway_hit, nr")
+                .in_("round_id", round_ids)
+                .order("hole_number")
+                .execute()
+            )
+        for score in (scores_response.data or []):
+            scores_by_round_and_player.setdefault(score["round_id"], {}).setdefault(
+                score["player_id"], {}
+            )[score["hole_number"]] = score
+
+    return tee_by_id, holes_by_tee_id, scores_by_round_and_player
+
+
+def _build_holes_for_scores(
+    round_row: dict, scores_by_hole: dict, tee_by_id: dict, holes_by_tee_id: dict
+) -> list[dict]:
+    """
+    Same per-hole shape _build_round_summary builds (par, yardage,
+    strokes, putts, fairway_hit, nr) minus the handicap-adjusted
+    net_strokes/stableford_points fields -- get_club_player_comparison
+    only needs raw scores (same as every other analysis chart, which are
+    all to-par or raw-strokes based already) and is comparing many
+    players who don't all share one handicap, so there's no single
+    handicap to adjust by here anyway.
+    """
+    course_holes_by_number = {}
+    tee = tee_by_id.get(round_row.get("tee_id"))
+    if tee:
+        course_holes_by_number = holes_by_tee_id.get(tee["id"], {})
+
+    holes = []
+    for hole_number in range(1, 19):
+        course_hole = course_holes_by_number.get(hole_number, {})
+        score = scores_by_hole.get(hole_number, {})
+        holes.append({
+            "hole_number": hole_number,
+            "par": course_hole.get("par"),
+            "yardage": course_hole.get("yardage"),
+            "strokes": score.get("strokes"),
+            "putts": score.get("putts"),
+            "fairway_hit": score.get("fairway_hit"),
+            "nr": score.get("nr", False),
+        })
+    return holes
+
+
+def _empty_club_comparison() -> dict:
+    return {
+        "players": [],
+        "putts": {},
+        "fairway": {},
+        "scoring_history": {},
+        "par_type": {},
+        "scoring_breakdown": {},
+        "distance_profile": {},
+    }
+
+
+def get_club_player_comparison(club_id: str, window: int = 5) -> dict:
+    """
+    Player-vs-player version of the Player Analysis charts, scoped to
+    just this club's rounds -- a round only counts here if it's tied to
+    this club specifically, two ways:
+      - a tournament round belonging to a tournament this club hosted
+        (tournaments.club_id -> tournament_rounds.tournament_id ->
+        rounds.tournament_round_id), or
+      - a casual round explicitly tagged with this club
+        (rounds.club_id, see add_round_club_id.sql -- start_round accepts
+        an optional club_id for exactly this).
+    A club member's rounds anywhere else -- a casual round at a random
+    course with no club tag, or a tournament round for a different club
+    -- never count here, even though they'd show up on that player's own
+    Player Analysis page.
+
+    Only club members are compared (an invited friend from outside the
+    club who tagged along on a casual club round still gets a scorecard,
+    just not a spot in this comparison), and only members with at least
+    one qualifying round show up at all -- a member who hasn't played a
+    club round yet has nothing to plot.
+
+    Returns per-player series in the same shapes the single-player
+    functions already use (get_player_analysis / get_player_scoring_
+    profile / get_player_distance_profile / get_player_scoring_history),
+    just keyed by player_id instead of being for one player, so the
+    frontend can draw one trace per player on shared axes:
+      {
+        "players": [{"player_id", "name"}, ...],
+        "putts": {player_id: [{"date", "putts_total", "putts_rolling_avg"}, ...]},
+        "fairway": {player_id: [{"date", "fairway_pct", "fairway_rolling_avg"}, ...]},
+        "scoring_history": {player_id: [{"date", "total_strokes"}, ...]},
+        "par_type": {player_id: [{"par", "avg_score_to_par"}, ...]},
+        "scoring_breakdown": {player_id: [{"category", "avg_per_round"}, ...]},
+        "distance_profile": {player_id: [{"bin", "avg_strokes"}, ...]},
+      }
+    """
+    with _timed(f"select roster for club {club_id} (comparison)"):
+        roster = list_players_in_club(club_id)
+    if not roster:
+        return _empty_club_comparison()
+
+    member_ids = {row["player_id"] for row in roster}
+    name_by_player = {}
+    for row in roster:
+        info = row.get("players") or {}
+        name_by_player[row["player_id"]] = (
+            info.get("nickname")
+            or f"{info.get('first_name', '')} {info.get('surname', '')}".strip()
+            or "Unknown"
+        )
+
+    with _timed(f"select tournaments for club {club_id} (comparison)"):
+        tournaments_response = supabase.table("tournaments").select("id").eq("club_id", club_id).execute()
+    tournament_ids = [t["id"] for t in (tournaments_response.data or [])]
+
+    tournament_round_ids = []
+    if tournament_ids:
+        with _timed(f"select tournament_rounds for club {club_id} (comparison)"):
+            tr_response = (
+                supabase
+                .table("tournament_rounds")
+                .select("id")
+                .in_("tournament_id", tournament_ids)
+                .execute()
+            )
+        tournament_round_ids = [r["id"] for r in (tr_response.data or [])]
+
+    # Keyed by round id to naturally dedupe -- a round can only ever match
+    # one of the two paths below in practice (a tournament round's
+    # tournament_round_id path, or a casual round's direct club_id tag),
+    # but a dict here costs nothing and removes any doubt.
+    scoped_rounds: dict[str, dict] = {}
+
+    if tournament_round_ids:
+        with _timed(f"select tournament rounds for club {club_id}'s tournaments (comparison)"):
+            tourney_rounds_response = (
+                supabase
+                .table("rounds")
+                .select("*")
+                .in_("tournament_round_id", tournament_round_ids)
+                .eq("status", "completed")
+                .execute()
+            )
+        for row in (tourney_rounds_response.data or []):
+            scoped_rounds[row["id"]] = row
+
+    with _timed(f"select casual club-tagged rounds for club {club_id} (comparison)"):
+        casual_rounds_response = (
+            supabase
+            .table("rounds")
+            .select("*")
+            .eq("club_id", club_id)
+            .eq("status", "completed")
+            .execute()
+        )
+    for row in (casual_rounds_response.data or []):
+        scoped_rounds[row["id"]] = row
+
+    rounds = sorted(scoped_rounds.values(), key=lambda r: r.get("completed_at") or "")
+    if not rounds:
+        return _empty_club_comparison()
+
+    round_ids = [r["id"] for r in rounds]
+
+    with _timed(f"select accepted round_players for club {club_id}'s scoped rounds (comparison)"):
+        rp_response = (
+            supabase
+            .table("round_players")
+            .select("round_id, player_id")
+            .in_("round_id", round_ids)
+            .eq("status", "accepted")
+            .execute()
+        )
+    players_by_round: dict[str, list[str]] = {}
+    for rp in (rp_response.data or []):
+        if rp["player_id"] in member_ids:
+            players_by_round.setdefault(rp["round_id"], []).append(rp["player_id"])
+
+    tee_by_id, holes_by_tee_id, scores_by_round_and_player = _batch_fetch_multi_player_hydration(rounds)
+
+    putts_points: dict[str, list[dict]] = {}
+    fairway_points: dict[str, list[dict]] = {}
+    scoring_history_points: dict[str, list[dict]] = {}
+    diffs_by_par_by_player: dict[str, dict[int, list[int]]] = {}
+    bucket_counts_by_player: dict[str, dict[str, int]] = {}
+    rounds_counted_by_player: dict[str, int] = {}
+    distance_totals_by_player: dict[str, dict[str, list[int]]] = {}
+
+    for round_row in rounds:
+        date = (round_row.get("completed_at") or "")[:10]
+        for player_id in players_by_round.get(round_row["id"], []):
+            scores_by_hole = scores_by_round_and_player.get(round_row["id"], {}).get(player_id, {})
+            holes = _build_holes_for_scores(round_row, scores_by_hole, tee_by_id, holes_by_tee_id)
+
+            putts_total, fairway_pct = _round_putts_and_fairway_pct(holes)
+            putts_points.setdefault(player_id, []).append(
+                {"date": date, "putts_total": putts_total, "putts_rolling_avg": None}
+            )
+            fairway_points.setdefault(player_id, []).append(
+                {"date": date, "fairway_pct": fairway_pct, "fairway_rolling_avg": None}
+            )
+
+            strokes_list = [h["strokes"] for h in holes if h["strokes"] is not None]
+            if strokes_list:
+                scoring_history_points.setdefault(player_id, []).append(
+                    {"date": date, "total_strokes": sum(strokes_list)}
+                )
+
+            diffs_by_par = diffs_by_par_by_player.setdefault(player_id, {3: [], 4: [], 5: []})
+            bucket_counts = bucket_counts_by_player.setdefault(
+                player_id, {"birdie_or_better": 0, "par": 0, "bogey": 0, "double_bogey_plus": 0}
+            )
+            distance_totals = distance_totals_by_player.setdefault(player_id, {})
+            round_had_a_valid_hole = False
+            for hole in holes:
+                if hole.get("nr") or hole.get("strokes") is None:
+                    continue
+                if hole.get("par") in (3, 4, 5):
+                    round_had_a_valid_hole = True
+                    diff = hole["strokes"] - hole["par"]
+                    diffs_by_par[hole["par"]].append(diff)
+                    bucket_counts[_scoring_bucket(diff)] += 1
+                if hole.get("yardage") is not None:
+                    bin_label = _distance_bin_label(hole["yardage"])
+                    if bin_label:
+                        distance_totals.setdefault(bin_label, []).append(hole["strokes"])
+            if round_had_a_valid_hole:
+                rounds_counted_by_player[player_id] = rounds_counted_by_player.get(player_id, 0) + 1
+
+    # Rolling averages, per player, over each stat's own series
+    # independently -- identical windowing to get_player_analysis, just
+    # repeated once per player instead of once total.
+    for points in putts_points.values():
+        series = [p for p in points if p["putts_total"] is not None]
+        for i, p in enumerate(series):
+            window_vals = [x["putts_total"] for x in series[max(0, i - window + 1):i + 1]]
+            p["putts_rolling_avg"] = round(sum(window_vals) / len(window_vals), 1)
+
+    for points in fairway_points.values():
+        series = [p for p in points if p["fairway_pct"] is not None]
+        for i, p in enumerate(series):
+            window_vals = [x["fairway_pct"] for x in series[max(0, i - window + 1):i + 1]]
+            p["fairway_rolling_avg"] = round(sum(window_vals) / len(window_vals), 1)
+
+    qualifying_player_ids = (
+        {pid for pid, points in scoring_history_points.items() if points}
+        | {pid for pid, points in putts_points.items() if any(p["putts_total"] is not None for p in points)}
+        | {pid for pid, points in fairway_points.items() if any(p["fairway_pct"] is not None for p in points)}
+    )
+
+    players = [
+        {"player_id": pid, "name": name_by_player.get(pid, "Unknown")}
+        for pid in sorted(qualifying_player_ids, key=lambda pid: name_by_player.get(pid, ""))
+    ]
+
+    par_type: dict[str, list[dict]] = {}
+    scoring_breakdown: dict[str, list[dict]] = {}
+    distance_profile: dict[str, list[dict]] = {}
+    for pid in qualifying_player_ids:
+        diffs_by_par = diffs_by_par_by_player.get(pid, {3: [], 4: [], 5: []})
+        par_type[pid] = [
+            {"par": par, "avg_score_to_par": round(sum(diffs) / len(diffs), 2) if diffs else None}
+            for par, diffs in diffs_by_par.items()
+        ]
+
+        bucket_counts = bucket_counts_by_player.get(pid, {})
+        rounds_counted = rounds_counted_by_player.get(pid, 0)
+        scoring_breakdown[pid] = [
+            {
+                "category": category,
+                "avg_per_round": round(count / rounds_counted, 2) if rounds_counted else None,
+            }
+            for category, count in bucket_counts.items()
+        ]
+
+        distance_totals = distance_totals_by_player.get(pid, {})
+        distance_profile[pid] = [
+            {"bin": label, "avg_strokes": round(sum(vals) / len(vals), 2)}
+            for label, _lo, _hi in _DISTANCE_BINS
+            if (vals := distance_totals.get(label))
+        ]
+
+    return {
+        "players": players,
+        "putts": {pid: putts_points.get(pid, []) for pid in qualifying_player_ids},
+        "fairway": {pid: fairway_points.get(pid, []) for pid in qualifying_player_ids},
+        "scoring_history": {pid: scoring_history_points.get(pid, []) for pid in qualifying_player_ids},
+        "par_type": par_type,
+        "scoring_breakdown": scoring_breakdown,
+        "distance_profile": distance_profile,
+    }
+
+
 def start_round(payload: dict) -> dict:
     """
     Starts a live round, optionally inviting up to 3 confirmed friends
@@ -1002,6 +1489,10 @@ def start_round(payload: dict) -> dict:
         "manual_tee_name": payload.get("manual_tee_name"),
         "manual_course_rating": payload.get("manual_course_rating"),
         "manual_slope_rating": payload.get("manual_slope_rating"),
+        # Optional club tag (see add_round_club_id.sql) -- lets a casual
+        # round count toward that club's player comparison analysis, the
+        # same way a tournament round already does via tournament_round_id.
+        "club_id": payload.get("club_id"),
     }
 
     with _timed("insert rounds row"):

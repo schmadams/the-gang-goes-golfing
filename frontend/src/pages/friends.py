@@ -13,6 +13,43 @@ from layouts.panel_navbar import build_panel_navbar
 dash.register_page(__name__, path="/friends", name="Friends")
 
 
+# Tournament-style pill subnav shared between this page and friends.py --
+# real navigation (dcc.Link, not a client-side tab toggle), since these
+# stay two separate registered pages/routes each with their own auth
+# check and callbacks rather than being merged into one. Same "small
+# duplicated pure render function per page" convention as the rest of
+# the app (see analysis.py/profile.py's own docstrings) rather than
+# cross-importing. The bottom nav's own "Account" tab still just links
+# straight to /my-account -- this subnav is what actually lets you get
+# to Friends from there (and back) without a fifth bottom-nav icon.
+_ACCOUNT_TAB_BASE = "t3g-tournament-tab"
+_ACCOUNT_TAB_ACTIVE = "t3g-tournament-tab t3g-tournament-tab--active"
+
+
+def _account_subnav(active):
+    return html.Div(
+        className="t3g-tournament-subnav",
+        children=html.Div(
+            className="t3g-tournament-subnav-inner",
+            children=html.Div(
+                className="t3g-tournament-tabs",
+                children=[
+                    dcc.Link(
+                        "My Account",
+                        href="/my-account",
+                        className=_ACCOUNT_TAB_ACTIVE if active == "account" else _ACCOUNT_TAB_BASE,
+                    ),
+                    dcc.Link(
+                        "Friends",
+                        href="/friends",
+                        className=_ACCOUNT_TAB_ACTIVE if active == "friends" else _ACCOUNT_TAB_BASE,
+                    ),
+                ],
+            ),
+        ),
+    )
+
+
 def _refresh_href():
     # dcc.Location only actually reloads the browser when the value it's
     # given differs from what's already loaded -- outputting the same
@@ -136,6 +173,7 @@ def layout(**kwargs):
     return html.Div(
         className="t3g-page",
         children=[
+            _account_subnav("friends"),
             dcc.Location(id="friends-refresh", refresh=True),
             html.Div(
                 className="t3g-panel",

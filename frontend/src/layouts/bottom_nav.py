@@ -37,7 +37,12 @@ _BOTTOM_NAV_ITEMS = [
     ("Clubs", "fa-flag", "/clubs", ("/clubs",)),
     ("Analysis", "fa-chart-line", "/analysis", ("/analysis", "/scoring-history")),
     ("Live", "fa-golf-ball-tee", "/live-round", ("/live-round",)),
-    ("Account", "fa-user", "/my-account", ("/my-account",)),
+    # Friends now lives under the Account umbrella (reachable via the
+    # tournament-style subnav at the top of both pages -- see
+    # pages/my_account.py's/friends.py's own _account_subnav) rather than
+    # getting a bottom-nav slot of its own, so this tab stays highlighted
+    # on either page, not just /my-account.
+    ("Account", "fa-user", "/my-account", ("/my-account", "/friends")),
 ]
 
 
