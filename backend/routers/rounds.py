@@ -29,6 +29,7 @@ from backend.services.rounds import (
     finish_round,
     get_active_round,
     get_player_analysis,
+    get_player_scoring_profile,
     get_round,
     leave_round,
     list_pending_round_invites,
@@ -89,6 +90,14 @@ def list_player_rounds_route(player_id: str):
 @router.get("/player/{player_id}/analysis", response_model=list[RoundAnalysisPoint])
 def get_player_analysis_route(player_id: str, window: int = 5):
     return get_player_analysis(player_id, window=window)
+
+
+@router.get("/player/{player_id}/scoring-profile")
+def get_player_scoring_profile_route(player_id: str):
+    """Score-to-par by hole length (par 3/4/5) and average birdies/pars/
+    bogeys/double-bogeys-plus per round -- powers the two extra Player
+    Analysis charts (see get_player_scoring_profile's docstring)."""
+    return get_player_scoring_profile(player_id)
 
 
 @router.get("/invites/{player_id}", response_model=list[RoundInviteResponse])

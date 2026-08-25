@@ -138,6 +138,26 @@ def list_friends(player_id: str) -> list[dict]:
     return friends
 
 
+def are_friends(player_a: str, player_b: str) -> bool:
+    """True if these two players have a confirmed (accepted) friendship in
+    either direction. Used to gate anything that shouldn't be visible to
+    just anyone with a player_id -- currently the player profile page (see
+    get_player_profile in backend/services/players.py) -- the same way
+    round membership already gates round data elsewhere in this app."""
+    response = (
+        supabase
+        .table("friend_requests")
+        .select("id")
+        .or_(
+            f"and(requester_id.eq.{player_a},recipient_id.eq.{player_b}),"
+            f"and(requester_id.eq.{player_b},recipient_id.eq.{player_a})"
+        )
+        .eq("status", "accepted")
+        .execute()
+    )
+    return bool(response.data)
+
+
 def remove_friend(player_id: str, friend_id: str) -> bool:
     """Removes a confirmed friendship in either direction by deleting the
     underlying accepted friend_requests row. Returns False if these two

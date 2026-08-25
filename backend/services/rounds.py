@@ -854,6 +854,116 @@ def get_player_analysis(player_id: str, window: int = 5) -> list[dict]:
     return points
 
 
+# Bucket labels for get_player_scoring_profile's scoring_breakdown --
+# order matters (best to worst), the frontend renders bars in this same
+# order. "double_bogey_plus" folds triple-bogey-and-worse in with double
+# bogey rather than giving every possible score its own bucket, matching
+# how the request was phrased ("birdies, pars, bogeys, double bogeys and
+# worse").
+def _scoring_bucket(diff: int) -> str:
+    if diff <= -1:
+        return "birdie_or_better"
+    if diff == 0:
+        return "par"
+    if diff == 1:
+        return "bogey"
+    return "double_bogey_plus"
+
+
+def get_player_scoring_profile(player_id: str) -> dict:
+    """
+    Two aggregate views across every completed round this player belongs
+    to (owner or accepted participant), for the Player Analysis page's
+    "Score to Par by Hole Type" and "Scoring Breakdown" charts:
+
+    - par_type_breakdown: average (strokes - par) on par-3s, par-4s, and
+      par-5s separately -- lets a player see which hole length is
+      actually costing them strokes, rather than one blended average
+      across every hole.
+    - scoring_breakdown: how many birdies-or-better / pars / bogeys /
+      double-bogeys-or-worse they card, on average, per round (see
+      _scoring_bucket) -- "per round" reads as "per 18 holes" for a
+      normal full round, which is how every completed round in this app
+      is played.
+
+    Both skip holes with no recorded strokes or no known par (NR'd holes,
+    or manual rounds missing course data) -- only holes with a real,
+    comparable score-to-par count toward either breakdown.
+    """
+    with _timed(f"select accepted round_players for player {player_id} (scoring profile)"):
+        rp_response = (
+            supabase
+            .table("round_players")
+            .select("round_id")
+            .eq("player_id", player_id)
+            .eq("status", "accepted")
+            .execute()
+        )
+    round_ids = [r["round_id"] for r in (rp_response.data or [])]
+    if not round_ids:
+        return {"par_type_breakdown": [], "scoring_breakdown": [], "rounds_counted": 0}
+
+    with _timed(f"select completed rounds among player {player_id}'s rounds (scoring profile)"):
+        response = (
+            supabase
+            .table("rounds")
+            .select("*")
+            .in_("id", round_ids)
+            .eq("status", "completed")
+            .order("completed_at", desc=False)
+            .limit(200)
+            .execute()
+        )
+    completed_rounds = response.data or []
+    if not completed_rounds:
+        return {"par_type_breakdown": [], "scoring_breakdown": [], "rounds_counted": 0}
+
+    tee_by_id, holes_by_tee_id, scores_by_round_id = _batch_fetch_round_hydration(completed_rounds, player_id)
+
+    diffs_by_par = {3: [], 4: [], 5: []}
+    bucket_counts = {"birdie_or_better": 0, "par": 0, "bogey": 0, "double_bogey_plus": 0}
+    rounds_counted = 0
+
+    for round_row in completed_rounds:
+        summary = _build_round_summary(
+            round_row, player_id, None, tee_by_id, holes_by_tee_id, scores_by_round_id
+        )
+        round_had_a_valid_hole = False
+        for hole in summary["holes"]:
+            if hole.get("nr") or hole.get("strokes") is None or hole.get("par") not in (3, 4, 5):
+                continue
+            round_had_a_valid_hole = True
+            diff = hole["strokes"] - hole["par"]
+            diffs_by_par[hole["par"]].append(diff)
+            bucket_counts[_scoring_bucket(diff)] += 1
+        if round_had_a_valid_hole:
+            rounds_counted += 1
+
+    par_type_breakdown = [
+        {
+            "par": par,
+            "holes_played": len(diffs),
+            "avg_score_to_par": round(sum(diffs) / len(diffs), 2) if diffs else None,
+        }
+        for par, diffs in diffs_by_par.items()
+    ]
+
+    scoring_breakdown = [
+        {
+            "category": category,
+            "total": count,
+            "avg_per_round": round(count / rounds_counted, 2) if rounds_counted else None,
+        }
+        for category, count in bucket_counts.items()
+    ]
+
+    return {
+        "par_type_breakdown": par_type_breakdown,
+        "scoring_breakdown": scoring_breakdown,
+        "rounds_counted": rounds_counted,
+    }
+
+
 def start_round(payload: dict) -> dict:
     """
     Starts a live round, optionally inviting up to 3 confirmed friends

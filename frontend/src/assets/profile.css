@@ -1,0 +1,101 @@
+/* target path: frontend/src/assets/profile.css (new file) */
+
+/* Player profile page (pages/profile.py) -- reached from a confirmed
+   friend's name on the Friends page. Header card mirrors the same
+   white/rounded/shadow treatment .t3g-panel uses elsewhere, just with
+   its own layout (avatar + name/meta side by side) instead of a
+   navbar+body split, since there's no title bar here. */
+
+.t3g-player-profile-header {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    background: #ffffff;
+    border-radius: 16px;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
+    padding: 1.5rem 2rem;
+    margin-bottom: 2rem;
+}
+
+.t3g-player-profile-avatar {
+    width: 96px;
+    height: 96px;
+    flex-shrink: 0;
+}
+
+/* Shown instead of .t3g-player-profile-avatar when the player has no
+   profile_picture_url -- same navy-circle-with-initial language as
+   .t3g-leaderboard-avatar/.t3g-history-player-avatar elsewhere in the
+   app, just scaled up for a page header rather than a table row. */
+.t3g-player-profile-avatar-fallback {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 96px;
+    height: 96px;
+    border-radius: 50%;
+    background: #1e2a47;
+    color: #ffffff;
+    font-size: 2.4rem;
+    font-weight: 800;
+    flex-shrink: 0;
+}
+
+.t3g-player-profile-header-info {
+    min-width: 0;
+}
+
+.t3g-player-profile-name {
+    margin: 0 0 0.2rem;
+    color: #1e2a47;
+    font-weight: 800;
+}
+
+.t3g-player-profile-fullname {
+    color: #6b7280;
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+
+.t3g-player-profile-meta-line {
+    color: #374151;
+    font-size: 0.9rem;
+    margin-top: 0.3rem;
+}
+
+/* Course/tee/date subtitle on a Recent Rounds card -- .t3g-round-card-
+   header is already display:flex with justify-content:space-between
+   (see home.css), so pairing this with the existing .t3g-round-card-
+   title just pushes it to the header's right edge for free, no extra
+   layout rule needed here. */
+.t3g-round-card-subtitle {
+    color: #6b7280;
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+@media (max-width: 700px), (max-height: 500px) {
+    .t3g-player-profile-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.85rem;
+        padding: 1.1rem 1.25rem;
+        text-align: left;
+    }
+
+    .t3g-player-profile-avatar,
+    .t3g-player-profile-avatar-fallback {
+        width: 72px;
+        height: 72px;
+        font-size: 1.8rem;
+    }
+
+    .t3g-player-profile-name {
+        font-size: 1.25rem;
+    }
+
+    .t3g-player-profile-fullname,
+    .t3g-player-profile-meta-line {
+        font-size: 0.82rem;
+    }
+}

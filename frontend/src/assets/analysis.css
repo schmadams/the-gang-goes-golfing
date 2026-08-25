@@ -1,9 +1,39 @@
 /* target path: frontend/src/assets/analysis.css (new file) */
 
+/* Analysis tab's own root, replacing the .t3g-panel card it used to sit
+   inside -- that outer white/shadowed/bordered box was redundant chrome
+   once every chart already has its own .t3g-analysis-card, and its fixed
+   padding was fighting the grid's ability to shrink into the 900px
+   single-column breakpoint below. The Rounds tab keeps its .t3g-panel
+   treatment; this is scoped to the Analysis tab only. */
+.t3g-analysis-tab-panel {
+    margin-bottom: 2rem;
+}
+
+.t3g-analysis-tab-title {
+    margin: 0 0 1.25rem;
+    color: #1e2a47;
+    font-weight: 800;
+    font-size: 1.1rem;
+}
+
 .t3g-analysis-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 2rem;
+    /* min-width: 0 on the grid itself (not just the cards below) --
+       without it, a CSS grid track's default min-width is "auto", which
+       floors it at its content's own intrinsic width. A Plotly chart
+       used to report a large intrinsic width regardless of its actual
+       rendered size, which forced each 1fr column (and therefore the
+       whole grid, and the page around it) wider than the viewport
+       instead of ever letting the 900px column-collapse breakpoint
+       below actually kick in. Charts are now built with config=
+       {"responsive": True} (see analysis.py) so they resize to fit
+       whatever width they're given, but this still matters as the
+       belt-and-braces fix -- nothing above can floor the grid's width
+       again even if some future chart or embed isn't responsive. */
+    min-width: 0;
 }
 
 @media (max-width: 900px) {
@@ -17,6 +47,8 @@
     border: 1px solid #e2e4ea;
     border-radius: 12px;
     padding: 1.25rem;
+    min-width: 0; /* same CSS grid min-content gotcha as .t3g-analysis-grid above */
+    overflow: hidden; /* belt-and-braces -- a chart can never visually spill past its own card */
 }
 
 .t3g-analysis-card-title {

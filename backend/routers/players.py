@@ -3,8 +3,10 @@ from fastapi import APIRouter, File, HTTPException, UploadFile, status
 
 from backend.models.player import PlayerCreate, PlayerResponse, PlayerUpdate
 from backend.services.players import (
+    NotFriendsWithPlayerError,
     create_player,
     get_player,
+    get_player_profile,
     list_players,
     update_player,
     upload_profile_picture,
@@ -40,6 +42,25 @@ def get_player_route(player_id: str):
         )
 
     return player
+
+
+@router.get("/{player_id}/profile")
+def get_player_profile_route(player_id: str, viewer_player_id: str):
+    # viewer_player_id is required (no default) -- unlike get_player_route
+    # above, this endpoint is deliberately gated: get_player_profile
+    # raises NotFriendsWithPlayerError for anyone who isn't player_id's
+    # confirmed friend (or player_id themselves), see its docstring in
+    # backend/services/players.py. Powers the friends-visible player
+    # profile page.
+    try:
+        profile = get_player_profile(player_id, viewer_player_id)
+    except NotFriendsWithPlayerError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
+
+    if not profile:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Player not found")
+
+    return profile
 
 
 @router.patch("/{player_id}", response_model=PlayerResponse)

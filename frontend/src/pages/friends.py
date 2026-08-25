@@ -38,14 +38,29 @@ def _request_row(other_player, action_children):
 
 
 def _friend_row(friend):
-    return _request_row(
-        friend,
-        html.Button(
-            "Remove",
-            id={"type": "friend-remove", "friend_id": friend["player_id"]},
-            className="t3g-panel-action-button t3g-panel-action-button--secondary",
-            n_clicks=0,
-        ),
+    # Not built on top of _request_row (unlike everywhere else that
+    # shares it) -- a confirmed friend's name links through to their
+    # profile page (see pages/profile.py), which a still-pending
+    # request's name shouldn't, since the backend would just 403 a
+    # non-friend trying to load one anyway.
+    return html.Div(
+        className="t3g-friend-request-row",
+        children=[
+            dcc.Link(
+                _player_label(friend),
+                href=f"/players/{friend['player_id']}",
+                className="t3g-friend-request-name t3g-friend-request-name-link",
+            ),
+            html.Div(
+                html.Button(
+                    "Remove",
+                    id={"type": "friend-remove", "friend_id": friend["player_id"]},
+                    className="t3g-panel-action-button t3g-panel-action-button--secondary",
+                    n_clicks=0,
+                ),
+                className="t3g-friend-request-actions",
+            ),
+        ],
     )
 
 

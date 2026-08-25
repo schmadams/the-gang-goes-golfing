@@ -393,31 +393,80 @@ _HANDICAP_INFO_TEXT = [
 ]
 
 
+# Every dcc.Graph in this module passes this exact dict -- responsive:
+# True is what lets Plotly resize the chart to fit its container's actual
+# width instead of rendering at a fixed ~700px (see analysis.py's
+# GRAPH_CONFIG for the full explanation; carried over here for the same
+# reason, and for visual consistency across every trend chart in the app).
+GRAPH_CONFIG = {"displayModeBar": False, "responsive": True}
+
+
+def _padded_range(values, factor=1.5):
+    """Same helper as analysis.py's _padded_range -- a y-axis range
+    `factor` times as wide as the data's own min-to-max span, centered on
+    the data, so the handicap trend line isn't flattened into a thin band
+    at the top of a zero-anchored chart."""
+    if not values:
+        return None
+    lo, hi = min(values), max(values)
+    span = hi - lo
+    if span == 0:
+        pad = max(abs(hi) * 0.15, 1)
+        return [lo - pad, hi + pad]
+    extra = (span * factor - span) / 2
+    return [lo - extra, hi + extra]
+
+
 def _handicap_trend_figure(history):
     ordered = list(reversed(history))  # API returns most-recent-first; chart wants chronological
     dates = [h["valid_from"] for h in ordered]
     values = [h["handicap"] for h in ordered]
 
     fig = go.Figure()
+    # Smoothed spline + a soft gradient fill under the line, rather than a
+    # bare connect-the-dots polyline -- same "real analytics chart" look
+    # as the Player Analysis trend charts (see analysis.py's _build_
+    # figure), applied here too so every trend chart in the app reads as
+    # one consistent visual language. White-ringed ("halo") marker so
+    # each point still reads clearly against its own gradient fill.
     fig.add_trace(go.Scatter(
         x=dates,
         y=values,
         mode="lines+markers",
-        line=dict(color="#c21861", width=3),
-        marker=dict(color="#c21861", size=7),
+        line=dict(color="#c21861", width=3, shape="spline", smoothing=0.6),
+        marker=dict(color="#c21861", size=7, line=dict(color="#ffffff", width=2)),
+        fill="tozeroy",
+        fillcolor="rgba(194, 24, 97, 0.08)",
         hovertemplate="%{x}<br>Handicap %{y}<extra></extra>",
     ))
     fig.update_layout(
-        margin=dict(l=45, r=20, t=10, b=40),
+        autosize=True,
+        margin=dict(l=45, r=20, t=16, b=40),
         height=280,
         yaxis_title="Handicap Index",
-        plot_bgcolor="#ffffff",
-        paper_bgcolor="#ffffff",
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
         font=dict(color="#1e2a47"),
-        hovermode="x unified",
+        showlegend=False,
+        hoverlabel=dict(bgcolor="#1e2a47", bordercolor="#1e2a47", font=dict(color="#ffffff")),
     )
-    fig.update_xaxes(showgrid=False)
-    fig.update_yaxes(showgrid=True, gridcolor="#f0f1f5", zeroline=False)
+    fig.update_xaxes(showgrid=False, zeroline=False, tickformat="%b %d")
+    fig.update_yaxes(showgrid=True, gridcolor="#f0f1f5", zeroline=False, range=_padded_range(values))
+    if values:
+        # Solid pill "current value" tag, matching analysis.py's trend
+        # chart badges, instead of plain floating text.
+        fig.add_annotation(
+            x=dates[-1],
+            y=values[-1],
+            text=f"<b>{values[-1]}</b>",
+            showarrow=False,
+            xanchor="left",
+            xshift=16,
+            font=dict(color="#ffffff", size=12),
+            bgcolor="#c21861",
+            bordercolor="#c21861",
+            borderpad=5,
+        )
     return fig
 
 
@@ -427,7 +476,17 @@ def _handicap_trend_view(history):
             "Not enough handicap history yet -- play and finish a few more rounds to see a trend.",
             className="t3g-empty-state",
         )
-    return dcc.Graph(figure=_handicap_trend_figure(history), config={"displayModeBar": False})
+    return dcc.Graph(
+        figure=_handicap_trend_figure(history),
+        config=GRAPH_CONFIG,
+        # Fixed pixel height, not just width -- config.responsive=True
+        # re-measures its container for *both* dimensions on every resize.
+        # An "auto" height here (derived from the chart's own rendered
+        # content) turns that into a feedback loop: draw -> box grows to
+        # fit -> resize observer fires -> draw taller -> repeat, with no
+        # ceiling. See analysis.py's _build_analysis_body for the full note.
+        style={"width": "100%", "height": "280px"},
+    )
 
 
 def _handicap_round_card(r):
