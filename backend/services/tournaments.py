@@ -11,7 +11,7 @@ from backend.services.handicaps import get_current_player_handicap
 from backend.services.rounds import _hole_handicap_strokes, _stableford_points
 from backend.services.tournament_tee_times import fetch_tee_times_by_round
 
-_PLAYER_EMBED = "players(id, first_name, surname, nickname)"
+_PLAYER_EMBED = "players(id, first_name, surname, nickname, profile_picture_url)"
 
 
 class ClubNotFoundError(Exception):
@@ -134,6 +134,7 @@ def _fetch_entrants_by_tournament(tournament_ids: list[str]) -> dict[str, list[d
             "first_name": player.get("first_name"),
             "surname": player.get("surname"),
             "nickname": player.get("nickname"),
+            "photo_url": player.get("profile_picture_url"),
         }
         grouped.setdefault(flat["tournament_id"], []).append(flat)
     return grouped
@@ -544,6 +545,12 @@ def get_tournament_leaderboard(tournament_id: str, round_id: str) -> dict:
         players.append({
             "player_id": player_id,
             "name": name or "Unknown player",
+            # Carried straight through from _fetch_entrants_by_tournament's
+            # own player embed -- lets every leaderboard avatar show the
+            # real profile picture once one's been uploaded (see
+            # _leaderboard_avatar in tournament.py), falling back to
+            # initials there when this is None the same as it always did.
+            "photo_url": entrant.get("photo_url"),
             "thru": line["thru"],
             "holes_gross": line["holes_gross"],
             "holes_nett": line["holes_nett"],

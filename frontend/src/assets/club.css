@@ -1104,6 +1104,15 @@
     background: #8dc63f;
 }
 
+/* Modifier for when _leaderboard_avatar (club.py/tournament.py) renders
+   an <img> instead of the initials <span> -- same fixed circle sizing
+   from .t3g-leaderboard-avatar above, just filled with the actual photo
+   (object-fit: cover so a non-square upload still fills the circle
+   without distorting) instead of a background color + centered text. */
+.t3g-leaderboard-avatar--photo {
+    object-fit: cover;
+}
+
 /* Total -- the one number people actually scan for -- gets a flat pill
    instead of plain bold text, colored by whether it's under/level/over
    par (red = under, matching the same convention the hole-by-hole cells

@@ -1073,6 +1073,27 @@ def _leaderboard_initials(name):
     return (words[0][0] + words[-1][0]).upper()
 
 
+def _leaderboard_avatar(name, photo_url):
+    """The circle at the start of every leaderboard row -- the player's
+    real profile picture once they've uploaded one (photo_url comes
+    straight through from get_tournament_leaderboard, which now carries
+    it off the same players(...) embed _fetch_entrants_by_tournament
+    already fetches), falling back to the initials badge otherwise
+    exactly like before. Same t3g-leaderboard-avatar sizing/circle
+    either way -- the photo variant just adds --photo for object-fit:
+    cover (see club.css, shared globally) so a non-square upload doesn't
+    stretch. Same helper, same reasoning, as club.py's own
+    _leaderboard_avatar -- duplicated rather than imported per this
+    app's usual per-page convention."""
+    if photo_url:
+        return html.Img(
+            src=photo_url,
+            alt="",
+            className="t3g-leaderboard-avatar t3g-leaderboard-avatar--photo",
+        )
+    return html.Span(_leaderboard_initials(name), className="t3g-leaderboard-avatar")
+
+
 def _leaderboard_positions(sorted_players, total_key):
     """Sequential rank with ties sharing a position (and a "T" prefix once
     they do) -- same convention every real leaderboard uses rather than
@@ -1173,7 +1194,7 @@ def _leaderboard_table(leaderboard_data, mode):
             html.Td(
                 html.Div(
                     [
-                        html.Span(_leaderboard_initials(p["name"]), className="t3g-leaderboard-avatar"),
+                        _leaderboard_avatar(p["name"], p.get("photo_url")),
                         html.Span(p["name"]),
                     ],
                     className="t3g-leaderboard-player-cell",
@@ -1317,7 +1338,7 @@ def _leaderboard_simple_table(leaderboard_data, mode, clickable=True):
                     html.Td(
                         html.Div(
                             [
-                                html.Span(_leaderboard_initials(p["name"]), className="t3g-leaderboard-avatar"),
+                                _leaderboard_avatar(p["name"], p.get("photo_url")),
                                 html.Span(p["name"]),
                             ],
                             className="t3g-leaderboard-player-cell",

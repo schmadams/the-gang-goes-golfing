@@ -1261,6 +1261,7 @@ def get_club_player_comparison(club_id: str, window: int = 5) -> dict:
 
     member_ids = {row["player_id"] for row in roster}
     name_by_player = {}
+    photo_by_player = {}
     for row in roster:
         info = row.get("players") or {}
         name_by_player[row["player_id"]] = (
@@ -1268,6 +1269,7 @@ def get_club_player_comparison(club_id: str, window: int = 5) -> dict:
             or f"{info.get('first_name', '')} {info.get('surname', '')}".strip()
             or "Unknown"
         )
+        photo_by_player[row["player_id"]] = info.get("profile_picture_url")
 
     with _timed(f"select tournaments for club {club_id} (comparison)"):
         tournaments_response = supabase.table("tournaments").select("id").eq("club_id", club_id).execute()
@@ -1409,7 +1411,16 @@ def get_club_player_comparison(club_id: str, window: int = 5) -> dict:
     )
 
     players = [
-        {"player_id": pid, "name": name_by_player.get(pid, "Unknown")}
+        {
+            "player_id": pid,
+            "name": name_by_player.get(pid, "Unknown"),
+            # Same "carry the real photo through, fall back to initials
+            # client-side" pattern as get_tournament_leaderboard -- roster
+            # rows already embed the full players(*) row (see
+            # list_players_in_club), so profile_picture_url was already
+            # sitting right there.
+            "photo_url": photo_by_player.get(pid),
+        }
         for pid in sorted(qualifying_player_ids, key=lambda pid: name_by_player.get(pid, ""))
     ]
 

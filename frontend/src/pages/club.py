@@ -83,6 +83,24 @@ def _leaderboard_initials(name):
     return (words[0][0] + words[-1][0]).upper()
 
 
+def _leaderboard_avatar(name, photo_url):
+    """The circle at the start of every leaderboard row -- the player's
+    real profile picture once they've uploaded one (photo_url comes
+    straight through from get_club_player_comparison, which now carries
+    it off the same players(*) embed list_players_in_club already
+    fetches), falling back to the initials badge otherwise exactly like
+    before. Same t3g-leaderboard-avatar sizing/circle either way -- the
+    photo variant just adds --photo for object-fit: cover (see club.css)
+    so a non-square upload doesn't stretch."""
+    if photo_url:
+        return html.Img(
+            src=photo_url,
+            alt="",
+            className="t3g-leaderboard-avatar t3g-leaderboard-avatar--photo",
+        )
+    return html.Span(_leaderboard_initials(name), className="t3g-leaderboard-avatar")
+
+
 def _leaderboard_positions(values):
     """Sequential rank with ties sharing a position (T-prefixed once they
     do) -- same convention tournament.py's own leaderboard uses. Expects
@@ -141,7 +159,7 @@ def _stat_leaderboard(players, series_by_player, value_field, ascending, value_s
                     html.Td(
                         html.Div(
                             [
-                                html.Span(_leaderboard_initials(player["name"]), className="t3g-leaderboard-avatar"),
+                                _leaderboard_avatar(player["name"], player.get("photo_url")),
                                 html.Span(player["name"]),
                             ],
                             className="t3g-leaderboard-player-cell",
@@ -261,7 +279,7 @@ def _par_type_leaderboard(players, par_type_by_player, par):
                     html.Td(
                         html.Div(
                             [
-                                html.Span(_leaderboard_initials(player["name"]), className="t3g-leaderboard-avatar"),
+                                _leaderboard_avatar(player["name"], player.get("photo_url")),
                                 html.Span(player["name"]),
                             ],
                             className="t3g-leaderboard-player-cell",
@@ -655,6 +673,31 @@ def _club_photo_panel(club, is_admin):
     )
 
 
+def _admin_tab_panel(club, player_id, is_admin):
+    """Everything admin-only on the club page lives here now, instead of
+    scattered across whichever tab it happened to relate to (Club Photo
+    and Invite a Player used to sit at the top of Directory, Create
+    Tournament used to sit in the Tournaments tab's own navbar). One
+    place a club admin goes for every management action, and nothing for
+    anyone else to stumble onto.
+
+    Each of the three panels below still privately re-checks is_admin/
+    player_id itself (see _invite_panel/_club_photo_panel's own guards)
+    as defense in depth, in case a non-admin somehow lands on ?tab=admin
+    directly -- _club_tab_visibility already redirects that case back to
+    Directory, but this is a second layer that costs nothing."""
+    if not is_admin:
+        return None
+
+    return html.Div(
+        children=[
+            _club_photo_panel(club, is_admin),
+            _invite_panel(club, player_id),
+            _tournament_admin_card(),
+        ],
+    )
+
+
 def _course_label(course):
     # Same field names/format as home.py's and my_account.py's course
     # pickers -- kept as its own copy per page rather than a shared
@@ -756,29 +799,55 @@ def _tournament_item(tournament, slug):
     )
 
 
-def _tournaments_panel(is_admin, tournaments, slug):
+def _tournaments_panel(tournaments, slug):
+    """No admin action here anymore -- Create Tournament used to live in
+    this panel's navbar, but every admin-only action on the club page now
+    lives together under the Admin tab (see _tournament_admin_card /
+    _admin_tab_panel) instead of being scattered across whichever tab it
+    happens to relate to. This panel is now the same for every viewer."""
     body = (
         html.Div([_tournament_item(t, slug) for t in tournaments], className="t3g-tournament-list")
         if tournaments
         else html.P("No tournaments yet.", className="t3g-empty-state")
     )
 
-    action = (
-        html.Button(
-            "Create Tournament",
-            id="tournament-create-button",
-            className="t3g-panel-action-button",
-            n_clicks=0,
-        )
-        if is_admin
-        else None
-    )
-
     return html.Div(
         className="t3g-panel",
         children=[
-            build_panel_navbar("Tournaments", action=action),
+            build_panel_navbar("Tournaments"),
             html.Div(body, className="t3g-panel-body"),
+        ],
+    )
+
+
+def _tournament_admin_card():
+    """Create Tournament trigger, relocated here from the Tournaments
+    tab's own navbar action -- still opens the exact same _tournament_
+    modal() (that modal isn't tab-scoped, it's always in the DOM
+    regardless of which tab is active) via the same tournament-create-
+    button id handle_tournament_modal already listens on. Only the
+    trigger moved, not the create flow itself -- after a tournament is
+    created the page reloads and it shows up on the Tournaments tab as
+    normal."""
+    return html.Div(
+        className="t3g-panel",
+        children=[
+            build_panel_navbar("Tournaments"),
+            html.Div(
+                className="t3g-panel-body",
+                children=[
+                    html.P(
+                        "Start a new competition for this club.",
+                        className="t3g-empty-state mb-2",
+                    ),
+                    html.Button(
+                        "Create Tournament",
+                        id="tournament-create-button",
+                        className="t3g-panel-action-button",
+                        n_clicks=0,
+                    ),
+                ],
+            ),
         ],
     )
 
@@ -922,36 +991,54 @@ def _not_found_page():
     )
 
 
-_CLUB_TAB_KEYS = ("directory", "tournaments", "comparison")
+_CLUB_TAB_KEYS = ("directory", "tournaments", "comparison", "admin")
 _CLUB_TAB_BUTTON_BASE = "t3g-tournament-tab"
 _CLUB_TAB_BUTTON_ACTIVE = "t3g-tournament-tab t3g-tournament-tab--active"
 
 
-def _club_tab_visibility(active_tab):
-    """(styles, classes) for the club page's three tabs at page-load
-    time -- same ?tab= query param pattern tournament.py's own subnav
-    uses (see _tab_visibility there), picked once at load instead of
-    always defaulting to Directory, so a link elsewhere in the app can
-    open straight onto Tournaments or Player Comparison. switch_club_tab
-    below owns in-page click-driven switching after that."""
+def _club_tab_visibility(active_tab, is_admin):
+    """(styles, classes) for the club page's tabs at page-load time --
+    same ?tab= query param pattern tournament.py's own subnav uses (see
+    _tab_visibility there), picked once at load instead of always
+    defaulting to Directory, so a link elsewhere in the app can open
+    straight onto Tournaments/Player Analysis/Admin. switch_club_tab
+    below owns in-page click-driven switching after that.
+
+    A non-admin asking for ?tab=admin falls back to Directory instead of
+    landing on a tab whose button they can't even see (see _club_subnav
+    -- the Admin button stays in the DOM but hidden via style for
+    non-admins, purely so switch_club_tab's Output targets always
+    exist)."""
     hidden = {"display": "none"}
     shown = {}
-    key = active_tab if active_tab in _CLUB_TAB_KEYS else "directory"
+    requested = active_tab if active_tab in _CLUB_TAB_KEYS else "directory"
+    key = requested if requested != "admin" or is_admin else "directory"
     index = _CLUB_TAB_KEYS.index(key)
 
-    styles = tuple(shown if i == index else hidden for i in range(3))
-    classes = tuple(_CLUB_TAB_BUTTON_ACTIVE if i == index else _CLUB_TAB_BUTTON_BASE for i in range(3))
+    styles = tuple(shown if i == index else hidden for i in range(len(_CLUB_TAB_KEYS)))
+    classes = tuple(
+        _CLUB_TAB_BUTTON_ACTIVE if i == index else _CLUB_TAB_BUTTON_BASE for i in range(len(_CLUB_TAB_KEYS))
+    )
     return styles, classes
 
 
-def _club_subnav(tab_classes):
+def _club_subnav(tab_classes, is_admin):
     """Page-level subnav for the club page -- Directory/Tournaments/
-    Player Comparison as client-side tabs, all three panel groups always
+    Player Analysis/Admin as client-side tabs, every panel group always
     in the DOM and toggled by style (see switch_club_tab below), same
     approach and same .t3g-tournament-subnav/-tabs/-tab styling as
     tournament.py's own subnav. No "Return to X" link here -- unlike the
-    tournament page, this already is the club's own top-level page."""
-    directory_class, tournaments_class, comparison_class = tab_classes
+    tournament page, this already is the club's own top-level page.
+
+    The Admin button itself is always rendered (never omitted from the
+    tree) even for non-admins -- just hidden via style, the same "always
+    in DOM, toggle via style" convention every tab panel here already
+    uses. That's specifically so switch_club_tab's className Output for
+    this button always has a real target to write to; if the button were
+    omitted outright for non-admins, a non-admin clicking any other tab
+    would trip a Dash error trying to update a button that doesn't
+    exist."""
+    directory_class, tournaments_class, comparison_class, admin_class = tab_classes
     return html.Div(
         className="t3g-tournament-subnav",
         children=html.Div(
@@ -977,6 +1064,13 @@ def _club_subnav(tab_classes):
                         className=comparison_class,
                         n_clicks=0,
                     ),
+                    html.Button(
+                        "Admin",
+                        id="club-tab-admin-button",
+                        className=admin_class,
+                        n_clicks=0,
+                        style={} if is_admin else {"display": "none"},
+                    ),
                 ],
             ),
         ),
@@ -987,24 +1081,46 @@ def _club_subnav(tab_classes):
     Output("club-tab-panel-directory", "style"),
     Output("club-tab-panel-tournaments", "style"),
     Output("club-tab-panel-comparison", "style"),
+    Output("club-tab-panel-admin", "style"),
     Output("club-tab-directory-button", "className"),
     Output("club-tab-tournaments-button", "className"),
     Output("club-tab-comparison-button", "className"),
+    Output("club-tab-admin-button", "className"),
     Input("club-tab-directory-button", "n_clicks"),
     Input("club-tab-tournaments-button", "n_clicks"),
     Input("club-tab-comparison-button", "n_clicks"),
+    Input("club-tab-admin-button", "n_clicks"),
     prevent_initial_call=True,
 )
-def switch_club_tab(directory_clicks, tournaments_clicks, comparison_clicks):
+def switch_club_tab(directory_clicks, tournaments_clicks, comparison_clicks, admin_clicks):
+    # A non-admin can never actually trigger the "admin" branch below --
+    # their Admin button is display:none (see _club_subnav), so it can't
+    # be clicked -- but the branch still needs to exist since this same
+    # callback (and its Outputs) are shared by every viewer regardless of
+    # role.
     hidden = {"display": "none"}
     shown = {}
     triggered_id = dash.ctx.triggered_id
 
     if triggered_id == "club-tab-tournaments-button":
-        return hidden, shown, hidden, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_ACTIVE, _CLUB_TAB_BUTTON_BASE
+        return (
+            hidden, shown, hidden, hidden,
+            _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_ACTIVE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE,
+        )
     if triggered_id == "club-tab-comparison-button":
-        return hidden, hidden, shown, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_ACTIVE
-    return shown, hidden, hidden, _CLUB_TAB_BUTTON_ACTIVE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE
+        return (
+            hidden, hidden, shown, hidden,
+            _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_ACTIVE, _CLUB_TAB_BUTTON_BASE,
+        )
+    if triggered_id == "club-tab-admin-button":
+        return (
+            hidden, hidden, hidden, shown,
+            _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_ACTIVE,
+        )
+    return (
+        shown, hidden, hidden, hidden,
+        _CLUB_TAB_BUTTON_ACTIVE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE,
+    )
 
 
 def layout(slug=None, tab=None, **kwargs):
@@ -1033,7 +1149,9 @@ def layout(slug=None, tab=None, **kwargs):
     comparison_resp = requests.get(f"{API_BASE_URL}/clubs/{club['id']}/player-comparison")
     comparison = comparison_resp.json() if comparison_resp.status_code == 200 else {}
 
-    (directory_style, tournaments_style, comparison_style), tab_classes = _club_tab_visibility(tab)
+    (directory_style, tournaments_style, comparison_style, admin_style), tab_classes = _club_tab_visibility(
+        tab, is_admin
+    )
 
     return html.Div(
         # t3g-club-page scopes the more compact panel spacing in club.css
@@ -1044,13 +1162,11 @@ def layout(slug=None, tab=None, **kwargs):
         children=[
             dcc.Store(id="club-id-store", data=club["id"]),
             _admin_banner(is_admin),
-            _club_subnav(tab_classes),
+            _club_subnav(tab_classes, is_admin),
             html.Div(
                 id="club-tab-panel-directory",
                 style=directory_style,
                 children=[
-                    _invite_panel(club, player_id),
-                    _club_photo_panel(club, is_admin),
                     html.Div(
                         className="t3g-panel",
                         children=[
@@ -1084,12 +1200,17 @@ def layout(slug=None, tab=None, **kwargs):
             html.Div(
                 id="club-tab-panel-tournaments",
                 style=tournaments_style,
-                children=_tournaments_panel(is_admin, tournaments, slug),
+                children=_tournaments_panel(tournaments, slug),
             ),
             html.Div(
                 id="club-tab-panel-comparison",
                 style=comparison_style,
                 children=_club_comparison_panel(comparison),
+            ),
+            html.Div(
+                id="club-tab-panel-admin",
+                style=admin_style,
+                children=_admin_tab_panel(club, player_id, is_admin),
             ),
             _tournament_modal(),
             dcc.Location(id="tournament-redirect", refresh=True),
