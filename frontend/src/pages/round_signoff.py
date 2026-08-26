@@ -8,10 +8,10 @@ they personally haven't approved yet (GET /rounds/pending-signoff/
 rounds.py).
 
 Reached only via that pill (and a direct URL) -- deliberately not added
-to the top nav links in layouts/navbar.py, same as /live-round isn't --
-it's a transient "you have something to do" destination, not a permanent
-section of the app, and the pill already disappears on its own once
-there's nothing left here.
+to the top nav links in layouts/navbar.py, unlike /play (which is a
+permanent nav link) -- this is a transient "you have something to do"
+destination, not a permanent section of the app, and the pill already
+disappears on its own once there's nothing left here.
 
 Not registered as a page anyone can browse to and see other players' open
 items -- the backend endpoint this reads from is scoped to whichever
@@ -404,6 +404,6 @@ def confirm_reject(n_clicks, target, pending_rounds, player_id):
     # Rejecting reopens the round for edits -- send the rejecter straight
     # into its Full Scorecard view (not the usual Hole by Hole default) so
     # they can see every hole at once to find what needs fixing, instead
-    # of clicking through hole by hole -- see live_round.py's layout() and
+    # of clicking through hole by hole -- see play.py's layout() and
     # render_live_round_body's initial_view param.
-    return remaining, False, f"/live-round?round_id={round_id}&view=full"
+    return remaining, False, f"/play?round_id={round_id}&view=full"

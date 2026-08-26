@@ -243,6 +243,117 @@ def update_tee_time_slot(tee_time_id: str, payload: TeeTimeUpdateRequest) -> lis
     return fetch_tee_times_by_round([round_row["id"]]).get(round_row["id"], [])
 
 
+def list_scheduled_tee_times_for_player(player_id: str) -> list[dict]:
+    """Every tee time slot this player is grouped into, across every
+    tournament in every club they belong to, that hasn't been started yet
+    -- powers the Play page's Scheduled tab. A slot drops off this list
+    the moment its round is started (see fetch_live_rounds_by_tee_time --
+    once a live_round exists for a slot it belongs on the Live tab
+    instead, in progress or not), so this is genuinely "what's still
+    ahead of you", not just "every grouping you're in".
+
+    Deliberately a flat cross-tournament/cross-club query rather than
+    "for each club you're in, for each tournament, for each round..." --
+    tournament_tee_time_players already has this player's own rows
+    directly, so starting from there and joining outward (tee time ->
+    round -> tournament -> club) is one pass instead of N+1 fan-out."""
+    membership_response = (
+        supabase
+        .table("tournament_tee_time_players")
+        .select("tee_time_id")
+        .eq("player_id", player_id)
+        .execute()
+    )
+    tee_time_ids = list({row["tee_time_id"] for row in (membership_response.data or [])})
+    if not tee_time_ids:
+        return []
+
+    tee_times_response = (
+        supabase.table("tournament_tee_times").select("*").in_("id", tee_time_ids).execute()
+    )
+    tee_times = tee_times_response.data or []
+    if not tee_times:
+        return []
+
+    live_rounds_by_tee_time = fetch_live_rounds_by_tee_time([t["id"] for t in tee_times])
+    tee_times = [t for t in tee_times if not live_rounds_by_tee_time.get(t["id"])]
+    if not tee_times:
+        return []
+
+    round_ids = list({t["tournament_round_id"] for t in tee_times})
+    rounds_response = supabase.table("tournament_rounds").select("*").in_("id", round_ids).execute()
+    rounds_by_id = {r["id"]: r for r in (rounds_response.data or [])}
+
+    course_ids = list({r["course_id"] for r in rounds_by_id.values() if r.get("course_id")})
+    courses_by_id = {}
+    if course_ids:
+        courses_response = (
+            supabase.table("courses").select("id, club_name, course_name").in_("id", course_ids).execute()
+        )
+        courses_by_id = {c["id"]: c for c in (courses_response.data or [])}
+
+    tee_ids = list({r["tee_id"] for r in rounds_by_id.values() if r.get("tee_id")})
+    tees_by_id = {}
+    if tee_ids:
+        tees_response = supabase.table("course_tees").select("id, name").in_("id", tee_ids).execute()
+        tees_by_id = {t["id"]: t for t in (tees_response.data or [])}
+
+    tournament_ids = list({r["tournament_id"] for r in rounds_by_id.values()})
+    tournaments_response = supabase.table("tournaments").select("*").in_("id", tournament_ids).execute()
+    tournaments_by_id = {t["id"]: t for t in (tournaments_response.data or [])}
+
+    club_ids = list({t["club_id"] for t in tournaments_by_id.values()})
+    clubs_response = supabase.table("clubs").select("id, name, slug").in_("id", club_ids).execute()
+    clubs_by_id = {c["id"]: c for c in (clubs_response.data or [])}
+
+    players_response = (
+        supabase
+        .table("tournament_tee_time_players")
+        .select(f"*, {_PLAYER_EMBED}")
+        .in_("tee_time_id", [t["id"] for t in tee_times])
+        .execute()
+    )
+    players_by_tee_time: dict[str, list[dict]] = {}
+    for row in (players_response.data or []):
+        player = row.pop("players", None) or {}
+        players_by_tee_time.setdefault(row["tee_time_id"], []).append({
+            "player_id": row["player_id"],
+            "first_name": player.get("first_name"),
+            "surname": player.get("surname"),
+            "nickname": player.get("nickname"),
+        })
+
+    scheduled = []
+    for t in tee_times:
+        tournament_round = rounds_by_id.get(t["tournament_round_id"]) or {}
+        tournament = tournaments_by_id.get(tournament_round.get("tournament_id")) or {}
+        club = clubs_by_id.get(tournament.get("club_id")) or {}
+        course = courses_by_id.get(tournament_round.get("course_id")) or {}
+        tee = tees_by_id.get(tournament_round.get("tee_id")) or {}
+        scheduled.append({
+            "tee_time_id": t["id"],
+            "tee_time": t["tee_time"],
+            "group_number": t["group_number"],
+            "round_date": tournament_round.get("round_date"),
+            "round_number": tournament_round.get("round_number"),
+            "tournament_id": tournament.get("id"),
+            "tournament_name": tournament.get("name"),
+            "club_id": club.get("id"),
+            "club_name": club.get("name"),
+            "club_slug": club.get("slug"),
+            "venue_name": course.get("club_name"),
+            "course_name": course.get("course_name"),
+            "tee_name": tee.get("name"),
+            "players": players_by_tee_time.get(t["id"], []),
+        })
+
+    # Soonest first -- round_date then tee_time, both plain
+    # date/time-ish strings that sort correctly lexicographically in
+    # ISO format. Missing values sort first rather than raising.
+    scheduled.sort(key=lambda s: (s["round_date"] or "", s["tee_time"] or ""))
+    return scheduled
+
+
 def fetch_tee_times_by_round(round_ids: list[str]) -> dict[str, list[dict]]:
     """Batched the same way tournaments.py's _fetch_rounds_by_tournament /
     _fetch_entrants_by_tournament are -- one query for every round in the

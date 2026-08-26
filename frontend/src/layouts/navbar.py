@@ -31,6 +31,21 @@ def build_navbar():
                             className="t3g-nav-links",
                             children=[
                                 dcc.Link(
+                                    # Play is the new hub for starting a
+                                    # round, live rounds (casual and
+                                    # tournament), and scheduled tournament
+                                    # tee times -- see pages/play.py's own
+                                    # module docstring. Previously the only
+                                    # way to reach this page from the
+                                    # desktop navbar was the conditional
+                                    # "Live round in progress" pill on the
+                                    # far right; this is now a permanent
+                                    # link like the others, always visible.
+                                    "Play",
+                                    href="/play",
+                                    className="t3g-nav-link",
+                                ),
+                                dcc.Link(
                                     "My Account",
                                     href="/my-account",
                                     className="t3g-nav-link",
@@ -105,7 +120,7 @@ def refresh_live_round_indicator(n_intervals):
             html.Span(className="t3g-live-dot"),
             html.Span("Live round in progress"),
         ],
-        href="/live-round",
+        href="/play",
         className="t3g-live-round-indicator",
     )
 

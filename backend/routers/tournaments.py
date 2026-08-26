@@ -31,6 +31,7 @@ from backend.services.tournament_tee_times import (
     TeeTimeSlotNotFoundError,
     assign_tee_time_players,
     generate_tee_times,
+    list_scheduled_tee_times_for_player,
     update_tee_time_slot,
 )
 from backend.services.tournaments import (
@@ -67,6 +68,20 @@ def create_tournament_route(payload: TournamentCreate):
 @router.get("/club/{club_id}")
 def list_tournaments_for_club_route(club_id: str):
     return list_tournaments_for_club(club_id)
+
+
+# NOTE: this must stay registered BEFORE /{tournament_id} below -- same
+# routing-order reasoning as the /tee-times/assignments vs /tee-times/
+# {tee_time_id} comment further down. Without this, a request to
+# /tournaments/scheduled/<player_id> would match /{tournament_id} first,
+# treating the literal word "scheduled" as a tournament id.
+@router.get("/scheduled/{player_id}")
+def list_scheduled_tee_times_route(player_id: str):
+    """Powers the Play page's Scheduled tab -- every upcoming tee time
+    this player is grouped into, across every tournament in every club
+    they belong to. See list_scheduled_tee_times_for_player's own
+    docstring for exactly what "upcoming" excludes."""
+    return list_scheduled_tee_times_for_player(player_id)
 
 
 @router.get("/{tournament_id}")

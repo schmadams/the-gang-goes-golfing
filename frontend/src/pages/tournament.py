@@ -1827,8 +1827,9 @@ def _live_round_panel(tournament, player_id):
                 )
             elif live_round.get("status") == "in_progress":
                 # The actual scorecard, not a link to it -- same markup
-                # (and same fixed component ids) the standalone /live-round
-                # page renders, safe to reuse here because a player can
+                # (and same fixed component ids) the standalone /play
+                # page's scorecard mode renders, safe to reuse here because
+                # a player can
                 # only ever have one round (casual or tournament) actually
                 # live at a time, so this only ever appears in one place
                 # in the DOM at once. See render_live_round_body's
@@ -2333,7 +2334,7 @@ def handle_start_live_round(start_clicks):
     )
     if response.status_code == 200:
         round_data = response.json()
-        return "", f"/live-round?round_id={round_data['id']}"
+        return "", f"/play?round_id={round_data['id']}"
 
     try:
         detail = response.json().get("detail", "Couldn't start the live round.")

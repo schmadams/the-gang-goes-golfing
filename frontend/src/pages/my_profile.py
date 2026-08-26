@@ -1,14 +1,19 @@
 # target path: frontend/src/pages/my_profile.py (new file)
 """
 The "My Profile" tab under My Account -- everything that used to be the
-Home page's own content (live rounds, pending invites, Handicap Index
-panel, Your Clubs grid, Start New Round / Create Club / manual-entry
-modals) before Home became the activity feed. Moved here wholesale
-rather than cross-imported from home.py -- same "small per-page copies,
-fully self-contained ids/callbacks" convention profile.py's own
-docstring already explains for its own duplicated _round_scorecard_card/
-_handicap_* helpers, just applied to the entire page this time instead
-of a handful of functions.
+Home page's own content (pending invites, Handicap Index panel, Your
+Clubs grid, Create Club modal) before Home became the activity feed.
+Moved here wholesale rather than cross-imported from home.py -- same
+"small per-page copies, fully self-contained ids/callbacks" convention
+profile.py's own docstring already explains for its own duplicated
+_round_scorecard_card/_handicap_* helpers, just applied to the entire
+page this time instead of a handful of functions.
+
+Live rounds and Start New Round (originally part of this same move) have
+since moved on again, to the new Play page -- see pages/play.py's own
+module docstring. This page's Rounds History panel only ever shows
+*completed* rounds now; "what am I playing right now" and "how do I
+start a round" both live on Play instead.
 """
 import time
 from contextlib import contextmanager
@@ -95,27 +100,6 @@ def _timed(label: str):
     finally:
         elapsed_ms = (time.perf_counter() - start) * 1000
         print(f"[TIMING] own API      {elapsed_ms:8.1f}ms  {label}")
-
-
-def _course_label(course):
-    # Works for local search results and freshly-imported courses -- they
-    # all share these same field names.
-    label = course["club_name"]
-    if course.get("course_name"):
-        label += f" — {course['course_name']}"
-    location = course.get("county") or course.get("postcode")
-    return f"{label} ({location})" if location else label
-
-
-def _club_label(club):
-    # Same location-suffix idea as _course_label, but for the club-only
-    # step of the Start New Round club -> course -> tees flow -- a club
-    # option here has no course_name of its own (see ClubOption /
-    # search_local_clubs in backend/services/courses.py), just whichever
-    # course row it was deduped from.
-    label = club["club_name"]
-    location = club.get("county") or club.get("postcode")
-    return f"{label} ({location})" if location else label
 
 
 def _round_scorecard_card(round_data, player_rows):
@@ -694,22 +678,6 @@ def layout(**kwargs):
             "You're not in any clubs yet.", className="t3g-empty-state"
         )
 
-    with _timed(f"GET /friends/player/{player_id}"):
-        friends_resp = requests.get(f"{API_BASE_URL}/friends/player/{player_id}")
-    friends = friends_resp.json() if friends_resp.status_code == 200 else []
-    friend_invite_options = [
-        {"label": f.get("nickname") or f"{f.get('first_name', '')} {f.get('surname', '')}".strip(), "value": f["player_id"]}
-        for f in friends
-    ]
-
-    # Reuses the same `clubs` list the Clubs grid above is built from --
-    # only clubs this player is already a member of are offered here.
-    # Tagging a casual round with a club (rounds.club_id, see
-    # add_round_club_id.sql) is what lets it show up in that club's
-    # player comparison analysis alongside its tournament rounds -- see
-    # get_club_player_comparison in backend/services/rounds.py.
-    club_tag_options = [{"label": c["name"], "value": c["id"]} for c in clubs]
-
     with _timed(f"GET /rounds/invites/{player_id}"):
         round_invites_resp = requests.get(f"{API_BASE_URL}/rounds/invites/{player_id}")
     round_invites = round_invites_resp.json() if round_invites_resp.status_code == 200 else []
@@ -740,16 +708,10 @@ def layout(**kwargs):
         rounds_resp = requests.get(f"{API_BASE_URL}/rounds/player/{player_id}")
     rounds_history = rounds_resp.json() if rounds_resp.status_code == 200 else []
 
-    # Live rounds no longer show in Rounds History at all -- they get
-    # their own panel(s) up top instead (built below, alongside
-    # invites_section), the same treatment as a round invite,
-    # since "a round that's happening right now" is a different kind of
-    # thing from "a round that already happened". A player can have a
-    # casual round *and* a tournament round live at the same time now
-    # (see backend/services/rounds.py's tournament_scope split) -- both
-    # show, as separate cards, rather than this only ever surfacing
-    # whichever one happened to come back first.
-    live_rounds = [r for r in rounds_history if r.get("status") == "in_progress"]
+    # Live rounds (casual and tournament) no longer show here at all --
+    # they, and Start New Round, both moved to the Play page instead (see
+    # pages/play.py's own module docstring). This is purely completed/
+    # pending-signoff history now.
     completed_rounds = [r for r in rounds_history if r.get("status") != "in_progress"]
 
     # Only needed for the scorecard's avatar/name -- skip the call
@@ -762,104 +724,6 @@ def layout(**kwargs):
         player_label = player.get("nickname") or player.get("first_name") or "You"
         player_initial = player_label[0].upper() if player_label else "Y"
         player_info = {"initial": player_initial, "label": player_label}
-
-    live_round_sections = []
-    for live_round in live_rounds:
-        is_tournament_round = bool(live_round.get("tournament_id"))
-
-        # The Rounds History endpoint only ever returns *your* scorecard
-        # (RoundSummaryResponse is deliberately single-player -- see its
-        # docstring), so a round with other people in it needs the full
-        # detail lookup (RoundDetailResponse) to get everyone's holes.
-        # viewer_player_id matters for a tournament round specifically --
-        # that's what get_round uses to compute is_owner correctly for
-        # the "every grouping member is an equal owner" tournament-round
-        # case (see backend/services/rounds.py's get_round) -- harmless
-        # to always send it either way.
-        with _timed(f"GET /rounds/{live_round['id']}"):
-            live_round_detail_resp = requests.get(
-                f"{API_BASE_URL}/rounds/{live_round['id']}", params={"viewer_player_id": player_id}
-            )
-        live_round_detail = live_round_detail_resp.json() if live_round_detail_resp.status_code == 200 else None
-
-        if live_round_detail and live_round_detail.get("players"):
-            live_round_player_rows = []
-            for participant in live_round_detail["players"]:
-                participant_id = str(participant.get("player_id"))
-                label = (
-                    participant.get("nickname")
-                    or f"{participant.get('first_name', '')} {participant.get('surname', '')}".strip()
-                    or "Player"
-                )
-                if participant_id == player_id:
-                    # Already fetched above for the Handicap panel -- no
-                    # need for a second lookup for your own row.
-                    label = f"{label} (you)"
-                    participant_handicap = current_handicap
-                else:
-                    with _timed(f"GET /handicaps/player/{participant_id}/current"):
-                        participant_handicap_resp = requests.get(
-                            f"{API_BASE_URL}/handicaps/player/{participant_id}/current"
-                        )
-                    participant_handicap = (
-                        participant_handicap_resp.json().get("handicap")
-                        if participant_handicap_resp.status_code == 200
-                        else None
-                    )
-                live_round_player_rows.append(
-                    {
-                        "initial": label[0].upper() if label else "?",
-                        "label": label,
-                        "holes": participant.get("holes") or [],
-                        "handicap": participant_handicap,
-                    }
-                )
-        else:
-            # Detail lookup failed for some reason -- fall back to just
-            # your own row from the summary data already in hand, same as
-            # this panel behaved before it became multiplayer-aware.
-            live_round_player_rows = [
-                {
-                    "initial": player_info["initial"],
-                    "label": player_info["label"],
-                    "holes": live_round.get("holes") or [],
-                    "handicap": live_round.get("handicap"),
-                }
-            ]
-
-        # A tournament round links back into its own tee time via
-        # round_id -- /live-round without that query param falls back to
-        # "whichever round is active for this player", which is exactly
-        # wrong when there are two active rounds at once (it's ambiguous
-        # which one you'd land on). A casual round has no such ambiguity
-        # (there can only ever be one live casual round per player -- see
-        # start_round's existing-active-round check), so the plain link
-        # still works fine there.
-        panel_title = "Tournament Round" if is_tournament_round else "Live Round"
-        continue_href = (
-            f"/live-round?round_id={live_round['id']}" if is_tournament_round else "/live-round"
-        )
-
-        live_round_sections.append(
-            html.Div(
-                className="t3g-panel",
-                children=[
-                    build_panel_navbar(
-                        panel_title,
-                        action=dcc.Link(
-                            "Continue Round",
-                            href=continue_href,
-                            className="t3g-panel-action-button",
-                            style={"textDecoration": "none"},
-                        ),
-                    ),
-                    html.Div(
-                        _round_scorecard_card(live_round_detail or live_round, live_round_player_rows),
-                        className="t3g-panel-body",
-                    ),
-                ],
-            )
-        )
 
     # The Stores and pagination controls always render, even with zero
     # completed rounds -- change_rounds_page/render_rounds_page target
@@ -980,7 +844,6 @@ def layout(**kwargs):
             _account_subnav("profile"),
             dcc.Location(id="round-invite-refresh", refresh=True),
             dcc.Location(id="club-invite-refresh", refresh=True),
-            *live_round_sections,
             invites_section,
             _handicap_panel(current_handicap, handicap_history, handicap_breakdown),
             html.Div(
@@ -1005,10 +868,15 @@ def layout(**kwargs):
                         children=[
                             build_panel_navbar(
                                 "Rounds History",
-                                action=html.Button(
-                                    "Upload New Round",
-                                    id="upload-round-button",
+                                # Starting a round now lives on the Play
+                                # page (see pages/play.py) -- this just
+                                # links there rather than duplicating the
+                                # Start New Round modal on this page too.
+                                action=dcc.Link(
+                                    "Start a Round",
+                                    href="/play",
                                     className="t3g-panel-action-button",
+                                    style={"textDecoration": "none"},
                                 ),
                             ),
                             html.Div(rounds_section, className="t3g-panel-body"),
@@ -1051,191 +919,6 @@ def layout(**kwargs):
                 ],
             ),
             dcc.Location(id="create-club-redirect", refresh=True),
-            dbc.Modal(
-                id="upload-round-modal",
-                is_open=False,
-                children=[
-                    dbc.ModalHeader(dbc.ModalTitle("Upload New Round")),
-                    dbc.ModalBody(
-                        [
-                            # Club -> Course -> Tees, one step at a time --
-                            # the old single "search for the course you
-                            # played" field combined club and course into
-                            # one ILIKE-across-both-fields search, which
-                            # worked but forced you to already half-know the
-                            # course name to find it. Splitting it into a
-                            # club search step first (search_local_clubs,
-                            # deduped by club_name) narrows the second
-                            # dropdown down to just that club's own cached
-                            # courses (usually just one, auto-selected below)
-                            # before the tees. All three live inside one
-                            # container so the manual-entry toggle can
-                            # show/hide the whole group with a single Output
-                            # instead of one per field.
-                            html.Div(
-                                id="upload-round-course-fields",
-                                children=[
-                                    dcc.Dropdown(
-                                        id="upload-round-club",
-                                        placeholder="Type to search for the club you played at",
-                                        # No options preloaded, same reasoning
-                                        # as the old course dropdown -- search_
-                                        # club_options fills this in live as
-                                        # you type instead of eagerly loading
-                                        # every cached club up front.
-                                        options=[],
-                                        searchable=True,
-                                        clearable=True,
-                                        className="mb-2 t3g-course-dropdown",
-                                    ),
-                                    dcc.Dropdown(
-                                        id="upload-round-course",
-                                        placeholder="Select the course",
-                                        options=[],
-                                        disabled=True,
-                                        className="mb-2 t3g-course-dropdown",
-                                    ),
-                                    dcc.Dropdown(
-                                        id="upload-round-tee",
-                                        placeholder="Select tees",
-                                        options=[],
-                                        disabled=True,
-                                        className="mb-1 t3g-course-dropdown",
-                                    ),
-                                    html.Div(id="upload-round-tee-status", className="t3g-empty-state mt-1"),
-                                ],
-                            ),
-                            html.Button(
-                                "Can't find your course? Enter it manually",
-                                id="upload-round-manual-toggle",
-                                className="t3g-link-button mb-2",
-                                n_clicks=0,
-                            ),
-                            html.Div(
-                                id="upload-round-manual-fields",
-                                style={"display": "none"},
-                                children=[
-                                    dbc.Input(
-                                        id="upload-round-manual-club",
-                                        placeholder="Club name",
-                                        className="mb-2",
-                                    ),
-                                    dbc.Input(
-                                        id="upload-round-manual-tee",
-                                        placeholder="Tee name (e.g. White)",
-                                        className="mb-2",
-                                    ),
-                                    dbc.Input(
-                                        id="upload-round-manual-rating",
-                                        placeholder="Course Rating (optional, e.g. 71.4)",
-                                        type="number",
-                                        className="mb-2",
-                                    ),
-                                    dbc.Input(
-                                        id="upload-round-manual-slope",
-                                        placeholder="Slope Rating (optional, e.g. 125)",
-                                        type="number",
-                                        className="mb-2",
-                                    ),
-                                    html.P(
-                                        "Course/Slope Rating are usually printed on the "
-                                        "scorecard next to the tee colour. They're optional, "
-                                        "but without them this round can't count toward "
-                                        "anyone's handicap.",
-                                        className="t3g-empty-state",
-                                    ),
-                                    html.P(
-                                        "You'll enter par, length, and stroke index for each "
-                                        "hole once the round starts.",
-                                        className="t3g-empty-state",
-                                    ),
-                                ],
-                            ),
-                            dcc.Store(id="upload-round-manual-mode", data=False),
-                            html.Label(
-                                "Playing for a club? (optional)",
-                                className="t3g-modal-label mt-2",
-                            )
-                            if club_tag_options
-                            else None,
-                            dcc.Dropdown(
-                                id="upload-round-club-tag",
-                                placeholder="None -- just a personal round",
-                                options=club_tag_options,
-                                value=None,
-                                clearable=True,
-                                className="mb-2 t3g-course-dropdown",
-                            )
-                            if club_tag_options
-                            else None,
-                            html.Label(
-                                "Add up to 3 friends to this round (optional)",
-                                className="t3g-modal-label mt-2",
-                            ),
-                            html.P(
-                                "Add some friends first to invite them to a round.",
-                                className="t3g-empty-state",
-                            )
-                            if not friend_invite_options
-                            else html.Div(
-                                className="t3g-friend-picker-row",
-                                children=[
-                                    # Single-select on the left -- picking a
-                                    # friend here moves them into the store
-                                    # (add_friend_to_round below) and clears
-                                    # the dropdown back to its placeholder,
-                                    # rather than the usual Dash multi-select
-                                    # pattern of collecting chips inside the
-                                    # dropdown control itself. Selected
-                                    # friends live on the right instead (see
-                                    # upload-round-friends-selected), and
-                                    # render_friend_picker filters them back
-                                    # out of these options so the same friend
-                                    # can't be picked twice.
-                                    dcc.Dropdown(
-                                        id="upload-round-friend-picker",
-                                        placeholder="Add a friend...",
-                                        options=friend_invite_options,
-                                        value=None,
-                                        clearable=True,
-                                        className="t3g-friend-picker-dropdown",
-                                    ),
-                                    html.Div(
-                                        id="upload-round-friends-selected",
-                                        className="t3g-friend-picker-selected",
-                                    ),
-                                ],
-                            ),
-                            # Master list of every friend option, untouched
-                            # by selection -- render_friend_picker needs the
-                            # full label set to look names up by id for both
-                            # the RHS chips and the remaining-options list.
-                            dcc.Store(id="upload-round-friend-options-store", data=friend_invite_options),
-                            # The actual selection state (list of player
-                            # ids) -- what handle_continue_round reads on
-                            # submit, replacing the old Checklist's own
-                            # `value` as the source of truth.
-                            dcc.Store(id="upload-round-friends-store", data=[]),
-                            html.Div(id="upload-round-error", className="text-danger mt-2"),
-                            html.Div(id="upload-round-status", className="mt-2"),
-                        ]
-                    ),
-                    dbc.ModalFooter(
-                        [
-                            dbc.Button(
-                                "Cancel", id="upload-round-cancel", color="secondary"
-                            ),
-                            dbc.Button(
-                                "Continue",
-                                id="upload-round-continue",
-                                color="primary",
-                                disabled=True,
-                            ),
-                        ]
-                    ),
-                ],
-            ),
-            dcc.Location(id="upload-round-redirect", refresh=True),
             dbc.Modal(
                 id="handicap-info-modal",
                 is_open=False,
@@ -1307,331 +990,6 @@ def handle_create_club(open_clicks, cancel_clicks, submit_clicks, name, descript
         return False, "", "/"
 
     return dash.no_update, dash.no_update, dash.no_update
-
-
-@callback(
-    Output("upload-round-modal", "is_open"),
-    Output("upload-round-club", "value"),
-    Output("upload-round-redirect", "pathname", allow_duplicate=True),
-    Output("upload-round-manual-mode", "data", allow_duplicate=True),
-    Output("upload-round-manual-fields", "style", allow_duplicate=True),
-    Output("upload-round-course-fields", "style", allow_duplicate=True),
-    Output("upload-round-friends-store", "data", allow_duplicate=True),
-    Output("upload-round-club-tag", "value", allow_duplicate=True),
-    Input("upload-round-button", "n_clicks"),
-    Input("upload-round-cancel", "n_clicks"),
-    prevent_initial_call=True,
-)
-def toggle_upload_round_modal(open_clicks, cancel_clicks):
-    # Resetting the club value on open (via the Output below) cascades
-    # through the whole chain -- load_courses_for_club(None) clears the
-    # course dropdown, which in turn triggers load_tees_for_course(None)
-    # clearing the tee dropdown -- so the modal always starts fresh
-    # (manual mode off, no friends carried over from last time, and no
-    # leftover club tag from a previous round) rather than showing a
-    # stale selection.
-    triggered_id = dash.ctx.triggered_id
-    reset_manual = (False, {"display": "none"}, {})
-
-    if triggered_id == "upload-round-button":
-        player_id = session.get("player_id")
-        with _timed(f"GET /rounds/active/{player_id}"):
-            response = requests.get(f"{API_BASE_URL}/rounds/active/{player_id}")
-
-        if response.status_code == 200:
-            # Already have a live round in progress -- go straight there
-            # instead of opening the modal. The backend would reject a
-            # second one anyway (one-active-round-per-player), but this
-            # avoids making them fill out the form just to be told no.
-            return (False, dash.no_update, "/live-round", *reset_manual, [], None)
-
-        return (True, None, dash.no_update, *reset_manual, [], None)
-
-    return (False, dash.no_update, dash.no_update, *reset_manual, dash.no_update, dash.no_update)
-
-
-@callback(
-    Output("upload-round-manual-fields", "style", allow_duplicate=True),
-    Output("upload-round-course-fields", "style", allow_duplicate=True),
-    Output("upload-round-manual-mode", "data", allow_duplicate=True),
-    Input("upload-round-manual-toggle", "n_clicks"),
-    State("upload-round-manual-mode", "data"),
-    prevent_initial_call=True,
-)
-def toggle_manual_entry(n_clicks, is_manual):
-    is_manual = not bool(is_manual)
-
-    if is_manual:
-        return {"display": "block"}, {"display": "none"}, True
-
-    return {"display": "none"}, {}, False
-
-
-@callback(
-    Output("upload-round-club", "options"),
-    Input("upload-round-club", "search_value"),
-    Input("upload-round-club", "value"),
-    State("upload-round-club", "options"),
-    prevent_initial_call=True,
-)
-def search_club_options(search_value, selected_club_name, current_options):
-    # Same targeted-ILIKE-per-keystroke approach as the old course search
-    # (search_local_clubs, not the external API, so it's cheap to call
-    # this often), and the same "pin the just-picked option back in"
-    # handling -- picking a club clears search_value, which would
-    # otherwise wipe `options` back to [] with no entry left to render the
-    # selected club's own label from.
-    selected_option = next(
-        (opt for opt in (current_options or []) if opt["value"] == selected_club_name),
-        None,
-    )
-
-    if not search_value or len(search_value) < 2:
-        return [selected_option] if selected_option else []
-
-    with _timed(f"GET /courses/clubs?search={search_value}"):
-        response = requests.get(f"{API_BASE_URL}/courses/clubs", params={"search": search_value})
-    clubs = response.json() if response.status_code == 200 else []
-    options = [{"label": _club_label(c), "value": c["club_name"]} for c in clubs]
-
-    if selected_option and not any(opt["value"] == selected_option["value"] for opt in options):
-        options.append(selected_option)
-
-    return options
-
-
-@callback(
-    Output("upload-round-course", "options"),
-    Output("upload-round-course", "value"),
-    Output("upload-round-course", "disabled"),
-    Input("upload-round-club", "value"),
-    prevent_initial_call=True,
-)
-def load_courses_for_club(club_name):
-    if not club_name:
-        return [], None, True
-
-    with _timed(f"GET /courses/by-club?club_name={club_name}"):
-        response = requests.get(f"{API_BASE_URL}/courses/by-club", params={"club_name": club_name})
-    courses = response.json() if response.status_code == 200 else []
-    options = [{"label": c.get("course_name") or "Main Course", "value": c["id"]} for c in courses]
-
-    # Most clubs only have one cached course -- skip making the player
-    # pick from a dropdown that only ever has one thing in it.
-    auto_value = options[0]["value"] if len(options) == 1 else None
-
-    return options, auto_value, False
-
-
-@callback(
-    Output("upload-round-tee", "options"),
-    Output("upload-round-tee", "disabled"),
-    Output("upload-round-tee-status", "children"),
-    Output("upload-round-error", "children"),
-    Input("upload-round-course", "value"),
-    prevent_initial_call=True,
-)
-def load_tees_for_course(course_id):
-    if not course_id:
-        return [], True, "", ""
-
-    # Fetches the cached scorecard, importing it from the live API first if
-    # this is the first time anyone's picked this course -- the only place
-    # in the round-upload flow that can spend one of our monthly API
-    # requests, and only ever once per course. This call can be much slower
-    # than the others above on a cache miss (hits the external API + several
-    # DB writes) -- watch this line specifically when diagnosing slowness.
-    with _timed(f"POST /courses/{course_id}/scorecard"):
-        response = requests.post(f"{API_BASE_URL}/courses/{course_id}/scorecard")
-
-    if response.status_code != 200:
-        try:
-            detail = response.json().get("detail", "Couldn't load tees for that course.")
-        except ValueError:
-            detail = "Couldn't load tees for that course."
-        return [], True, "", detail
-
-    course = response.json()
-    tees = course.get("tees", [])
-
-    if not tees:
-        return [], True, "No tee data available for this course yet.", ""
-
-    tee_options = [
-        {
-            "label": f"{tee['name']} tees" + (f" (Par {tee['par']})" if tee.get("par") else ""),
-            "value": tee["id"],
-        }
-        for tee in tees
-    ]
-
-    return tee_options, False, "", ""
-
-
-@callback(
-    Output("upload-round-continue", "disabled"),
-    Input("upload-round-course", "value"),
-    Input("upload-round-tee", "value"),
-    Input("upload-round-manual-mode", "data"),
-    Input("upload-round-manual-club", "value"),
-    Input("upload-round-manual-tee", "value"),
-    prevent_initial_call=True,
-)
-def toggle_continue_button(course_id, tee_id, is_manual, manual_club, manual_tee):
-    if is_manual:
-        return not (manual_club and manual_tee)
-    return not (course_id and tee_id)
-
-
-@callback(
-    Output("upload-round-status", "children"),
-    Output("upload-round-redirect", "pathname", allow_duplicate=True),
-    Input("upload-round-continue", "n_clicks"),
-    State("upload-round-course", "value"),
-    State("upload-round-tee", "value"),
-    State("upload-round-manual-mode", "data"),
-    State("upload-round-manual-club", "value"),
-    State("upload-round-manual-tee", "value"),
-    State("upload-round-manual-rating", "value"),
-    State("upload-round-manual-slope", "value"),
-    State("upload-round-club-tag", "value"),
-    State("upload-round-friends-store", "data"),
-    prevent_initial_call=True,
-)
-def handle_continue_round(
-    n_clicks, course_id, tee_id, is_manual, manual_club, manual_tee,
-    manual_rating, manual_slope, club_tag_id, invited_player_ids,
-):
-    player_id = session.get("player_id")
-    invited_player_ids = invited_player_ids or []
-
-    if len(invited_player_ids) > 3:
-        return (
-            html.Span("You can only invite up to 3 friends to a round.", className="text-danger"),
-            dash.no_update,
-        )
-
-    payload = {
-        "player_id": player_id,
-        "is_manual": bool(is_manual),
-        "invited_player_ids": invited_player_ids,
-        "club_id": club_tag_id,
-    }
-
-    if is_manual:
-        if not manual_club or not manual_tee:
-            return (
-                html.Span("Enter a club name and tee name first.", className="text-danger"),
-                dash.no_update,
-            )
-        payload["manual_club_name"] = manual_club
-        payload["manual_tee_name"] = manual_tee
-        # Both optional -- rating/slope only matter for the WHS handicap
-        # calculation, not for playing or scoring the round itself.
-        payload["manual_course_rating"] = manual_rating
-        payload["manual_slope_rating"] = manual_slope
-    else:
-        if not course_id or not tee_id:
-            return (
-                html.Span("Select a course and tees first.", className="text-danger"),
-                dash.no_update,
-            )
-        payload["course_id"] = course_id
-        payload["tee_id"] = tee_id
-
-    with _timed("POST /rounds/"):
-        response = requests.post(f"{API_BASE_URL}/rounds/", json=payload)
-
-    if response.status_code == 201:
-        return "", "/live-round"
-
-    try:
-        detail = response.json().get("detail", "Couldn't start the round.")
-    except ValueError:
-        detail = "Couldn't start the round."
-    return html.Span(detail, className="text-danger"), dash.no_update
-
-
-@callback(
-    Output("upload-round-friends-store", "data", allow_duplicate=True),
-    Output("upload-round-friend-picker", "value"),
-    Input("upload-round-friend-picker", "value"),
-    State("upload-round-friends-store", "data"),
-    prevent_initial_call=True,
-)
-def add_friend_to_round(picked_id, selected_ids):
-    # Picking a friend moves them straight into the store and snaps the
-    # dropdown back to its placeholder -- selection lives in the RHS list
-    # (render_friend_picker below), not as chips inside the dropdown
-    # control itself. Firing again with picked_id=None (from the reset
-    # below) or a friend who's somehow already selected is a no-op.
-    if not picked_id:
-        return dash.no_update, dash.no_update
-
-    selected_ids = selected_ids or []
-    if picked_id in selected_ids or len(selected_ids) >= 3:
-        return dash.no_update, None
-
-    return selected_ids + [picked_id], None
-
-
-@callback(
-    Output("upload-round-friends-store", "data", allow_duplicate=True),
-    Input({"type": "upload-round-friend-remove", "player_id": ALL}, "n_clicks"),
-    State("upload-round-friends-store", "data"),
-    prevent_initial_call=True,
-)
-def remove_friend_from_round(remove_clicks, selected_ids):
-    if not any(remove_clicks or []):
-        # Fires once per remove button just from them being (re)rendered
-        # with n_clicks=0 whenever the selection changes -- only actually
-        # remove someone on a real click.
-        return dash.no_update
-
-    removed_id = dash.ctx.triggered_id["player_id"]
-    return [pid for pid in (selected_ids or []) if pid != removed_id]
-
-
-@callback(
-    Output("upload-round-friends-selected", "children"),
-    Output("upload-round-friend-picker", "options"),
-    Output("upload-round-friend-picker", "disabled"),
-    Output("upload-round-friend-picker", "placeholder"),
-    Input("upload-round-friends-store", "data"),
-    State("upload-round-friend-options-store", "data"),
-)
-def render_friend_picker(selected_ids, all_options):
-    # No prevent_initial_call -- fires on load too, so the RHS list shows
-    # its empty-state placeholder immediately instead of nothing at all,
-    # same reasoning as render_rounds_page below.
-    selected_ids = selected_ids or []
-    all_options = all_options or []
-    label_by_id = {opt["value"]: opt["label"] for opt in all_options}
-
-    if selected_ids:
-        selected_rows = [
-            html.Div(
-                className="t3g-friend-picker-chip",
-                children=[
-                    html.Span(label_by_id.get(pid, "Friend"), className="t3g-friend-picker-chip-name"),
-                    html.Button(
-                        "×",
-                        id={"type": "upload-round-friend-remove", "player_id": pid},
-                        className="t3g-friend-picker-chip-remove",
-                        n_clicks=0,
-                    ),
-                ],
-            )
-            for pid in selected_ids
-        ]
-    else:
-        selected_rows = [html.P("No friends added yet.", className="t3g-empty-state")]
-
-    remaining_options = [opt for opt in all_options if opt["value"] not in selected_ids]
-    at_cap = len(selected_ids) >= 3
-    placeholder = "Maximum 3 friends added" if at_cap else "Add a friend..."
-
-    return selected_rows, remaining_options, at_cap, placeholder
 
 
 @callback(
@@ -1721,7 +1079,10 @@ def accept_round_invite(n_clicks_list):
         # from what's already loaded, so a cache-busting suffix matters
         # anywhere the target page could be the one you're already on.
         # Same fix as tournament.py/club.py/my_account.py's redirects.
-        return f"/live-round?_r={time.time()}", ""
+        # Target /play (not /live-round -- that page was renamed, see
+        # pages/play.py) with the round_id explicit so the accepted round's
+        # scorecard opens directly instead of landing on the Play hub.
+        return f"/play?round_id={triggered_id['round_id']}&_r={time.time()}", ""
 
     try:
         detail = response.json().get("detail", "Couldn't accept that invite.")
@@ -1744,10 +1105,11 @@ def decline_round_invite(n_clicks_list):
     with _timed(f"POST /rounds/{triggered_id['round_id']}/invites/{player_id}/decline"):
         requests.post(f"{API_BASE_URL}/rounds/{triggered_id['round_id']}/invites/{player_id}/decline")
 
-    # Cache-busted -- this panel only ever renders on "/" itself, so a
-    # plain "/" is a no-op (dcc.Location only reloads on an actual value
-    # change) and the decline silently appears to do nothing.
-    return f"/?_r={time.time()}"
+    # Cache-busted -- this panel now lives on /my-account/profile (moved
+    # off "/" when Home became the activity feed), so the redirect target
+    # has to follow it -- a bare "/" would silently bounce the player onto
+    # the new Home feed instead of refreshing this page.
+    return f"/my-account/profile?_r={time.time()}"
 
 @callback(
     Output("handicap-panel-content", "children"),
@@ -1799,12 +1161,11 @@ def accept_club_invite(n_clicks_list):
         )
 
     if response.status_code == 200:
-        # href + cache-bust, not a plain "/" on pathname -- this panel only
-        # ever renders on "/" itself, so a bare "/" is a no-op (dcc.Location
-        # only reloads when the value actually changes) and Accept looked
-        # like it did nothing. Same fix as tournament.py/club.py/
-        # my_account.py's redirects.
-        return f"/?_r={time.time()}", ""
+        # href + cache-bust -- this panel now lives on /my-account/profile
+        # (moved off "/" when Home became the activity feed), so the
+        # redirect target has to follow it, same fix as
+        # decline_round_invite/decline_club_invite below.
+        return f"/my-account/profile?_r={time.time()}", ""
 
     try:
         detail = response.json().get("detail", "Couldn't accept that invite.")
@@ -1830,4 +1191,5 @@ def decline_club_invite(n_clicks_list):
             params={"player_id": player_id},
         )
 
-    return f"/?_r={time.time()}"
+    # Same redirect fix as accept_club_invite/decline_round_invite above.
+    return f"/my-account/profile?_r={time.time()}"

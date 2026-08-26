@@ -36,7 +36,14 @@ _BOTTOM_NAV_ITEMS = [
     ("Home", "fa-house", "/", ("/",)),
     ("Clubs", "fa-flag", "/clubs", ("/clubs",)),
     ("Analysis", "fa-chart-line", "/analysis", ("/analysis", "/scoring-history")),
-    ("Live", "fa-golf-ball-tee", "/live-round", ("/live-round",)),
+    # Renamed from "Live" -- the page itself is now a hub covering starting
+    # a round, live rounds (casual and tournament), and scheduled
+    # tournament tee times, not just an in-progress scorecard. See
+    # pages/play.py's own module docstring. "/live-round" is kept as a
+    # prefix here defensively (any stale link/bookmark still using the old
+    # path keeps this tab highlighted) even though nothing in the app links
+    # there anymore as of this change.
+    ("Play", "fa-golf-ball-tee", "/play", ("/play", "/live-round")),
     # Friends now lives under the Account umbrella (reachable via the
     # tournament-style subnav at the top of both pages -- see
     # pages/my_account.py's/friends.py's own _account_subnav) rather than

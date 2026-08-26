@@ -1,0 +1,81 @@
+/* target path: frontend/src/assets/play.css (new file) */
+/* The Play hub -- Start New Round + Live tab (casual and tournament live
+   rounds) and Scheduled tab (upcoming tournament tee times), reached at
+   /play. Reuses .t3g-page/.t3g-panel/.t3g-panel-body/.t3g-empty-state
+   wholesale (loaded globally, same as every file in assets/) and the
+   tournament-style pill subnav from club.css's .t3g-tournament-subnav for
+   the Live/Scheduled tabs -- same convention my_account.py/friends.py/
+   my_profile.py already follow for their own Account/Friends/Profile
+   subnav. This file only adds what's actually new: the page-level wrapper
+   and the Scheduled tab's tee-time cards. Live tab round cards reuse
+   .t3g-round-card and its scorecard body wholesale from home.css/
+   scoring_history.css -- nothing Play-specific needed there. */
+
+.t3g-play-page .t3g-panel {
+    margin-bottom: 1.25rem;
+}
+
+.t3g-play-page .t3g-panel:last-child {
+    margin-bottom: 0;
+}
+
+/* "No live rounds -- start one below" / "No scheduled rounds yet" --
+   same italic muted look as every other .t3g-empty-state, just with a
+   little extra breathing room since these ones aren't a placeholder
+   swapped for pagination controls, they're the entire tab body when
+   there's nothing to show. */
+.t3g-play-empty-state {
+    padding: 0.5rem 0;
+}
+
+/* Scheduled tab -- each upcoming tournament tee time as its own card,
+   same shell (.t3g-round-card / .t3g-round-card-header / -title) a
+   completed round uses on Rounds History, so a scheduled tee time and a
+   played round read as visually related without duplicating that chrome
+   here. Body content is different enough (no scorecard, just club/date/
+   tees/group) to need its own class for the parts that are new. */
+.t3g-play-scheduled-card {
+    margin-bottom: 0.85rem;
+}
+
+.t3g-play-scheduled-card:last-child {
+    margin-bottom: 0;
+}
+
+.t3g-play-scheduled-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+}
+
+.t3g-play-scheduled-club {
+    color: #1e2a47;
+    font-weight: 700;
+    font-size: 0.85rem;
+}
+
+.t3g-play-scheduled-meta {
+    color: #6b7280;
+    font-size: 0.8rem;
+}
+
+.t3g-play-scheduled-players {
+    color: #374151;
+    font-size: 0.8rem;
+    margin-top: 0.2rem;
+}
+
+@media (max-width: 700px), (max-height: 500px) {
+    .t3g-play-page .t3g-panel {
+        margin-bottom: 1rem;
+    }
+
+    .t3g-play-scheduled-club {
+        font-size: 0.8rem;
+    }
+
+    .t3g-play-scheduled-meta,
+    .t3g-play-scheduled-players {
+        font-size: 0.75rem;
+    }
+}
