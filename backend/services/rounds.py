@@ -2215,11 +2215,24 @@ def sign_off_round(round_id: str, player_id: str) -> dict:
                 .eq("status", "accepted")
                 .execute()
             )
-        for row in (accepted_response.data or []):
+        accepted_player_ids = [row["player_id"] for row in (accepted_response.data or [])]
+        for pid in accepted_player_ids:
             try:
-                recalculate_and_store_handicap(row["player_id"])
+                recalculate_and_store_handicap(pid)
             except Exception as exc:
-                print(f"[WHS] Failed to recalculate handicap for player {row['player_id']}: {exc}")
+                print(f"[WHS] Failed to recalculate handicap for player {pid}: {exc}")
+
+        # Best-effort, same reasoning as every other automated feed post
+        # hook (join/tournament) -- a feed post failing should never be
+        # able to block a round actually completing. Only fires here (not
+        # in finish_round) because a multiplayer round never reaches
+        # status=completed anywhere else -- see create_scorecard_posts's
+        # own docstring in club_posts.py.
+        try:
+            from backend.services.club_posts import create_scorecard_posts
+            create_scorecard_posts(round_id, accepted_player_ids)
+        except Exception as exc:
+            print(f"[FEED] Failed to create scorecard post(s) for round={round_id}: {exc}")
 
     return get_round(round_id, viewer_player_id=player_id)
 

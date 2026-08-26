@@ -190,6 +190,16 @@ def create_tournament(payload: TournamentCreate) -> dict:
     for r in rounds:
         r["tee_times"] = []
 
+    # Best-effort -- a feed post failing should never be able to block
+    # the tournament itself from being created. Local import for the
+    # same "avoid a module-scope circular import" reason as club_players.
+    # add_player_to_club's own join-post hook.
+    try:
+        from backend.services.club_posts import create_tournament_post
+        create_tournament_post(str(payload.club_id), tournament["id"], tournament["name"], str(payload.admin_id))
+    except Exception as exc:
+        print(f"[FEED] Failed to create tournament post for tournament={tournament['id']}: {exc}")
+
     return {**tournament, "rounds": rounds, "entrants": []}
 
 

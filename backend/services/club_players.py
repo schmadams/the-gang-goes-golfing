@@ -37,6 +37,17 @@ def add_player_to_club(club_player: ClubPlayerCreate) -> dict:
     if club and club.get("club_admin") is None:
         supabase.table("clubs").update({"club_admin": payload["player_id"]}).eq("id", payload["club_id"]).execute()
 
+    # Local import to avoid a circular import -- club_posts.create_
+    # scorecard_posts itself imports list_clubs_for_player from this
+    # same module, so this module can't import club_posts at module
+    # scope too. Best-effort: a feed post failing should never be able
+    # to block someone actually joining a club.
+    try:
+        from backend.services.club_posts import create_join_post
+        create_join_post(payload["club_id"], payload["player_id"])
+    except Exception as exc:
+        print(f"[FEED] Failed to create join post for club={payload['club_id']} player={payload['player_id']}: {exc}")
+
     return row
 
 

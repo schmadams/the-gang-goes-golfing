@@ -1,6 +1,7 @@
 # target path: frontend/src/pages/club.py (replace entire file)
 import base64
 import time
+from datetime import datetime
 
 import dash
 import dash_bootstrap_components as dbc
@@ -673,6 +674,215 @@ def _club_photo_panel(club, is_admin):
     )
 
 
+def _format_feed_timestamp(iso_str):
+    """"D Mon YYYY, HH:MM" -- plain and absolute rather than a relative
+    "3 hours ago" style, matching how every other date in this app
+    (tournament round dates, handicap valid_from, etc.) is already shown
+    as a fixed value rather than a live-updating relative one."""
+    if not iso_str:
+        return ""
+    try:
+        dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+    except ValueError:
+        return iso_str
+    return dt.strftime("%-d %b %Y, %H:%M")
+
+
+def _feed_post_header(name, photo_url, timestamp_text):
+    """Avatar + name + timestamp row shared by every post card type that
+    has a single author (join/tournament/manual) -- reuses _leaderboard_
+    avatar's own initials-or-photo circle even though this isn't a
+    leaderboard; it's the same "player identity, small circle" building
+    block either way, and duplicating its initials/photo logic a third
+    time in this same file wouldn't buy anything."""
+    return html.Div(
+        className="t3g-feed-post-header",
+        children=[
+            _leaderboard_avatar(name, photo_url),
+            html.Div(
+                className="t3g-feed-post-header-text",
+                children=[
+                    html.Span(name, className="t3g-feed-post-author"),
+                    html.Span(timestamp_text, className="t3g-feed-post-timestamp"),
+                ],
+            ),
+        ],
+    )
+
+
+def _feed_post_card(post, slug):
+    """Dispatches on post_type -- see get_club_feed's docstring in
+    backend/services/club_posts.py for exactly what each type's payload
+    carries. 'scorecard' is the odd one out: it has no single author (a
+    completed round belongs to everyone who played it), so it gets its
+    own header treatment instead of _feed_post_header."""
+    post_type = post.get("post_type")
+    timestamp_text = _format_feed_timestamp(post.get("created_at"))
+    author_name = post.get("author_name") or "A player"
+
+    if post_type == "join":
+        body = html.P(f"{author_name} joined the club.", className="t3g-feed-post-body")
+        return html.Div(
+            className="t3g-feed-post",
+            children=[_feed_post_header(author_name, post.get("author_photo_url"), timestamp_text), body],
+        )
+
+    if post_type == "tournament":
+        metadata = post.get("metadata") or {}
+        tournament_name = metadata.get("tournament_name") or "a tournament"
+        tournament_id = metadata.get("tournament_id")
+        body_children = [f"{author_name} created a new tournament: "]
+        if tournament_id:
+            body_children.append(
+                dcc.Link(tournament_name, href=f"/clubs/{slug}/tournaments/{tournament_id}")
+            )
+        else:
+            body_children.append(tournament_name)
+        return html.Div(
+            className="t3g-feed-post",
+            children=[
+                _feed_post_header(author_name, post.get("author_photo_url"), timestamp_text),
+                html.P(body_children, className="t3g-feed-post-body"),
+            ],
+        )
+
+    if post_type == "scorecard":
+        scorecard = post.get("scorecard")
+        if not scorecard:
+            # The round this pointed at is somehow gone -- shouldn't
+            # normally happen (completed rounds aren't deletable), but a
+            # missing scorecard shouldn't crash the whole feed render.
+            return None
+        player_names = ", ".join(p["name"] for p in scorecard["players"])
+        course_bits = [b for b in [scorecard.get("club_name"), scorecard.get("course_name")] if b]
+        course_text = " -- ".join(course_bits)
+        rows = [
+            html.Div(
+                className="t3g-feed-scorecard-row",
+                children=[
+                    html.Span(p["name"], className="t3g-feed-scorecard-name"),
+                    html.Span(
+                        str(p["total_strokes"]) if p["thru"] == 18 else f"thru {p['thru']}",
+                        className="t3g-feed-scorecard-score",
+                    ),
+                ],
+            )
+            for p in scorecard["players"]
+        ]
+        return html.Div(
+            className="t3g-feed-post",
+            children=[
+                html.Div(
+                    className="t3g-feed-post-header",
+                    children=[
+                        html.Span("⛳", className="t3g-feed-post-icon"),
+                        html.Div(
+                            className="t3g-feed-post-header-text",
+                            children=[
+                                html.Span(f"{player_names} played a round", className="t3g-feed-post-author"),
+                                html.Span(
+                                    " -- ".join(b for b in [course_text, timestamp_text] if b),
+                                    className="t3g-feed-post-timestamp",
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+                html.Div(rows, className="t3g-feed-scorecard"),
+            ],
+        )
+
+    # "manual" (or anything unrecognized, treated the same way)
+    body_children = []
+    if post.get("body"):
+        body_children.append(html.P(post["body"], className="t3g-feed-post-body"))
+    if post.get("image_url"):
+        body_children.append(html.Img(src=post["image_url"], className="t3g-feed-post-image"))
+    return html.Div(
+        className="t3g-feed-post",
+        children=[_feed_post_header(author_name, post.get("author_photo_url"), timestamp_text)] + body_children,
+    )
+
+
+def _feed_composer():
+    """Text + optional photo, open to any club member (not just the
+    admin) -- see create_manual_post's own docstring in backend/services/
+    club_posts.py for why. Same dcc.Upload -> base64 -> POST multipart
+    pattern as every other photo upload in this app, except the preview
+    here is wired straight to the Upload component's own `contents`
+    (already a base64 data URL) rather than round-tripping to the
+    backend first -- nothing's actually posted yet at preview time, so
+    there's nothing on the server to fetch a fresh URL from."""
+    return html.Div(
+        className="t3g-panel",
+        children=[
+            build_panel_navbar("Post to the Feed"),
+            html.Div(
+                className="t3g-panel-body",
+                children=[
+                    dbc.Textarea(
+                        id="feed-post-body",
+                        placeholder="Share an update with the club...",
+                        className="mb-2",
+                    ),
+                    html.Img(
+                        id="feed-post-photo-preview",
+                        className="t3g-feed-post-image",
+                        style={"display": "none"},
+                    ),
+                    html.Div(
+                        className="t3g-feed-composer-actions",
+                        children=[
+                            dcc.Upload(
+                                id="feed-post-upload",
+                                children=html.Button(
+                                    "Add Photo",
+                                    className="t3g-panel-action-button t3g-panel-action-button--secondary",
+                                ),
+                                accept="image/*",
+                                style={"display": "inline-block"},
+                            ),
+                            html.Button(
+                                "Post",
+                                id="feed-post-submit",
+                                className="t3g-panel-action-button",
+                                n_clicks=0,
+                            ),
+                        ],
+                    ),
+                    html.Div(id="feed-post-error", className="text-danger mt-2"),
+                    dcc.Location(id="feed-post-redirect", refresh=True),
+                ],
+            ),
+        ],
+    )
+
+
+def _feed_tab_panel(posts, slug):
+    """Feed tab body -- the composer up top (any member can post), then
+    every post_type mixed together newest-first below it, exactly the
+    order get_club_feed already returns them in. No outer .t3g-panel
+    wrapping the post list itself -- each post is already its own card
+    (.t3g-feed-post), so a second box around all of them would just be
+    chrome around chrome, the same reasoning that dropped the outer panel
+    from the Player Analysis tab."""
+    cards = [card for card in (_feed_post_card(post, slug) for post in posts) if card is not None]
+    body = (
+        html.Div(cards, className="t3g-feed-list")
+        if cards
+        else html.P(
+            "No posts yet -- be the first to share an update, or wait for "
+            "the club's first tournament or completed round to show up "
+            "here automatically.",
+            className="t3g-empty-state",
+        )
+    )
+    return html.Div(
+        className="t3g-analysis-tab-panel",
+        children=[_feed_composer(), body],
+    )
+
+
 def _admin_tab_panel(club, player_id, is_admin):
     """Everything admin-only on the club page lives here now, instead of
     scattered across whichever tab it happened to relate to (Club Photo
@@ -991,7 +1201,7 @@ def _not_found_page():
     )
 
 
-_CLUB_TAB_KEYS = ("directory", "tournaments", "comparison", "admin")
+_CLUB_TAB_KEYS = ("feed", "directory", "tournaments", "comparison", "admin")
 _CLUB_TAB_BUTTON_BASE = "t3g-tournament-tab"
 _CLUB_TAB_BUTTON_ACTIVE = "t3g-tournament-tab t3g-tournament-tab--active"
 
@@ -1000,19 +1210,19 @@ def _club_tab_visibility(active_tab, is_admin):
     """(styles, classes) for the club page's tabs at page-load time --
     same ?tab= query param pattern tournament.py's own subnav uses (see
     _tab_visibility there), picked once at load instead of always
-    defaulting to Directory, so a link elsewhere in the app can open
-    straight onto Tournaments/Player Analysis/Admin. switch_club_tab
+    defaulting to Feed, so a link elsewhere in the app can open straight
+    onto Directory/Tournaments/Player Analysis/Admin. switch_club_tab
     below owns in-page click-driven switching after that.
 
-    A non-admin asking for ?tab=admin falls back to Directory instead of
+    A non-admin asking for ?tab=admin falls back to Feed instead of
     landing on a tab whose button they can't even see (see _club_subnav
     -- the Admin button stays in the DOM but hidden via style for
     non-admins, purely so switch_club_tab's Output targets always
     exist)."""
     hidden = {"display": "none"}
     shown = {}
-    requested = active_tab if active_tab in _CLUB_TAB_KEYS else "directory"
-    key = requested if requested != "admin" or is_admin else "directory"
+    requested = active_tab if active_tab in _CLUB_TAB_KEYS else "feed"
+    key = requested if requested != "admin" or is_admin else "feed"
     index = _CLUB_TAB_KEYS.index(key)
 
     styles = tuple(shown if i == index else hidden for i in range(len(_CLUB_TAB_KEYS)))
@@ -1023,12 +1233,15 @@ def _club_tab_visibility(active_tab, is_admin):
 
 
 def _club_subnav(tab_classes, is_admin):
-    """Page-level subnav for the club page -- Directory/Tournaments/
+    """Page-level subnav for the club page -- Feed/Directory/Tournaments/
     Player Analysis/Admin as client-side tabs, every panel group always
     in the DOM and toggled by style (see switch_club_tab below), same
     approach and same .t3g-tournament-subnav/-tabs/-tab styling as
     tournament.py's own subnav. No "Return to X" link here -- unlike the
-    tournament page, this already is the club's own top-level page.
+    tournament page, this already is the club's own top-level page. Feed
+    goes first -- it's the closest thing this page has to a "home" view,
+    the same reason a club's front door is its noticeboard, not its
+    membership list.
 
     The Admin button itself is always rendered (never omitted from the
     tree) even for non-admins -- just hidden via style, the same "always
@@ -1038,7 +1251,7 @@ def _club_subnav(tab_classes, is_admin):
     omitted outright for non-admins, a non-admin clicking any other tab
     would trip a Dash error trying to update a button that doesn't
     exist."""
-    directory_class, tournaments_class, comparison_class, admin_class = tab_classes
+    feed_class, directory_class, tournaments_class, comparison_class, admin_class = tab_classes
     return html.Div(
         className="t3g-tournament-subnav",
         children=html.Div(
@@ -1046,6 +1259,12 @@ def _club_subnav(tab_classes, is_admin):
             children=html.Div(
                 className="t3g-tournament-tabs",
                 children=[
+                    html.Button(
+                        "Feed",
+                        id="club-tab-feed-button",
+                        className=feed_class,
+                        n_clicks=0,
+                    ),
                     html.Button(
                         "Directory",
                         id="club-tab-directory-button",
@@ -1078,21 +1297,24 @@ def _club_subnav(tab_classes, is_admin):
 
 
 @callback(
+    Output("club-tab-panel-feed", "style"),
     Output("club-tab-panel-directory", "style"),
     Output("club-tab-panel-tournaments", "style"),
     Output("club-tab-panel-comparison", "style"),
     Output("club-tab-panel-admin", "style"),
+    Output("club-tab-feed-button", "className"),
     Output("club-tab-directory-button", "className"),
     Output("club-tab-tournaments-button", "className"),
     Output("club-tab-comparison-button", "className"),
     Output("club-tab-admin-button", "className"),
+    Input("club-tab-feed-button", "n_clicks"),
     Input("club-tab-directory-button", "n_clicks"),
     Input("club-tab-tournaments-button", "n_clicks"),
     Input("club-tab-comparison-button", "n_clicks"),
     Input("club-tab-admin-button", "n_clicks"),
     prevent_initial_call=True,
 )
-def switch_club_tab(directory_clicks, tournaments_clicks, comparison_clicks, admin_clicks):
+def switch_club_tab(feed_clicks, directory_clicks, tournaments_clicks, comparison_clicks, admin_clicks):
     # A non-admin can never actually trigger the "admin" branch below --
     # their Admin button is display:none (see _club_subnav), so it can't
     # be clicked -- but the branch still needs to exist since this same
@@ -1102,24 +1324,29 @@ def switch_club_tab(directory_clicks, tournaments_clicks, comparison_clicks, adm
     shown = {}
     triggered_id = dash.ctx.triggered_id
 
+    if triggered_id == "club-tab-directory-button":
+        return (
+            hidden, shown, hidden, hidden, hidden,
+            _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_ACTIVE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE,
+        )
     if triggered_id == "club-tab-tournaments-button":
         return (
-            hidden, shown, hidden, hidden,
-            _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_ACTIVE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE,
+            hidden, hidden, shown, hidden, hidden,
+            _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_ACTIVE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE,
         )
     if triggered_id == "club-tab-comparison-button":
         return (
-            hidden, hidden, shown, hidden,
-            _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_ACTIVE, _CLUB_TAB_BUTTON_BASE,
+            hidden, hidden, hidden, shown, hidden,
+            _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_ACTIVE, _CLUB_TAB_BUTTON_BASE,
         )
     if triggered_id == "club-tab-admin-button":
         return (
-            hidden, hidden, hidden, shown,
-            _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_ACTIVE,
+            hidden, hidden, hidden, hidden, shown,
+            _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_ACTIVE,
         )
     return (
-        shown, hidden, hidden, hidden,
-        _CLUB_TAB_BUTTON_ACTIVE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE,
+        shown, hidden, hidden, hidden, hidden,
+        _CLUB_TAB_BUTTON_ACTIVE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE,
     )
 
 
@@ -1149,8 +1376,11 @@ def layout(slug=None, tab=None, **kwargs):
     comparison_resp = requests.get(f"{API_BASE_URL}/clubs/{club['id']}/player-comparison")
     comparison = comparison_resp.json() if comparison_resp.status_code == 200 else {}
 
-    (directory_style, tournaments_style, comparison_style, admin_style), tab_classes = _club_tab_visibility(
-        tab, is_admin
+    feed_resp = requests.get(f"{API_BASE_URL}/clubs/{club['id']}/feed")
+    feed_posts = feed_resp.json() if feed_resp.status_code == 200 else []
+
+    (feed_style, directory_style, tournaments_style, comparison_style, admin_style), tab_classes = (
+        _club_tab_visibility(tab, is_admin)
     )
 
     return html.Div(
@@ -1163,6 +1393,11 @@ def layout(slug=None, tab=None, **kwargs):
             dcc.Store(id="club-id-store", data=club["id"]),
             _admin_banner(is_admin),
             _club_subnav(tab_classes, is_admin),
+            html.Div(
+                id="club-tab-panel-feed",
+                style=feed_style,
+                children=_feed_tab_panel(feed_posts, slug),
+            ),
             html.Div(
                 id="club-tab-panel-directory",
                 style=directory_style,
@@ -1338,6 +1573,76 @@ def handle_club_photo_upload(contents, filename, club_id, current_pathname):
     # of this file's own redirect-on-success callbacks (see the comment
     # there) -- dcc.Location only reloads when the value differs from
     # what's already loaded, and the pathname itself doesn't change here.
+    return "", f"{current_pathname}?_r={time.time()}"
+
+
+dash.clientside_callback(
+    """
+    function(contents) {
+        if (!contents) {
+            return ["", {"display": "none"}];
+        }
+        return [contents, {}];
+    }
+    """,
+    Output("feed-post-photo-preview", "src"),
+    Output("feed-post-photo-preview", "style"),
+    Input("feed-post-upload", "contents"),
+    prevent_initial_call=True,
+)
+
+
+@callback(
+    Output("feed-post-error", "children"),
+    Output("feed-post-redirect", "href"),
+    Input("feed-post-submit", "n_clicks"),
+    State("feed-post-body", "value"),
+    State("feed-post-upload", "contents"),
+    State("feed-post-upload", "filename"),
+    State("club-id-store", "data"),
+    State("_pages_location", "pathname"),
+    prevent_initial_call=True,
+)
+def handle_feed_post_submit(n_clicks, body_value, upload_contents, upload_filename, club_id, current_pathname):
+    body_value = (body_value or "").strip()
+    if not body_value and not upload_contents:
+        return "Add some text or a photo before posting.", dash.no_update
+
+    player_id = session.get("player_id")
+    data = {"author_id": player_id}
+    if body_value:
+        data["body"] = body_value
+
+    files = None
+    if upload_contents:
+        header, encoded = upload_contents.split(",", 1)
+        file_bytes = base64.b64decode(encoded)
+        content_type = header.split(";")[0].replace("data:", "") or "image/jpeg"
+        files = {"file": (upload_filename or "photo.jpg", file_bytes, content_type)}
+
+    response = requests.post(
+        f"{API_BASE_URL}/clubs/{club_id}/feed",
+        data=data,
+        files=files,
+    )
+
+    if response.status_code != 201:
+        # Same "surface the real backend detail" treatment as every other
+        # upload/mutation callback in this app -- create_club_post_route
+        # returns a specific message for NotClubMemberError or
+        # ImageUploadError rather than always showing the same generic
+        # line.
+        try:
+            detail = response.json().get("detail", "Couldn't post that. Try again.")
+            if not isinstance(detail, str):
+                detail = "Couldn't post that. Try again."
+        except ValueError:
+            detail = "Couldn't post that. Try again."
+        return detail, dash.no_update
+
+    # Same cache-busting reload as handle_club_photo_upload just above --
+    # the freshly posted update needs a real page reload to show up at
+    # the top of the feed, and the pathname itself doesn't change here.
     return "", f"{current_pathname}?_r={time.time()}"
 
 
