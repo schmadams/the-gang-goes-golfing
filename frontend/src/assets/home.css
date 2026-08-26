@@ -768,3 +768,144 @@
         flex-wrap: wrap;
     }
 }
+/* Home feed page -- reuses club.css's .t3g-feed-list/.t3g-feed-post/
+   .t3g-feed-post-header/etc. wholesale for join/tournament/manual cards
+   (same card shell everywhere a feed shows up in this app), and adds
+   the pieces specific to a round post: the club tag next to a post's
+   timestamp, the handicap-change badge, the detailed hole-by-hole
+   table, the group/detail toggle, and the retroactive photo composer. */
+.t3g-home-feed-page {
+    max-width: 640px;
+    margin: 0 auto;
+}
+
+.t3g-feed-post-timestamp-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.t3g-feed-post-club-tag {
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: #c21861;
+    text-decoration: none;
+}
+
+.t3g-feed-post-club-tag:hover {
+    text-decoration: underline;
+}
+
+.t3g-feed-round-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    margin: 0.75rem 0 0.25rem;
+}
+
+.t3g-feed-round-toggle-arrow {
+    background: none;
+    border: 1px solid #edeef2;
+    border-radius: 999px;
+    width: 1.9rem;
+    height: 1.9rem;
+    font-size: 1rem;
+    line-height: 1;
+    color: #c21861;
+    cursor: pointer;
+}
+
+.t3g-feed-round-toggle-arrow:hover {
+    background: #fbe6f0;
+}
+
+.t3g-feed-round-toggle-label {
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: #9aa0b0;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+
+.t3g-feed-detail-view {
+    margin-top: 0.75rem;
+}
+
+.t3g-feed-detail-table-wrap {
+    overflow-x: auto;
+}
+
+.t3g-feed-detail-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.78rem;
+}
+
+.t3g-feed-detail-table th,
+.t3g-feed-detail-table td {
+    padding: 0.3rem 0.4rem;
+    text-align: center;
+    white-space: nowrap;
+}
+
+.t3g-feed-detail-table thead th {
+    color: #9aa0b0;
+    font-weight: 700;
+}
+
+.t3g-feed-detail-row-label {
+    text-align: left;
+    font-weight: 700;
+    color: #1e2a47;
+}
+
+.t3g-feed-detail-total-cell {
+    font-weight: 800;
+    color: #1e2a47;
+    border-left: 1px solid #edeef2;
+}
+
+.t3g-feed-handicap-badge {
+    display: inline-block;
+    margin-top: 0.6rem;
+    padding: 0.3rem 0.65rem;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 700;
+}
+
+.t3g-feed-handicap-badge--down {
+    background: #eaf6ec;
+    color: #1e7d34;
+}
+
+.t3g-feed-handicap-badge--up {
+    background: #fdf1e3;
+    color: #b45309;
+}
+
+.t3g-feed-photo-composer {
+    margin-top: 0.75rem;
+}
+
+.t3g-feed-photo-gallery {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.t3g-feed-photo-gallery:empty {
+    display: none;
+}
+
+@media (max-width: 640px) {
+    .t3g-home-feed-page {
+        max-width: 100%;
+    }
+
+    .t3g-feed-detail-table {
+        font-size: 0.7rem;
+    }
+}

@@ -11,6 +11,7 @@ from backend.services.players import (
     update_player,
     upload_profile_picture,
 )
+from backend.services.round_posts import list_home_feed_posts
 from backend.services.storage import ImageUploadError
 
 router = APIRouter(
@@ -101,3 +102,14 @@ async def upload_profile_picture_route(player_id: str, file: UploadFile = File(.
         )
 
     return updated
+
+
+@router.get("/{player_id}/feed")
+def get_player_feed_route(player_id: str):
+    """Home feed for one player -- every round they or a friend played
+    (with their own detailed scorecard/handicap change folded in for
+    their own rounds), plus every post from every club they belong to.
+    See list_home_feed_posts's own docstring in backend/services/
+    round_posts.py for exactly how those two sources are merged and
+    de-duplicated."""
+    return list_home_feed_posts(player_id)

@@ -678,14 +678,21 @@ def _format_feed_timestamp(iso_str):
     """"D Mon YYYY, HH:MM" -- plain and absolute rather than a relative
     "3 hours ago" style, matching how every other date in this app
     (tournament round dates, handicap valid_from, etc.) is already shown
-    as a fixed value rather than a live-updating relative one."""
+    as a fixed value rather than a live-updating relative one.
+
+    The day-of-month is built by hand rather than via strftime's
+    %-d/%#d -- same reasoning as _format_tee_time in tournament.py:
+    which flag strips the leading zero is platform-dependent (Unix vs
+    Windows), and %-d raises ValueError: Invalid format string on
+    Windows instead of just leaving the zero in, so this needs to avoid
+    it entirely rather than pick the "right" one."""
     if not iso_str:
         return ""
     try:
         dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
     except ValueError:
         return iso_str
-    return dt.strftime("%-d %b %Y, %H:%M")
+    return f"{dt.day} {dt.strftime('%b %Y, %H:%M')}"
 
 
 def _feed_post_header(name, photo_url, timestamp_text):

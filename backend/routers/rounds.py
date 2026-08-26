@@ -1,5 +1,5 @@
 # target path: backend/routers/rounds.py (full replacement)
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 
 from backend.models.round import (
     HoleScoreUpdate,
@@ -10,6 +10,12 @@ from backend.models.round import (
     RoundSummaryResponse,
     TournamentRoundStartRequest,
 )
+from backend.services.round_posts import (
+    NotRoundPostPlayerError,
+    RoundPostNotFoundError,
+    add_round_post_photo,
+)
+from backend.services.storage import ImageUploadError
 from backend.services.rounds import (
     CannotLeaveRoundError,
     CannotMarkNoResultError,
@@ -288,3 +294,26 @@ def leave_round_route(round_id: str, player_id: str):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
     except NotRoundMemberError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
+
+
+@router.post("/{round_id}/post/photo", status_code=status.HTTP_201_CREATED)
+async def add_round_post_photo_route(
+    round_id: str,
+    author_id: str = Form(...),
+    file: UploadFile = File(...),
+):
+    """Adds one more photo to a round's post, any time after the fact --
+    the round-completion side of the home feed already creates the post
+    itself (see finish_round/sign_off_round), this just lets one of its
+    players attach a photo later. See add_round_post_photo's own
+    docstring in backend/services/round_posts.py for the exact
+    membership rule."""
+    file_bytes = await file.read()
+    try:
+        return add_round_post_photo(round_id, author_id, file_bytes, file.filename, file.content_type)
+    except RoundPostNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    except NotRoundPostPlayerError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
+    except ImageUploadError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))

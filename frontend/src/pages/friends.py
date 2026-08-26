@@ -40,6 +40,11 @@ def _account_subnav(active):
                         className=_ACCOUNT_TAB_ACTIVE if active == "account" else _ACCOUNT_TAB_BASE,
                     ),
                     dcc.Link(
+                        "My Profile",
+                        href="/my-account/profile",
+                        className=_ACCOUNT_TAB_ACTIVE if active == "profile" else _ACCOUNT_TAB_BASE,
+                    ),
+                    dcc.Link(
                         "Friends",
                         href="/friends",
                         className=_ACCOUNT_TAB_ACTIVE if active == "friends" else _ACCOUNT_TAB_BASE,

@@ -9,9 +9,12 @@ CLUB_POST_PHOTO_BUCKET = "club-post-photos"
 # club_posts.author_id has exactly one FK onto players (unlike
 # club_invites' two), so a plain unqualified embed is unambiguous --
 # same reasoning as club_players.list_players_in_club's own players(*)
-# embed. None for a scorecard post (no single author -- see
-# create_scorecard_posts), which is why every read of this embed below
-# guards on `if author` first.
+# embed. Every row still in this table (join/tournament/manual) always
+# has an author -- unlike the old post_type='scorecard' rows this used
+# to also carry, which are sourced from round_posts now instead (see
+# get_club_feed). The `if author` guard below is kept anyway as cheap
+# insurance against a null author_id some other way, rather than
+# assuming the DB's FK is the only thing that could ever leave it empty.
 _AUTHOR_EMBED = "players(id, first_name, surname, nickname, profile_picture_url)"
 
 
@@ -121,122 +124,28 @@ def create_tournament_post(club_id: str, tournament_id: str, tournament_name: st
     return response.data[0]
 
 
-def create_scorecard_posts(round_id: str, player_ids: list[str]) -> list[dict]:
-    """Automated post(s) whenever a multiplayer round reaches status=
-    completed -- see sign_off_round in backend/services/rounds.py, the
-    only place that actually happens for a multiplayer round
-    (finish_round only ever sets status=completed directly for a solo
-    round, which never reaches here since len(player_ids) < 2 below
-    bails out first).
-
-    Posts to *every* club every one of these players happens to share
-    membership in -- not just a club the round was explicitly tagged to
-    (rounds.club_id / a tournament's own club_id, the same scoping
-    get_club_player_comparison uses for its stats). A group of friends
-    who are all members of the same club, playing a completely untagged
-    casual round at a random course, still gets a feed post there, on
-    the theory that "we played together and we're all in the same club"
-    is itself the interesting fact worth posting, not whether anyone
-    remembered to tag the round with it. If the group shares membership
-    in more than one club, it posts to all of them.
-
-    If the players don't share membership in any club at all -- the most
-    common case, e.g. two friends who golf together but belong to
-    different (or no) clubs -- this is a silent no-op, not an error."""
-    if len(player_ids) < 2:
-        return []
-
-    # Local import: backend.services.club_players doesn't import this
-    # module, so this one's safe at module level -- kept local anyway
-    # purely for symmetry with _scorecard_summary's own local import of
-    # backend.services.rounds below, which *does* need to be local (that
-    # one's a genuine circular-import break).
-    from backend.services.club_players import list_clubs_for_player
-
-    club_id_sets = [
-        {row["club_id"] for row in list_clubs_for_player(player_id)}
-        for player_id in player_ids
-    ]
-    shared_club_ids = set.intersection(*club_id_sets) if club_id_sets else set()
-    if not shared_club_ids:
-        return []
-
-    rows = [
-        {
-            "club_id": club_id,
-            "post_type": "scorecard",
-            "author_id": None,
-            "metadata": {"round_id": round_id, "player_ids": player_ids},
-        }
-        for club_id in shared_club_ids
-    ]
-    response = supabase.table("club_posts").insert(rows).execute()
-    return response.data or []
-
-
-def _scorecard_summary(round_id: str, player_ids: list[str]) -> dict | None:
-    """Builds the small "who played, what did they shoot" summary a
-    scorecard feed card needs, from the same get_round(...) every other
-    round-detail view in this app already calls -- rather than
-    duplicating strokes-per-hole math a third time, or freezing a copy of
-    the scorecard into club_posts.metadata at post-creation time (which
-    would go stale if the round were ever edited, though completed
-    rounds can't be -- see RoundNotEditableError).
-
-    Local import of backend.services.rounds is required here, not just
-    stylistic -- rounds.py's own sign_off_round calls create_scorecard_
-    posts (above) at module scope, so this module can't import rounds.py
-    at *its* module scope too without a genuine circular import; deferring
-    it to call time (well after both modules have finished loading)
-    breaks that cleanly."""
-    from backend.services.rounds import get_round
-
-    round_data = get_round(round_id)
-    if not round_data:
-        return None
-
-    players_by_id = {p["player_id"]: p for p in round_data.get("players", [])}
-    summary_players = []
-    for player_id in player_ids:
-        player = players_by_id.get(player_id)
-        if not player:
-            continue
-        total_strokes = sum(h["strokes"] for h in player["holes"] if h.get("strokes") is not None)
-        thru = sum(1 for h in player["holes"] if h.get("strokes") is not None)
-        name = (
-            player.get("nickname")
-            or f"{player.get('first_name', '')} {player.get('surname', '')}".strip()
-            or "Unknown player"
-        )
-        summary_players.append({
-            "player_id": player_id,
-            "name": name,
-            "total_strokes": total_strokes,
-            "thru": thru,
-        })
-
-    return {
-        "round_id": round_id,
-        "club_name": round_data.get("club_name"),
-        "course_name": round_data.get("course_name"),
-        "round_date": round_data.get("round_date"),
-        "players": summary_players,
-    }
-
-
 def get_club_feed(club_id: str, limit: int = 30) -> list[dict]:
     """Newest-first feed for one club -- every post_type mixed together
-    in one list, each hydrated with whatever its own card needs to
-    render standalone: an author's name/photo via the shared players
-    embed below for join/tournament/manual posts, plus a scorecard
-    summary fetched separately for post_type='scorecard' specifically,
-    since those posts have no single author_id to embed against at all
-    (author_id is null -- see create_scorecard_posts)."""
+    in one list. join/tournament/manual posts come straight from
+    club_posts, hydrated with the author's name/photo via the shared
+    players embed below. Group-scorecard cards no longer live in
+    club_posts at all -- as of the home feed feature, every completed
+    round gets exactly one round_posts row (see backend/services/
+    round_posts.py), and this pulls in whichever of those match this
+    club's shared membership (round_posts.list_round_posts_for_club)
+    rather than each club getting its own separate copy of the same
+    round. post_type='scorecard' is explicitly excluded from the
+    club_posts query below so a stale row from before this change (if
+    you'd already run the earlier version of this feature) doesn't
+    render twice alongside its round_posts-sourced replacement."""
+    from backend.services.round_posts import list_round_posts_for_club
+
     response = (
         supabase
         .table("club_posts")
         .select(f"*, {_AUTHOR_EMBED}")
         .eq("club_id", club_id)
+        .neq("post_type", "scorecard")
         .order("created_at", desc=True)
         .limit(limit)
         .execute()
@@ -246,7 +155,6 @@ def get_club_feed(club_id: str, limit: int = 30) -> list[dict]:
     posts = []
     for row in rows:
         author = row.pop("players", None) or {}
-        metadata = row.get("metadata") or {}
         post = {
             **row,
             "author_name": (
@@ -260,8 +168,8 @@ def get_club_feed(club_id: str, limit: int = 30) -> list[dict]:
             ),
             "author_photo_url": author.get("profile_picture_url") if author else None,
         }
-        if row["post_type"] == "scorecard":
-            post["scorecard"] = _scorecard_summary(metadata.get("round_id"), metadata.get("player_ids", []))
         posts.append(post)
 
-    return posts
+    posts.extend(list_round_posts_for_club(club_id))
+    posts.sort(key=lambda p: p["created_at"], reverse=True)
+    return posts[:limit]
