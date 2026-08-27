@@ -1,0 +1,294 @@
+/* target path: frontend/src/assets/calendar.css (new file)
+   Backs pages/calendar.py -- the month-grid Calendar page under My
+   Account. Reuses .t3g-page/.t3g-tournament-subnav (see club.css) like
+   every other page in this app; everything below is specific to the
+   grid/chips themselves. */
+
+.t3g-calendar-header {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1.25rem;
+    margin: 1.5rem 0 0.75rem;
+}
+
+.t3g-calendar-month-label {
+    color: #ffffff;
+    font-weight: 800;
+    min-width: 12ch;
+    text-align: center;
+}
+
+.t3g-calendar-nav-arrow {
+    color: #ffffff !important;
+    text-decoration: none !important;
+    font-size: 1.6rem;
+    line-height: 1;
+    padding: 0.25rem 0.75rem;
+    border-radius: 8px;
+    transition: background 0.15s ease, transform 0.1s ease;
+}
+
+.t3g-calendar-nav-arrow:hover {
+    background: rgba(255, 255, 255, 0.1);
+    transform: scale(1.1);
+}
+
+.t3g-calendar-legend {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 1.25rem;
+    margin-bottom: 1.25rem;
+}
+
+.t3g-calendar-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    color: rgba(255, 255, 255, 0.75);
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+}
+
+.t3g-calendar-legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+    display: inline-block;
+}
+
+.t3g-calendar-grid {
+    background: var(--t3g-surface);
+    border: 1px solid var(--t3g-border);
+    border-radius: var(--t3g-radius-lg, 20px);
+    box-shadow: var(--t3g-shadow-card, 0 12px 30px rgba(0, 0, 0, 0.25));
+    overflow: hidden;
+}
+
+.t3g-calendar-weekday-row {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    background: #1e2a47;
+}
+
+.t3g-calendar-weekday {
+    color: rgba(255, 255, 255, 0.75);
+    font-size: 0.7rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    text-align: center;
+    padding: 0.6rem 0.25rem;
+}
+
+.t3g-calendar-weeks {
+    display: flex;
+    flex-direction: column;
+}
+
+.t3g-calendar-week-row {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+}
+
+.t3g-calendar-week-row:not(:last-child) {
+    border-bottom: 1px solid var(--t3g-border);
+}
+
+.t3g-calendar-day {
+    /* height (not min-height) + overflow: hidden -- every cell in a grid
+       row auto-stretches to match its tallest sibling, so a day with a
+       long title or several events was making its whole week row taller
+       than the others (visible as a lopsided grid, some weeks noticeably
+       taller). A fixed height means a busy day just clips instead of
+       growing -- see .t3g-calendar-day-events/.t3g-calendar-chip-title's
+       own ellipsis handling below for how an individual chip's text gets
+       shortened rather than wrapping. */
+    height: 6.5rem;
+    padding: 0.4rem;
+    border-right: 1px solid var(--t3g-border);
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    overflow: hidden;
+    /* Every cell opens the day-detail modal on click now (see
+       calendar.py's _day_cell/toggle_calendar_day_modal), not just the
+       ones with events -- an empty day just opens to "No events on this
+       day." rather than doing nothing, so the whole grid reads as
+       clickable rather than some days silently not responding. */
+    cursor: pointer;
+}
+
+.t3g-calendar-day:hover {
+    background: rgba(30, 42, 71, 0.04);
+}
+
+.t3g-calendar-day--today:hover {
+    background: rgba(194, 24, 97, 0.1);
+}
+
+.t3g-calendar-week-row > .t3g-calendar-day:last-child {
+    border-right: none;
+}
+
+.t3g-calendar-day--outside {
+    background: var(--t3g-surface-raised);
+}
+
+.t3g-calendar-day--outside .t3g-calendar-day-number {
+    color: #c3c7d1;
+}
+
+.t3g-calendar-day--today {
+    background: rgba(194, 24, 97, 0.06);
+}
+
+.t3g-calendar-day-number {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--t3g-ink);
+    /* Flex items default to min-height/min-width: auto, which ignores a
+       parent's overflow: hidden until every flex item's own minimum size
+       is respected first -- without this, a long chip title could still
+       force the number + events column taller than the fixed-height
+       .t3g-calendar-day around it. flex-shrink: 0 keeps the day number
+       itself from ever being the thing that gets squeezed. */
+    flex-shrink: 0;
+}
+
+.t3g-calendar-day--today .t3g-calendar-day-number {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 50%;
+    background: var(--t3g-accent);
+    color: #ffffff;
+}
+
+.t3g-calendar-day-dots {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.2rem;
+    overflow: hidden;
+    /* See .t3g-calendar-day-number's comment above -- same flexbox
+       min-height:auto gotcha, on the container that actually holds the
+       dots this time. A day with more events than fit in the fixed-
+       height cell just clips the extra dots (same "clip, don't grow"
+       tradeoff .t3g-calendar-day itself uses) -- the day is still
+       clickable to see everything in the modal either way. */
+    min-height: 0;
+}
+
+/* One dot per event, color-coded by type -- replaces the old full-text
+   chip. Small enough that a busy day's dots wrap onto a second line
+   inside the fixed-height cell rather than needing per-event text at
+   all; the actual title/subtitle only ever show in the click-to-open
+   day modal now (see .t3g-calendar-modal-event below). */
+.t3g-calendar-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+/* A round already played -- solid, filled. */
+.t3g-calendar-chip--round {
+    background: var(--t3g-accent);
+}
+
+/* A tournament round with a real, published tee time -- solid, with a
+   thin white ring, so it still reads as visually distinct from a plain
+   played-round dot at a glance despite sharing the same color. */
+.t3g-calendar-chip--scheduled {
+    background: var(--t3g-accent);
+    box-shadow: 0 0 0 2px var(--t3g-surface), 0 0 0 3px var(--t3g-accent);
+}
+
+/* Entered a tournament, but no tee time yet -- hollow outline rather
+   than filled, the same "known, but not fully resolved yet" idea the
+   old amber color used to carry, now expressed as shape instead of a
+   second hue. */
+.t3g-calendar-chip--tournament {
+    background: transparent;
+    border: 2px solid var(--t3g-accent);
+}
+
+/* -- Day detail modal (opened by clicking a day cell) ------------------
+   Full title/subtitle per event now live here instead of in the grid
+   itself -- the grid only ever shows dots. */
+
+.t3g-calendar-modal-event {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    padding: 0.6rem 0;
+    text-decoration: none !important;
+    color: inherit;
+}
+
+.t3g-calendar-modal-event:not(:last-child) {
+    border-bottom: 1px solid var(--t3g-border);
+}
+
+.t3g-calendar-modal-event-dot {
+    margin-top: 0.35rem;
+}
+
+.t3g-calendar-modal-event-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+}
+
+.t3g-calendar-modal-event-title {
+    font-weight: 700;
+    color: var(--t3g-ink);
+}
+
+.t3g-calendar-modal-event-subtitle {
+    font-size: 0.85rem;
+    color: var(--t3g-muted);
+}
+
+.t3g-calendar-modal-empty {
+    color: var(--t3g-muted);
+    padding: 0.5rem 0;
+}
+
+/* Bootstrap's default modal transition slides the dialog down from
+   -50px above its resting position, which reads as "dropping from the
+   top" even with centered=True set (that prop only changes where the
+   dialog rests, not how it gets there). Overriding to a scale-based
+   transition makes it grow outward from the middle of the screen
+   instead, per this feature's specific requirement. Scoped to this one
+   modal (via the className passed to dbc.Modal) rather than every
+   dbc.Modal in the app, since no other modal here was asked to change
+   how it opens. */
+.modal.t3g-calendar-day-modal .modal-dialog {
+    transform: scale(0.9);
+    transition: transform 0.15s ease-out, opacity 0.15s linear;
+}
+
+.modal.t3g-calendar-day-modal.show .modal-dialog {
+    transform: scale(1);
+}
+
+/* Below the phone-width breakpoint, same 700px cutoff every other
+   mobile treatment in this app uses -- shrinks cell height so a full
+   month still fits without horizontal scrolling on a phone screen. */
+@media (max-width: 700px), (max-height: 500px) {
+    .t3g-calendar-day {
+        min-height: 4rem;
+        padding: 0.25rem;
+    }
+
+    .t3g-calendar-weekday {
+        font-size: 0.6rem;
+        padding: 0.4rem 0.1rem;
+    }
+}

@@ -8,6 +8,7 @@ from backend.database import supabase
 from backend.services.club_players import list_players_in_club
 from backend.services.friends import list_friends
 from backend.services.handicaps import get_current_player_handicap
+from backend.services.notifications import create_notification
 from backend.services.whs import recalculate_and_store_handicap
 
 _EXPIRY_HOURS = 8  # rounds still in_progress after this long are auto-scrapped
@@ -2186,6 +2187,26 @@ def finish_round(round_id: str, requesting_player_id: str) -> dict | None:
             "completed_at": datetime.now(timezone.utc).isoformat(),
         }).eq("id", round_id).execute()
 
+    # Everyone else in a multiplayer round still needs to sign off before
+    # it's actually done -- best-effort, same convention as every other
+    # create_notification call site, a notification failing to write
+    # should never be able to block the round itself from finishing.
+    if is_multiplayer:
+        finisher = next((p for p in round_data["players"] if p["player_id"] == requesting_player_id), None)
+        finisher_name = (finisher or {}).get("nickname") or (finisher or {}).get("first_name") or "A player"
+        for p in round_data["players"]:
+            if p["player_id"] == requesting_player_id:
+                continue
+            try:
+                create_notification(
+                    p["player_id"],
+                    "play",
+                    f"{finisher_name} finished your round -- sign off on the scorecard",
+                    url="/round-signoff",
+                )
+            except Exception as exc:
+                print(f"[NOTIFY] Failed to notify {p['player_id']} of round {round_id} needing sign-off: {exc}")
+
     # No recalculation triggered here for either branch. A solo round is
     # permanently excluded from _gather_round_inputs, so recalculating
     # right after one finishes would just recompute the exact same
@@ -2317,7 +2338,28 @@ def reject_round_signoff(round_id: str, player_id: str) -> dict:
             {"signed_off_at": None}
         ).eq("round_id", round_id).eq("status", "accepted").execute()
 
-    return get_round(round_id, viewer_player_id=player_id)
+    updated_round = get_round(round_id, viewer_player_id=player_id)
+
+    # Best-effort, same convention as every other create_notification call
+    # site -- everyone else who'd already signed off needs to know their
+    # earlier approval no longer counts, since the scorecard they approved
+    # is about to change.
+    rejecter = next((p for p in updated_round["players"] if p["player_id"] == player_id), None)
+    rejecter_name = (rejecter or {}).get("nickname") or (rejecter or {}).get("first_name") or "A player"
+    for p in updated_round["players"]:
+        if p["player_id"] == player_id:
+            continue
+        try:
+            create_notification(
+                p["player_id"],
+                "play",
+                f"{rejecter_name} sent your round back for edits",
+                url="/play",
+            )
+        except Exception as exc:
+            print(f"[NOTIFY] Failed to notify {p['player_id']} of round {round_id} sign-off rejection: {exc}")
+
+    return updated_round
 
 
 def list_pending_signoff_rounds(player_id: str) -> list[dict]:

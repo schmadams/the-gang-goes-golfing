@@ -1,5 +1,7 @@
 # target path: backend/services/club_posts.py (full replacement)
 from backend.database import supabase
+from backend.services.club_players import list_players_in_club
+from backend.services.notifications import create_notification
 
 # club_posts.author_id has exactly one FK onto players (unlike
 # club_invites' two), so a plain unqualified embed is unambiguous --
@@ -58,7 +60,43 @@ def create_manual_post(club_id: str, author_id: str, body: str) -> dict:
         })
         .execute()
     )
-    return response.data[0]
+    post = response.data[0]
+
+    # Best-effort, same convention as every other create_notification call
+    # site -- a notification failing to write should never be able to
+    # block the post itself. Every other club member gets one, not just
+    # whoever happens to be looking at the feed right now -- same "notify
+    # everyone who'd want to know" idea as finish_round's sign-off
+    # notifications, just fanned out across a club roster instead of a
+    # round's own players.
+    try:
+        author_response = (
+            supabase.table("players").select("first_name, surname, nickname").eq("id", author_id).maybe_single().execute()
+        )
+        author = (author_response.data if author_response is not None else None) or {}
+        author_name = (
+            author.get("nickname")
+            or f"{author.get('first_name', '')} {author.get('surname', '')}".strip()
+            or "Someone"
+        )
+        club_response = supabase.table("clubs").select("slug, name").eq("id", club_id).maybe_single().execute()
+        club = (club_response.data if club_response is not None else None) or {}
+        club_slug = club.get("slug")
+
+        for member in list_players_in_club(club_id):
+            member_id = member.get("player_id")
+            if not member_id or member_id == author_id:
+                continue
+            create_notification(
+                member_id,
+                "home",
+                f"{author_name} posted in {club.get('name') or 'your club'}",
+                url=f"/clubs/{club_slug}" if club_slug else None,
+            )
+    except Exception as exc:
+        print(f"[NOTIFY] Failed to notify club {club_id} members of new post: {exc}")
+
+    return post
 
 
 def create_join_post(club_id: str, player_id: str) -> dict:

@@ -7,18 +7,18 @@
 
 .t3g-club-directory-table th {
     text-align: left;
-    color: #6b7280;
+    color: var(--t3g-muted);
     text-transform: uppercase;
     letter-spacing: 0.03em;
     font-size: 0.75rem;
     font-weight: 700;
     padding: 0.5rem 0.75rem;
-    border-bottom: 2px solid #e2e4ea;
+    border-bottom: 2px solid var(--t3g-border);
 }
 
 .t3g-club-directory-table td {
     padding: 0.5rem 0.75rem;
-    color: #1e2a47;
+    color: var(--t3g-ink);
 }
 
 /* The Add Friend column's header cell is intentionally blank (see
@@ -65,7 +65,7 @@
    but red, and only ever rendered for the club's admin. */
 .t3g-club-admin-banner {
     background: #dc2626;
-    border-radius: 0.5rem;
+    border-radius: var(--t3g-radius-md);
     margin-bottom: 1rem;
 }
 
@@ -96,17 +96,17 @@
     display: flex;
     flex-direction: column;
     gap: 0.3rem;
-    background: #f4f5f9;
-    border-radius: 10px;
+    background: var(--t3g-surface-raised);
+    border-radius: var(--t3g-radius-md);
     padding: 1rem 1.25rem;
-    color: #1e2a47 !important;
+    color: var(--t3g-ink) !important;
     text-decoration: none !important;
     transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
 .t3g-tournament-item:hover {
     transform: translateY(-3px);
-    box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
+    box-shadow: none;
 }
 
 .t3g-tournament-item-title-group {
@@ -124,7 +124,7 @@
 }
 
 .t3g-tournament-item-meta {
-    color: #6b7280;
+    color: var(--t3g-muted);
     font-size: 0.8rem;
     font-weight: 600;
 }
@@ -142,14 +142,14 @@
 
 .t3g-tournament-card-title {
     font-weight: 700;
-    color: #1e2a47;
+    color: var(--t3g-ink);
     font-size: 1.05rem;
 }
 
 .t3g-tournament-format-badge {
-    background: #eef0f7;
-    color: #1e2a47;
-    border-radius: 999px;
+    background: var(--t3g-surface-raised);
+    color: var(--t3g-ink);
+    border-radius: var(--t3g-radius-md);
     padding: 0.2rem 0.65rem;
     font-size: 0.7rem;
     font-weight: 700;
@@ -161,7 +161,7 @@
 .t3g-tournament-round-list {
     margin: 0;
     padding-left: 1.1rem;
-    color: #374151;
+    color: var(--t3g-muted);
     font-size: 0.9rem;
 }
 
@@ -176,8 +176,8 @@
    the last one in the modal body sits flush against the footer, so it
    skips the bottom margin. */
 .t3g-modal-section {
-    background: #f4f5f9;
-    border-radius: 12px;
+    background: var(--t3g-surface-raised);
+    border-radius: var(--t3g-radius-lg);
     padding: 1rem 1.1rem;
     margin-bottom: 1rem;
 }
@@ -236,9 +236,9 @@
     grid-template-columns: 70px 130px minmax(0, 1.4fr) minmax(0, 1fr) 108px auto;
     align-items: center;
     gap: 0.6rem;
-    background: #ffffff;
-    border: 1px solid #e2e4ea;
-    border-radius: 10px;
+    background: var(--t3g-surface);
+    border: 1px solid var(--t3g-border);
+    border-radius: var(--t3g-radius-md);
     padding: 0.65rem 0.9rem;
     margin-bottom: 0.6rem;
 }
@@ -249,7 +249,7 @@
 
 .t3g-tournament-round-number {
     font-weight: 800;
-    color: #1e2a47;
+    color: var(--t3g-ink);
     font-size: 0.82rem;
 }
 
@@ -294,7 +294,7 @@
     flex-direction: row;
     flex-wrap: wrap;
     gap: 0.4rem 1.75rem;
-    color: #374151;
+    color: var(--t3g-muted);
     font-size: 0.9rem;
 }
 
@@ -315,16 +315,16 @@
     width: 18px;
     height: 18px;
     margin: 0;
-    border: 2px solid #c21861;
-    border-radius: 4px;
-    background: #ffffff;
+    border: 2px solid var(--t3g-accent);
+    border-radius: var(--t3g-radius-md);
+    background: var(--t3g-surface);
     position: relative;
     cursor: pointer;
     flex-shrink: 0;
 }
 
 .t3g-tournament-entry-mode input[type="radio"]:checked {
-    background: #c21861;
+    background: var(--t3g-accent);
 }
 
 .t3g-tournament-entry-mode input[type="radio"]:checked::after {
@@ -386,8 +386,17 @@
    sized down and rounded to sit inside the page instead of spanning full
    width. */
 .t3g-tournament-subnav {
-    background: #1e2a47;
-    border-radius: 10px;
+    /* var(--t3g-bg) + a hairline border, same flat chrome treatment as
+       navbar.css/subnav.css/bottum_nav.css now -- was a permanently-dark
+       navy #1e2a47 slab (with white text and a green active-underline
+       left over from before "one accent color" applied to the rest of
+       the app), which read as a mismatched, separate UI language from
+       everything else once the rest of the app went flat/theme-aware.
+       This bar is reused as-is for the My Account tab strip too (see
+       pages/my_account.py), not just tournament pages. */
+    background: var(--t3g-bg);
+    border: 1px solid var(--t3g-border);
+    border-radius: var(--t3g-radius-md);
     margin-bottom: 1.25rem;
 }
 
@@ -409,11 +418,12 @@
     background: none;
     border: none;
     border-bottom: 2px solid transparent;
-    color: rgba(255, 255, 255, 0.65) !important;
-    font-weight: 700;
+    color: var(--t3g-muted) !important;
+    font-family: "Archivo Narrow", "Archivo", sans-serif;
+    font-weight: 500;
     text-transform: uppercase;
     font-size: 0.8rem;
-    letter-spacing: 0.03em;
+    letter-spacing: 0.065em;
     text-decoration: none !important;
     cursor: pointer;
     padding: 0.35rem 0.1rem;
@@ -421,24 +431,27 @@
 }
 
 .t3g-tournament-tab:hover {
-    color: #ffffff !important;
+    color: var(--t3g-ink) !important;
 }
 
 .t3g-tournament-tab--active {
-    color: #ffffff !important;
-    border-bottom-color: #8dc63f;
+    color: var(--t3g-ink) !important;
+    border-bottom-color: var(--t3g-accent);
 }
 
 .t3g-tournament-subnav-back {
-    color: rgba(255, 255, 255, 0.8) !important;
-    font-weight: 700;
-    font-size: 0.8rem;
+    color: var(--t3g-muted) !important;
+    font-family: "Archivo Narrow", "Archivo", sans-serif;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.065em;
+    font-size: 0.75rem;
     text-decoration: none !important;
     white-space: nowrap;
 }
 
 .t3g-tournament-subnav-back:hover {
-    color: #ffffff !important;
+    color: var(--t3g-ink) !important;
 }
 
 /* Below the phone-width breakpoint, "Tournament Info / Start Sheet /
@@ -483,10 +496,9 @@
 
     .t3g-tournament-subnav-back {
         text-align: center;
-        font-size: 0.72rem;
-        font-weight: 600;
-        color: rgba(255, 255, 255, 0.6) !important;
-        border-top: 1px solid rgba(255, 255, 255, 0.12);
+        font-size: 0.68rem;
+        color: var(--t3g-muted) !important;
+        border-top: 1px solid var(--t3g-border);
         padding-top: 0.4rem;
     }
 }
@@ -506,13 +518,13 @@
     align-items: center;
     justify-content: space-between;
     gap: 0.75rem;
-    background: #f4f5f9;
-    border-radius: 10px;
+    background: var(--t3g-surface-raised);
+    border-radius: var(--t3g-radius-md);
     padding: 0.65rem 0.9rem;
 }
 
 .t3g-friend-request-name {
-    color: #1e2a47;
+    color: var(--t3g-ink);
     font-weight: 600;
     font-size: 0.9rem;
 }
@@ -540,12 +552,12 @@
 }
 
 .t3g-teetime-time-input {
-    border: 1px solid #d7d9e3;
-    border-radius: 8px;
+    border: 1px solid var(--t3g-border);
+    border-radius: var(--t3g-radius-md);
     padding: 0.4rem 0.6rem;
     font-size: 0.85rem;
-    color: #1e2a47;
-    background: #ffffff;
+    color: var(--t3g-ink);
+    background: var(--t3g-surface);
 }
 
 /* Read-only tee time recap -- a compact table, not individual cards: one
@@ -560,9 +572,9 @@
 .t3g-teetime-group-list {
     display: flex;
     flex-direction: column;
-    background: #ffffff;
-    border: 1px solid #e2e4ea;
-    border-radius: 12px;
+    background: var(--t3g-surface);
+    border: 1px solid var(--t3g-border);
+    border-radius: var(--t3g-radius-lg);
     overflow: hidden;
     margin-top: 0.5rem;
 }
@@ -588,7 +600,7 @@
     align-items: center;
     gap: 0.5rem;
     padding: 0.55rem 1rem;
-    border-bottom: 1px solid #eef0f4;
+    border-bottom: 1px solid var(--t3g-border);
 }
 
 .t3g-teetime-recap-row:last-child {
@@ -596,11 +608,11 @@
 }
 
 .t3g-teetime-recap-row--header {
-    background: #f8f9fc;
+    background: var(--t3g-surface-raised);
 }
 
 .t3g-teetime-recap-row--header .t3g-teetime-recap-cell {
-    color: #6b7280;
+    color: var(--t3g-muted);
     text-transform: uppercase;
     letter-spacing: 0.03em;
     font-size: 0.68rem;
@@ -613,23 +625,23 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    color: #374151;
+    color: var(--t3g-muted);
     font-size: 0.85rem;
 }
 
 .t3g-teetime-recap-cell--time {
     flex: 0 0 5rem;
     font-weight: 800;
-    color: #c21861;
+    color: var(--t3g-accent);
 }
 
 .t3g-teetime-recap-row--header .t3g-teetime-recap-cell--time {
-    color: #6b7280;
+    color: var(--t3g-muted);
     font-weight: 700;
 }
 
 .t3g-teetime-recap-divider {
-    color: #c9ccd6;
+    color: var(--t3g-muted);
     flex-shrink: 0;
     font-size: 0.8rem;
 }
@@ -654,9 +666,9 @@
 
 .t3g-teetime-save-button {
     border: none;
-    border-radius: 8px;
-    background: #eef0f6;
-    color: #1e2a47;
+    border-radius: var(--t3g-radius-md);
+    background: var(--t3g-surface-raised);
+    color: var(--t3g-ink);
     font-size: 0.78rem;
     font-weight: 700;
     padding: 0.3rem 0.7rem;
@@ -665,7 +677,7 @@
 }
 
 .t3g-teetime-save-button:hover {
-    background: #e2e4ea;
+    background: var(--t3g-surface-raised);
 }
 
 /* Manual-grouping assignment table -- one row per tee time slot, one
@@ -691,9 +703,9 @@
     display: grid;
     align-items: center;
     gap: 0.6rem;
-    background: #ffffff;
-    border: 1px solid #e2e4ea;
-    border-radius: 10px;
+    background: var(--t3g-surface);
+    border: 1px solid var(--t3g-border);
+    border-radius: var(--t3g-radius-md);
     padding: 0.5rem 0.75rem;
 }
 
@@ -704,7 +716,7 @@
 }
 
 .t3g-teetime-assign-col-label {
-    color: #6b7280;
+    color: var(--t3g-muted);
     text-transform: uppercase;
     letter-spacing: 0.03em;
     font-size: 0.7rem;
@@ -721,7 +733,7 @@
    for those methods is just letting the admin nudge a slot's tee time, not
    reassign who's in it. */
 .t3g-teetime-assign-players-readonly {
-    color: #374151;
+    color: var(--t3g-muted);
     font-size: 0.85rem;
 }
 
@@ -735,24 +747,24 @@
     justify-content: space-between;
     flex-wrap: wrap;
     gap: 0.75rem;
-    background: #ffffff;
-    border: 1px solid #e2e4ea;
-    border-radius: 12px;
+    background: var(--t3g-surface);
+    border: 1px solid var(--t3g-border);
+    border-radius: var(--t3g-radius-lg);
     padding: 0.75rem 1.1rem;
 }
 
 .t3g-liveround-group-meta {
-    color: #374151;
+    color: var(--t3g-muted);
     font-size: 0.88rem;
 }
 
 .t3g-liveround-finished-badge {
-    color: #6b7280;
-    background: #f3f4f8;
+    color: var(--t3g-muted);
+    background: var(--t3g-surface-raised);
     font-size: 0.78rem;
     font-weight: 700;
     padding: 0.35rem 0.7rem;
-    border-radius: 999px;
+    border-radius: var(--t3g-radius-md);
     white-space: nowrap;
 }
 
@@ -763,12 +775,12 @@
 }
 
 .t3g-liveround-inprogress-badge {
-    color: #1a7f4b;
-    background: #e6f6ec;
+    color: var(--t3g-success-text);
+    background: var(--t3g-success-bg);
     font-size: 0.78rem;
     font-weight: 700;
     padding: 0.35rem 0.7rem;
-    border-radius: 999px;
+    border-radius: var(--t3g-radius-md);
     white-space: nowrap;
 }
 
@@ -915,8 +927,8 @@
 
 .t3g-leaderboard-format-tabs {
     display: flex;
-    background: #f4f5f9;
-    border-radius: 999px;
+    background: var(--t3g-surface-raised);
+    border-radius: var(--t3g-radius-md);
     padding: 0.3rem;
     gap: 0.2rem;
 }
@@ -934,8 +946,8 @@
 .t3g-leaderboard-format-tab {
     background: none;
     border: none;
-    border-radius: 999px;
-    color: #6b7280;
+    border-radius: var(--t3g-radius-md);
+    color: var(--t3g-muted);
     font-weight: 700;
     font-size: 0.82rem;
     padding: 0.5rem 1.1rem;
@@ -944,11 +956,11 @@
 }
 
 .t3g-leaderboard-format-tab:hover {
-    color: #1e2a47;
+    color: var(--t3g-ink);
 }
 
 .t3g-leaderboard-format-tab--active {
-    background: #1e2a47;
+    background: var(--t3g-accent);
     color: #ffffff !important;
 }
 
@@ -978,14 +990,14 @@
 
 .t3g-leaderboard-wrap {
     overflow-x: auto;
-    border: 1px solid #edeef2;
-    border-radius: 14px;
+    border: 1px solid var(--t3g-border);
+    border-radius: var(--t3g-radius-md);
 }
 
 .t3g-leaderboard-table {
     width: 100%;
     border-collapse: collapse;
-    background: #ffffff;
+    background: var(--t3g-surface);
     font-variant-numeric: tabular-nums;
 }
 
@@ -994,7 +1006,7 @@
     padding: 0.95rem 0.9rem;
     text-align: center;
     white-space: nowrap;
-    border-bottom: 1px solid #f0f1f5;
+    border-bottom: 1px solid var(--t3g-border);
     font-size: 0.9rem;
 }
 
@@ -1002,8 +1014,8 @@
    the only "graphic" flourish is that single accent line, not a filled
    gradient block. */
 .t3g-leaderboard-table thead tr:first-child th {
-    background: #ffffff;
-    color: #1e2a47;
+    background: var(--t3g-surface);
+    color: var(--t3g-ink);
     text-transform: uppercase;
     letter-spacing: 0.05em;
     font-size: 0.72rem;
@@ -1014,19 +1026,19 @@
 }
 
 .t3g-leaderboard-par-row th {
-    background: #fafbfc;
-    color: #9aa1ad;
+    background: var(--t3g-surface-raised);
+    color: var(--t3g-muted);
     font-size: 0.68rem;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.03em;
     padding-top: 0.4rem;
     padding-bottom: 0.4rem;
-    border-bottom: 1px solid #edeef2;
+    border-bottom: 1px solid var(--t3g-border);
 }
 
 .t3g-leaderboard-table tbody tr:nth-child(even) {
-    background: #fafbfd;
+    background: var(--t3g-surface-raised);
 }
 
 /* Clickable rows -- opens the player's scorecard for the round on
@@ -1038,21 +1050,21 @@
 }
 
 .t3g-leaderboard-row:hover {
-    background: #f4f8ec !important;
+    background: rgba(141, 198, 63, 0.08) !important;
     box-shadow: inset 3px 0 0 #8dc63f;
 }
 
 .t3g-leaderboard-row--leader {
-    background: #f4f8ec !important;
+    background: rgba(141, 198, 63, 0.08) !important;
 }
 
 .t3g-leaderboard-row--leader:hover {
-    background: #ebf4de !important;
+    background: rgba(141, 198, 63, 0.16) !important;
 }
 
 .t3g-leaderboard-pos {
     font-weight: 800;
-    color: #1e2a47;
+    color: var(--t3g-ink);
 }
 
 /* Round position badge -- flat filled circle, neutral light-grey by
@@ -1066,8 +1078,8 @@
     height: 2.1rem;
     padding: 0 0.45rem;
     border-radius: 999px;
-    background: #f0f1f5;
-    color: #4b5468;
+    background: var(--t3g-surface-raised);
+    color: var(--t3g-muted);
     font-weight: 800;
     font-size: 0.82rem;
 }
@@ -1078,13 +1090,13 @@
 }
 
 .t3g-leaderboard-pos-badge--second {
-    background: #dbe1ea;
-    color: #1e2a47;
+    background: var(--t3g-surface-raised);
+    color: var(--t3g-ink);
 }
 
 .t3g-leaderboard-pos-badge--third {
-    background: #e7ebf1;
-    color: #384258;
+    background: var(--t3g-surface-raised);
+    color: var(--t3g-muted);
 }
 
 /* Player cell -- small initials avatar + name, same "who is this" pattern
@@ -1099,7 +1111,7 @@
     gap: 0.65rem;
     font-weight: 700;
     font-size: 0.95rem;
-    color: #1e2a47;
+    color: var(--t3g-ink);
 }
 
 .t3g-leaderboard-avatar {
@@ -1143,33 +1155,33 @@
     display: inline-block;
     min-width: 2.4rem;
     padding: 0.3rem 0.7rem;
-    border-radius: 999px;
+    border-radius: var(--t3g-radius-md);
     font-weight: 800;
     font-size: 0.92rem;
 }
 
 .t3g-leaderboard-total-pill--under {
-    background: #fdecec;
-    color: #dc2626;
+    background: var(--t3g-danger-bg);
+    color: var(--t3g-danger-text);
 }
 
 .t3g-leaderboard-total-pill--even {
-    background: #f0f1f5;
-    color: #4b5468;
+    background: var(--t3g-surface-raised);
+    color: var(--t3g-muted);
 }
 
 .t3g-leaderboard-total-pill--over {
-    background: #eef1f6;
-    color: #1e2a47;
+    background: var(--t3g-surface-raised);
+    color: var(--t3g-ink);
 }
 
 .t3g-leaderboard-total-pill--points {
-    background: #eaf5db;
-    color: #4c7a1f;
+    background: var(--t3g-success-bg);
+    color: var(--t3g-success-text);
 }
 
 .t3g-leaderboard-prior-col {
-    color: #6b7280;
+    color: var(--t3g-muted);
     font-weight: 600;
 }
 
@@ -1180,20 +1192,20 @@
     display: inline-block;
     min-width: 1.6rem;
     padding: 0.15rem 0.5rem;
-    border-radius: 999px;
-    background: #f0f1f5;
-    color: #4b5468;
+    border-radius: var(--t3g-radius-md);
+    background: var(--t3g-surface-raised);
+    color: var(--t3g-muted);
     font-weight: 700;
     font-size: 0.78rem;
 }
 
 .t3g-leaderboard-thru-badge--finished {
-    background: #eaf5db;
-    color: #4c7a1f;
+    background: var(--t3g-success-bg);
+    color: var(--t3g-success-text);
 }
 
 .t3g-leaderboard-cell {
-    color: #1e2a47;
+    color: var(--t3g-ink);
     font-weight: 600;
 }
 
@@ -1203,7 +1215,7 @@
 }
 
 .t3g-leaderboard-cell-empty {
-    color: #d0d5dd;
+    color: var(--t3g-muted);
 }
 
 /* Thin accent rule between hole 9 and hole 10, same front-nine/back-nine
@@ -1212,7 +1224,7 @@
    scorecard table in live_round.css, just lighter/thinner to match this
    table's flatter overall weight. */
 .t3g-leaderboard-divider {
-    border-left: 2px solid #dbe1ea;
+    border-left: 2px solid var(--t3g-border);
 }
 
 /* Below the phone-width breakpoint, the full-size table (0.95rem/0.9rem
@@ -1339,14 +1351,14 @@
 .t3g-leaderboard-scorecard-label {
     text-align: left;
     font-weight: 800;
-    color: #1e2a47;
-    background: #fafbfd;
+    color: var(--t3g-ink);
+    background: var(--t3g-surface-raised);
 }
 
 .t3g-leaderboard-scorecard-score-row td {
     font-weight: 800;
     font-size: 0.95rem;
-    color: #1e2a47;
+    color: var(--t3g-ink);
 }
 
 .t3g-leaderboard-scorecard-summary {
@@ -1356,14 +1368,14 @@
     gap: 0.5rem;
     margin-top: 1rem;
     padding: 0.75rem 1rem;
-    background: #f4f5f9;
-    border-radius: 10px;
+    background: var(--t3g-surface-raised);
+    border-radius: var(--t3g-radius-md);
     font-weight: 700;
-    color: #1e2a47;
+    color: var(--t3g-ink);
 }
 
 .t3g-leaderboard-scorecard-total {
-    color: #4c7a1f;
+    color: var(--t3g-success-text);
     font-weight: 800;
 }
 /* No Return (NR) leaderboard styling -- a player flagged is_nr (see
@@ -1376,8 +1388,8 @@
    round.css) -- the same visual language for the same action, wherever
    it shows up. */
 .t3g-leaderboard-total-pill--nr {
-    background: #fdf3e0;
-    color: #b45309;
+    background: var(--t3g-warning-bg);
+    color: var(--t3g-warning-text);
 }
 
 /* Muted, not hidden -- an NR row is still real information (who dropped
@@ -1390,7 +1402,7 @@
 }
 
 .t3g-leaderboard-row--nr:hover {
-    background: #f7f7f9 !important;
+    background: var(--t3g-surface-raised) !important;
     box-shadow: inset 3px 0 0 #b45309;
 }
 
@@ -1399,7 +1411,7 @@
    else NR shows up, just inline in the Score row rather than a pill,
    since every other cell in that row is plain text too. */
 .t3g-leaderboard-scorecard-nr-cell {
-    color: #b45309;
+    color: var(--t3g-warning-text);
     font-weight: 800;
 }
 /* Club Feed tab -- post cards (join/tournament/scorecard/manual all
@@ -1416,9 +1428,9 @@
 }
 
 .t3g-feed-post {
-    background: #ffffff;
-    border: 1px solid #edeef2;
-    border-radius: 14px;
+    background: var(--t3g-surface);
+    border: 1px solid var(--t3g-border);
+    border-radius: var(--t3g-radius-md);
     padding: 1rem 1.1rem;
 }
 
@@ -1436,12 +1448,12 @@
 
 .t3g-feed-post-author {
     font-weight: 700;
-    color: #1e2a47;
+    color: var(--t3g-ink);
     font-size: 0.92rem;
 }
 
 .t3g-feed-post-timestamp {
-    color: #9aa0b0;
+    color: var(--t3g-muted);
     font-size: 0.75rem;
 }
 
@@ -1452,14 +1464,14 @@
     width: 2rem;
     height: 2rem;
     border-radius: 999px;
-    background: #eef3ea;
+    background: var(--t3g-surface-raised);
     font-size: 1.05rem;
     flex-shrink: 0;
 }
 
 .t3g-feed-post-body {
     margin: 0.65rem 0 0;
-    color: #1e2a47;
+    color: var(--t3g-ink);
     font-size: 0.92rem;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
@@ -1470,13 +1482,13 @@
     width: 100%;
     max-height: 420px;
     object-fit: cover;
-    border-radius: 10px;
+    border-radius: var(--t3g-radius-md);
     margin-top: 0.75rem;
 }
 
 .t3g-feed-scorecard {
     margin-top: 0.75rem;
-    border-top: 1px solid #edeef2;
+    border-top: 1px solid var(--t3g-border);
 }
 
 .t3g-feed-scorecard-row {
@@ -1484,7 +1496,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 0.45rem 0;
-    border-bottom: 1px solid #f4f5f9;
+    border-bottom: 1px solid var(--t3g-border);
     font-size: 0.88rem;
 }
 
@@ -1493,12 +1505,12 @@
 }
 
 .t3g-feed-scorecard-name {
-    color: #1e2a47;
+    color: var(--t3g-ink);
 }
 
 .t3g-feed-scorecard-score {
     font-weight: 700;
-    color: #1e2a47;
+    color: var(--t3g-ink);
 }
 
 .t3g-feed-composer-actions {

@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 
 from backend.database import supabase
 from backend.models.tournament import TeeTimeAssignmentRequest, TeeTimeGenerateRequest, TeeTimeUpdateRequest
+from backend.services.notifications import create_notification
 from backend.services.rounds import fetch_live_rounds_by_tee_time
 
 _TEE_TIME_INTERVAL_MINUTES = 8
@@ -161,6 +162,26 @@ def generate_tee_times(round_id: str, payload: TeeTimeGenerateRequest) -> list[d
             player_rows.append({"tee_time_id": tee_time_id, "player_id": entrant["player_id"]})
     if player_rows:
         supabase.table("tournament_tee_time_players").insert(player_rows).execute()
+
+    # Best-effort, same convention as every other create_notification call
+    # site. Only for the auto methods (random/handicap) -- "manual"
+    # generates empty slots with nobody assigned yet (see the branch
+    # above), so there's nothing real to tell anyone about until the
+    # admin actually places them via assign_tee_time_players, which
+    # doesn't get its own notification hook for that same reason (an
+    # admin filling slots in one at a time would otherwise fire one
+    # notification per click).
+    if grouping_method != "manual":
+        for entrant in entrants:
+            try:
+                create_notification(
+                    entrant["player_id"],
+                    "clubs",
+                    f"Tee times are up for {tournament.get('name') or 'your tournament'}",
+                    url=f"/clubs/{club.get('slug')}/tournaments/{tournament['id']}" if club.get("slug") else None,
+                )
+            except Exception as exc:
+                print(f"[NOTIFY] Failed to notify {entrant['player_id']} of published tee times for round={round_id}: {exc}")
 
     return fetch_tee_times_by_round([round_id]).get(round_id, [])
 

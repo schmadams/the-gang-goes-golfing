@@ -82,6 +82,11 @@ def _account_subnav(active):
                         href="/friends",
                         className=_ACCOUNT_TAB_ACTIVE if active == "friends" else _ACCOUNT_TAB_BASE,
                     ),
+                    dcc.Link(
+                        "Calendar",
+                        href="/calendar",
+                        className=_ACCOUNT_TAB_ACTIVE if active == "calendar" else _ACCOUNT_TAB_BASE,
+                    ),
                 ],
             ),
         ),

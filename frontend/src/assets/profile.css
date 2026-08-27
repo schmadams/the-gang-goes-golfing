@@ -10,10 +10,11 @@
     display: flex;
     align-items: center;
     gap: 1.5rem;
-    background: #ffffff;
-    border-radius: 16px;
-    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
-    padding: 1.5rem 2rem;
+    background: var(--t3g-surface);
+    border: 1px solid var(--t3g-border);
+    border-radius: var(--t3g-radius-lg, 20px);
+    box-shadow: var(--t3g-shadow-card, 0 12px 30px rgba(0, 0, 0, 0.25));
+    padding: 1.75rem 2rem;
     margin-bottom: 2rem;
 }
 
@@ -47,18 +48,18 @@
 
 .t3g-player-profile-name {
     margin: 0 0 0.2rem;
-    color: #1e2a47;
+    color: var(--t3g-ink);
     font-weight: 800;
 }
 
 .t3g-player-profile-fullname {
-    color: #6b7280;
+    color: var(--t3g-muted);
     font-size: 0.9rem;
     font-weight: 600;
 }
 
 .t3g-player-profile-meta-line {
-    color: #374151;
+    color: var(--t3g-muted);
     font-size: 0.9rem;
     margin-top: 0.3rem;
 }
@@ -69,7 +70,7 @@
    title just pushes it to the header's right edge for free, no extra
    layout rule needed here. */
 .t3g-round-card-subtitle {
-    color: #6b7280;
+    color: var(--t3g-muted);
     font-size: 0.8rem;
     font-weight: 600;
 }
@@ -125,9 +126,9 @@
     width: 32px;
     height: 32px;
     border-radius: 50%;
-    border: 1px solid #dbe1ea;
-    background: #ffffff;
-    color: #1e2a47;
+    border: 1px solid var(--t3g-border);
+    background: var(--t3g-surface);
+    color: var(--t3g-ink);
     font-size: 1.2rem;
     font-weight: 700;
     line-height: 1;
@@ -136,7 +137,7 @@
 }
 
 .t3g-analysis-pagination-button:hover {
-    background: #f4f5f9;
+    background: var(--t3g-surface-raised);
 }
 
 .t3g-analysis-pagination-button:active {
@@ -146,7 +147,7 @@
 .t3g-analysis-pagination-label {
     min-width: 64px;
     text-align: center;
-    color: #6b7280;
+    color: var(--t3g-muted);
     font-size: 0.82rem;
     font-weight: 700;
 }

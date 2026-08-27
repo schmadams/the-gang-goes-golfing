@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 from backend.database import supabase
 from backend.services.club_players import list_clubs_for_player, list_players_in_club
+from backend.services.notifications import create_notification
 
 # PostgREST embed hints for the two FKs friend_requests has onto players --
 # without the "!constraint_name" hint, a select("*, players(...)") would be
@@ -86,6 +87,26 @@ def send_friend_request(requester_id: str, recipient_id: str) -> dict:
         .insert({"requester_id": requester_id, "recipient_id": recipient_id})
         .execute()
     )
+
+    # Best-effort, same "never let a notification failing block the real
+    # action" convention as every other create_notification call site --
+    # the request itself is already inserted above by this point.
+    try:
+        requester = _get_player(requester_id)
+        requester_name = (
+            (requester or {}).get("nickname")
+            or f"{(requester or {}).get('first_name', '')} {(requester or {}).get('surname', '')}".strip()
+            or "Someone"
+        )
+        create_notification(
+            recipient_id,
+            "friends",
+            f"{requester_name} sent you a friend request",
+            url="/friends",
+        )
+    except Exception as exc:
+        print(f"[NOTIFY] Failed to notify {recipient_id} of friend request from {requester_id}: {exc}")
+
     # Attaches the recipient's name to the response -- requests are now
     # sent by typing a Player ID rather than picking a name off a list, so
     # without this the confirmation modal that follows would have no name

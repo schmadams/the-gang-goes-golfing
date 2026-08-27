@@ -1,6 +1,6 @@
 # target path: frontend/src/layouts/navbar.py (full replacement)
 import requests
-from dash import Input, Output, callback, dcc, html
+from dash import Input, Output, State, callback, clientside_callback, dcc, html
 from flask import session
 
 from config import API_BASE_URL
@@ -89,6 +89,22 @@ def build_navbar():
                         # refresh_round_signoff_indicator below) rather than
                         # each polling on its own.
                         dcc.Interval(id="live-round-poll", interval=10_000, n_intervals=0),
+                        # Reads/writes the shared theme-store defined in
+                        # app.py's serve_layout (present on every page,
+                        # not just ones with a navbar, so signin.py can
+                        # use the same store later if it ever gets its
+                        # own toggle). Icon and title flip in
+                        # sync_theme_toggle_icon below, actual theme
+                        # switching happens in a clientside callback
+                        # since it needs direct DOM access
+                        # (document.documentElement), not something a
+                        # normal Python callback can do.
+                        html.Button(
+                            html.I(id="theme-toggle-icon", className="fa-solid fa-moon"),
+                            id="theme-toggle-button",
+                            className="t3g-theme-toggle",
+                            title="Switch to light theme",
+                        ),
                         html.Button(
                             "Sign out",
                             id="signout-button",
@@ -185,3 +201,42 @@ def handle_signout(n_clicks):
     # letting Dash merge in whatever "search" was last set to.
     session.clear()
     return "/signin"
+
+
+@callback(
+    Output("theme-store", "data"),
+    Input("theme-toggle-button", "n_clicks"),
+    State("theme-store", "data"),
+    prevent_initial_call=True,
+)
+def toggle_theme(n_clicks, current_theme):
+    # A plain flip, dark is treated as the fallback for anything that
+    # isn't exactly "light" (an unset/None store value, for instance),
+    # matching theme-store's own default in app.py's serve_layout and
+    # index_string's default.
+    return "light" if current_theme == "dark" else "dark"
+
+
+# Clientside (not a normal Python callback) since applying a theme means
+# setting an attribute on document.documentElement, actual DOM access
+# that only exists in the browser, a Python callback has no reach into
+# the page the way a JS one running in the client does. Fires once on
+# page load too (no prevent_initial_call), which is what keeps the
+# button's own icon/title correctly matched to whichever theme
+# index_string's inline script already applied before Dash mounted,
+# rather than always assuming dark on first render.
+clientside_callback(
+    """
+    function(theme) {
+        var resolved = theme === "light" ? "light" : "dark";
+        document.documentElement.setAttribute("data-theme", resolved);
+        if (resolved === "dark") {
+            return ["fa-solid fa-moon", "Switch to light theme"];
+        }
+        return ["fa-solid fa-sun", "Switch to dark theme"];
+    }
+    """,
+    Output("theme-toggle-icon", "className"),
+    Output("theme-toggle-button", "title"),
+    Input("theme-store", "data"),
+)

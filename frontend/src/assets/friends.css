@@ -11,13 +11,13 @@
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
-    background: #f4f5f9;
+    background: var(--t3g-surface-raised);
     border-radius: 10px;
     padding: 0.85rem 1.1rem;
 }
 
 .t3g-friend-request-name {
-    color: #1e2a47;
+    color: var(--t3g-ink);
     font-weight: 700;
 }
 
@@ -36,7 +36,7 @@
    small-caps-adjacent treatment as .t3g-friend-request-pending below,
    just not uppercase (a club's real name, not a status label). */
 .t3g-friend-request-subtitle {
-    color: #6b7280;
+    color: var(--t3g-muted);
     font-weight: 600;
     font-size: 0.78rem;
 }
@@ -47,7 +47,7 @@
 }
 
 .t3g-friend-request-pending {
-    color: #6b7280;
+    color: var(--t3g-muted);
     font-weight: 600;
     font-size: 0.8rem;
     text-transform: uppercase;
@@ -55,7 +55,7 @@
 }
 
 .t3g-friend-subheading {
-    color: #6b7280;
+    color: var(--t3g-muted);
     text-transform: uppercase;
     letter-spacing: 0.03em;
     font-size: 0.75rem;

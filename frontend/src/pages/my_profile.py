@@ -37,8 +37,8 @@ from layouts.panel_navbar import build_panel_navbar
 
 dash.register_page(__name__, path="/my-account/profile", name="My Profile")
 
-# Tournament-style pill subnav shared with my_account.py/friends.py --
-# each of the three keeps its own copy rather than cross-importing (same
+# Tournament-style pill subnav shared with my_account.py/friends.py/
+# calendar.py -- each keeps its own copy rather than cross-importing (same
 # convention noted above), so this needs its own _ACCOUNT_TAB_BASE/
 # _ACCOUNT_TAB_ACTIVE + _account_subnav rather than reusing my_account.py's.
 _ACCOUNT_TAB_BASE = "t3g-tournament-tab"
@@ -67,6 +67,11 @@ def _account_subnav(active):
                         "Friends",
                         href="/friends",
                         className=_ACCOUNT_TAB_ACTIVE if active == "friends" else _ACCOUNT_TAB_BASE,
+                    ),
+                    dcc.Link(
+                        "Calendar",
+                        href="/calendar",
+                        className=_ACCOUNT_TAB_ACTIVE if active == "calendar" else _ACCOUNT_TAB_BASE,
                     ),
                 ],
             ),

@@ -49,18 +49,18 @@
 }
 
 .t3g-play-scheduled-club {
-    color: #1e2a47;
+    color: var(--t3g-ink);
     font-weight: 700;
     font-size: 0.85rem;
 }
 
 .t3g-play-scheduled-meta {
-    color: #6b7280;
+    color: var(--t3g-muted);
     font-size: 0.8rem;
 }
 
 .t3g-play-scheduled-players {
-    color: #374151;
+    color: var(--t3g-muted);
     font-size: 0.8rem;
     margin-top: 0.2rem;
 }

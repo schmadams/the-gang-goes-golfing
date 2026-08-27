@@ -35,6 +35,58 @@ app = dash.Dash(
 server = app.server  # exposed so gunicorn/wsgi can target `app:server` in prod
 server.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")  # required for Flask sessions
 
+# Applies a saved light/dark preference (see layouts/navbar.py's theme
+# toggle button and assets/theme.css's two token blocks) before Dash's
+# own JS bundle even starts, by setting the data-theme attribute
+# straight from localStorage in a small inline script that runs as the
+# very first thing in <head>. Doing this in serve_layout() or a Dash
+# callback instead would only set the attribute after the page had
+# already painted once with whichever theme the CSS defaults to, which
+# shows up as a visible flash between the wrong theme and the right one
+# on every hard load. Defaults to dark for a first-time visitor with no
+# saved preference yet, matching this app's own default.
+app.index_string = """<!DOCTYPE html>
+<html>
+    <head>
+        <script>
+            (function () {
+                var theme = "dark";
+                try {
+                    // Reads the exact same localStorage slot the
+                    // theme-store dcc.Store (storage_type="local", see
+                    // serve_layout below) persists to, dash-core-
+                    // components writes a dcc.Store's value to
+                    // localStorage under a key equal to the component's
+                    // own id, JSON-encoded, so this has to stay in sync
+                    // with that id string and encoding rather than
+                    // inventing a separate key of its own.
+                    var raw = window.localStorage.getItem("theme-store");
+                    var saved = raw ? JSON.parse(raw) : null;
+                    if (saved === "light" || saved === "dark") {
+                        theme = saved;
+                    }
+                } catch (err) {
+                    // localStorage can throw in some privacy modes, or raw
+                    // could be malformed JSON, dark stays as the default.
+                }
+                document.documentElement.setAttribute("data-theme", theme);
+            })();
+        </script>
+        {%metas%}
+        <title>{%title%}</title>
+        {%favicon%}
+        {%css%}
+    </head>
+    <body>
+        {%app_entry%}
+        <footer>
+            {%config%}
+            {%scripts%}
+            {%renderer%}
+        </footer>
+    </body>
+</html>"""
+
 # Dash Pages matches a URL against every registered path_template in
 # page_registry order and returns the FIRST match -- it does not prefer the
 # most specific one. Its matching also isn't slash-aware: <var> compiles to
@@ -67,7 +119,18 @@ def serve_layout():
     # A function (not a static value) so this re-evaluates on every fresh
     # page load and picks up the current session — otherwise the navbar
     # wouldn't know whether you're logged in.
-    children = []
+    children = [
+        # storage_type="local" persists the choice across tabs and
+        # browser restarts, not just this one session, the same way a
+        # user would expect a light/dark preference to stick. Present on
+        # every page (not just gated behind login like the navbar below)
+        # so the toggle also works from signin.py. The initial value
+        # here is only what a fresh browser with no saved preference
+        # yet sees; app.py's index_string script above is what actually
+        # avoids a flash of the wrong theme on load, this Store exists
+        # so navbar.py's toggle callback has something to read and write.
+        dcc.Store(id="theme-store", storage_type="local", data="dark"),
+    ]
 
     if session.get("logged_in"):
         children.append(build_navbar())
@@ -157,10 +220,7 @@ def serve_layout():
         # breakpoint -- desktop never sees it.
         children.append(build_bottom_nav())
 
-    return html.Div(
-        children,
-        style={"background": "#261C67", "minHeight": "100vh", "width": "100%"},
-    )
+    return html.Div(children, className="t3g-app-shell")
 
 
 app.layout = serve_layout

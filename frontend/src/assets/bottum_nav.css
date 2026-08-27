@@ -79,5 +79,5 @@
    which tab is active here too, on the icon only -- keeps the label
    legible in white against the dark bar rather than tinting both. */
 .t3g-bottom-nav-item--active .t3g-bottom-nav-icon {
-    color: #c21861;
+    color: var(--t3g-accent);
 }

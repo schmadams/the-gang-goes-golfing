@@ -197,6 +197,25 @@ def get_course(course_id: str) -> dict | None:
         )
     tees = tees_response.data or []
 
+    # Defensive de-dup by name -- a handful of courses ended up with the
+    # same tee (e.g. two "White tees" entries) inserted twice, either
+    # because the external API's own tee_sets list had a duplicate, or an
+    # earlier import ran its insert loop again for a course that already
+    # had tees cached. Keeping the first occurrence rather than crashing
+    # or just showing the duplicate means already-affected courses
+    # self-heal here instead of needing a manual DB cleanup, and this is
+    # the one place every course-detail read (dropdown, scorecard, etc.)
+    # goes through.
+    seen_tee_names = set()
+    deduped_tees = []
+    for tee in tees:
+        name_key = (tee.get("name") or "").strip().lower()
+        if name_key and name_key in seen_tee_names:
+            continue
+        seen_tee_names.add(name_key)
+        deduped_tees.append(tee)
+    tees = deduped_tees
+
     for tee in tees:
         with _timed(f"get_course({course_id}): fetch holes for tee {tee['id']}", "database"):
             holes_response = (
@@ -283,11 +302,38 @@ def _fetch_and_store_course_detail(course_row: dict, course_id: str) -> dict:
         "year_opened": course_detail.get("year_opened"),
     })
 
+    with _timed(f"fetch existing tee names for course {course_row['id']}", "database"):
+        existing_tee_names = {
+            (row.get("name") or "").strip().lower()
+            for row in (
+                supabase
+                .table("course_tees")
+                .select("name")
+                .eq("course_id", course_row["id"])
+                .execute()
+                .data
+                or []
+            )
+        }
+
     for tee_set in course_detail.get("tee_sets", []):
         # "name" is always null on this API -- the tee is actually
         # identified by "colour" (e.g. "black", "red"). Title-case it so it
         # reads naturally wherever we display tee.name (e.g. "Black tees").
         tee_name = tee_set.get("name") or (tee_set.get("colour") or "Unknown").title()
+
+        # Guards against inserting the same tee twice -- e.g. this
+        # function getting called again for a course that already has its
+        # tees cached (a retried request, or a course_detail response that
+        # happened to list the same tee_set more than once), which is how
+        # a handful of courses ended up with duplicate tees in the
+        # dropdown (get_course() also de-dupes defensively on read, but
+        # not inserting the duplicate row in the first place is the real
+        # fix).
+        name_key = tee_name.strip().lower()
+        if name_key in existing_tee_names:
+            continue
+        existing_tee_names.add(name_key)
 
         with _timed(f"insert course_tees row ({tee_name})", "database"):
             tee_row = (
@@ -343,28 +389,63 @@ def import_course(details: dict) -> dict | None:
     directly on the bare object -- no wrapper, no separate scorecard call
     needed.
 
-    NOTE: if a club has multiple named courses (e.g. Wentworth's West/East),
-    this currently just imports the first one listed. Picking a specific
-    course is a future improvement, not needed yet.
+    A club can have more than one named course (e.g. two separate 18-hole
+    layouts sharing one clubhouse) -- this used to just import
+    club_courses[0] and stop there, which meant any additional course
+    never got a row in the DB at all and could never show up in the Start
+    New Round course list, for the lifetime of the app, since nothing else
+    ever revisits a club once it has at least one cached course. Every
+    course this club has now gets its own row the first time ANY course
+    from this club is imported (see the loop below) -- for zero extra
+    external API requests, since the full course id/name list is already
+    sitting in the one /clubs response this was going to fetch anyway.
+    Only the course actually being asked for gets its full tees/holes
+    fetched right now; the others stay name-only until a player picks one,
+    same lazy on-demand pattern this function already used for the
+    single-course case.
     """
     external_club_id = details["external_club_id"]
+    external_course_id = details.get("external_course_id")
 
-    with _timed(f"select courses row by external_club_id={external_club_id}", "database"):
+    with _timed(f"select courses rows by external_club_id={external_club_id}", "database"):
         existing = (
             supabase
             .table("courses")
             .select("*")
             .eq("external_club_id", external_club_id)
-            .maybe_single()
             .execute()
         )
-    existing_row = existing.data if existing is not None else None
+    existing_rows = existing.data or []
+
+    # A specific course was asked for (its row already exists, even if
+    # that row has no scorecard cached yet) -- go straight to THAT
+    # course's own detail fetch. Without this, any course other than
+    # whichever one happened to get imported first was unreachable: the
+    # old code below always fell back to "the club's first course"
+    # regardless of which row's course_id actually triggered the call.
+    if external_course_id:
+        matching_row = next(
+            (row for row in existing_rows if row.get("external_course_id") == external_course_id),
+            None,
+        )
+        if matching_row:
+            cached = get_course(matching_row["id"])
+            if cached and cached.get("tees"):
+                return cached
+            return _fetch_and_store_course_detail(matching_row, external_course_id)
+
+    # No specific course known yet -- either the very first time anyone's
+    # asked about this club, or the caller only has club-level details.
+    # existing_rows[0] (if any) is the club-level placeholder the regions
+    # crawl left behind, which this flow upgrades in place into a real
+    # course row below.
+    existing_row = existing_rows[0] if existing_rows else None
 
     if existing_row and existing_row.get("external_course_id"):
         cached = get_course(existing_row["id"])
         if cached and cached.get("tees"):
             return cached
-        # We already know which course this club maps to (saved from a
+        # We already know which course this row maps to (saved from a
         # previous attempt) -- go straight to course detail instead of
         # re-spending a request on /clubs to re-derive the same course id.
         return _fetch_and_store_course_detail(existing_row, existing_row["external_course_id"])
@@ -400,18 +481,37 @@ def import_course(details: dict) -> dict | None:
             f"Parsed: {club} | Raw: {club_response.text[:500]}",
         )
 
-    course_id = club_courses[0]["id"]
-    course_name = club_courses[0].get("name")
+    # Give every course a row -- not just club_courses[0]. If a specific
+    # course_id was requested, import that one's full detail; otherwise
+    # default to the first (unchanged behaviour for the plain single-
+    # course case).
+    target_course_id = external_course_id or club_courses[0]["id"]
+    primary_row = existing_row
 
-    # Save the course id/name before spending the next request on full
-    # detail -- if that call fails, a retry will skip straight to fetching
-    # detail (one request) instead of re-calling /clubs (two requests).
-    existing_row = _upsert_course_row(existing_row, {
-        "external_course_id": course_id,
-        "course_name": course_name,
-    })
+    for club_course in club_courses:
+        course_id = club_course["id"]
+        course_name = club_course.get("name")
 
-    return _fetch_and_store_course_detail(existing_row, course_id)
+        if course_id == target_course_id:
+            primary_row = _upsert_course_row(existing_row, {
+                "external_course_id": course_id,
+                "course_name": course_name,
+            })
+            continue
+
+        if any(row.get("external_course_id") == course_id for row in existing_rows):
+            continue  # already has its own row from a previous run
+
+        _upsert_course_row(None, {
+            "external_club_id": external_club_id,
+            "club_name": existing_row.get("club_name"),
+            "county": existing_row.get("county"),
+            "postcode": existing_row.get("postcode"),
+            "external_course_id": course_id,
+            "course_name": course_name,
+        })
+
+    return _fetch_and_store_course_detail(primary_row, target_course_id)
 
 
 def ensure_scorecard(course_id: str) -> dict | None:
@@ -436,6 +536,11 @@ def ensure_scorecard(course_id: str) -> dict | None:
 
     return import_course({
         "external_club_id": course_row["external_club_id"],
+        # Passed through so import_course fetches THIS row's course
+        # specifically -- without it, a club with more than one course
+        # always resolved back to whichever course happened to be
+        # imported first (see import_course's own docstring).
+        "external_course_id": course_row.get("external_course_id"),
         "club_name": course_row["club_name"],
         "county": course_row.get("county"),
         "postcode": course_row.get("postcode"),

@@ -13,13 +13,13 @@
 }
 
 .t3g-history-detail-row td {
-    color: #6b7280;
+    color: var(--t3g-muted);
     font-size: 0.74rem;
-    border-top: 1px solid #f0f1f5;
+    border-top: 1px solid var(--t3g-border);
 }
 
 .t3g-history-detail-row .t3g-history-row-label {
-    color: #1e2a47;
+    color: var(--t3g-ink);
     font-weight: 700;
 }
 
@@ -29,18 +29,18 @@
 }
 
 .t3g-history-fairway-no {
-    color: #c21861;
+    color: var(--t3g-accent);
     font-weight: 800;
 }
 
 .t3g-history-fairway-na {
-    color: #c7cad1;
+    color: var(--t3g-muted);
 }
 
 .t3g-history-delete-button {
     background: transparent;
-    border: 1px solid #c21861;
-    color: #c21861;
+    border: 1px solid var(--t3g-accent);
+    color: var(--t3g-accent);
     font-weight: 700;
     font-size: 0.7rem;
     text-transform: uppercase;

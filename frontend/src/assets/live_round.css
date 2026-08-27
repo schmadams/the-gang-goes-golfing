@@ -10,7 +10,7 @@
 }
 
 .t3g-player-scorecard + .t3g-player-scorecard {
-    border-top: 1px solid #e2e4ea;
+    border-top: 1px solid var(--t3g-border);
     padding-top: 2rem;
 }
 
@@ -57,7 +57,7 @@
 }
 
 .t3g-player-scorecard-name {
-    color: #1e2a47;
+    color: var(--t3g-ink);
     font-weight: 800;
     font-size: 1rem;
     margin-bottom: 0.5rem;
@@ -70,19 +70,19 @@
 
 .t3g-scorecard-table th {
     text-align: left;
-    color: #6b7280;
+    color: var(--t3g-muted);
     text-transform: uppercase;
     letter-spacing: 0.03em;
     font-size: 0.75rem;
     font-weight: 700;
     padding: 0.5rem 0.75rem;
-    border-bottom: 2px solid #e2e4ea;
+    border-bottom: 2px solid var(--t3g-border);
 }
 
 .t3g-scorecard-table td {
     padding: 0.4rem 0.75rem;
-    border-bottom: 1px solid #e2e4ea;
-    color: #1e2a47;
+    border-bottom: 1px solid var(--t3g-border);
+    color: var(--t3g-ink);
 }
 
 .t3g-hole-number {
@@ -97,7 +97,7 @@
    "everyone's score for it". */
 .t3g-scorecard-table--multi th:nth-child(5),
 .t3g-scorecard-table--multi td:nth-child(5) {
-    border-left: 2px solid #e2e4ea;
+    border-left: 2px solid var(--t3g-border);
 }
 
 /* Specificity note: the general ".t3g-scorecard-table th" rule above
@@ -131,23 +131,23 @@
    paper scorecard, to visually break up the front 9 / back 9 / grand
    total. */
 .t3g-scorecard-summary-row {
-    background: #f4f5f9;
+    background: var(--t3g-surface-raised);
     font-weight: 800;
 }
 
 .t3g-scorecard-summary-row td {
-    border-top: 2px solid #1e2a47;
-    border-bottom: 2px solid #1e2a47;
+    border-top: 2px solid var(--t3g-border-strong);
+    border-bottom: 2px solid var(--t3g-border-strong);
 }
 
 .t3g-manual-input {
     width: 60px;
     padding: 0.35rem 0.5rem;
-    border: 1px solid #f0c987;
+    border: 1px solid var(--t3g-warning-text);
     border-radius: 6px;
     font-weight: 700;
     text-align: center;
-    background: #fff7ed;
+    background: var(--t3g-warning-bg);
 }
 
 /* The "Enter Score" button that replaces a plain score input -- clicking
@@ -161,12 +161,12 @@
        text-align:center actually center this button horizontally. */
     display: inline-block;
     padding: 0.5rem 0.9rem;
-    border: 1px solid #ced4da;
+    border: 1px solid var(--t3g-border);
     border-radius: 6px;
-    background: #f4f5f9;
+    background: var(--t3g-surface-raised);
     font-weight: 700;
     text-align: center;
-    color: #1e2a47;
+    color: var(--t3g-ink);
     cursor: pointer;
     transition: transform 0.1s ease, box-shadow 0.15s ease;
 }
@@ -209,18 +209,18 @@
 .t3g-score-eagle {
     border-radius: 50%;
     border: 2px solid #2a9d3f;
-    box-shadow: 0 0 0 3px #ffffff, 0 0 0 5px #2a9d3f;
+    box-shadow: 0 0 0 3px var(--t3g-surface), 0 0 0 5px #2a9d3f;
 }
 
 .t3g-score-bogey {
     border-radius: 0;
-    border: 2px solid #c21861;
+    border: 2px solid var(--t3g-accent);
 }
 
 .t3g-score-double-bogey {
     border-radius: 0;
-    border: 2px solid #c21861;
-    box-shadow: 0 0 0 3px #ffffff, 0 0 0 5px #c21861;
+    border: 2px solid var(--t3g-accent);
+    box-shadow: 0 0 0 3px var(--t3g-surface), 0 0 0 5px var(--t3g-accent);
 }
 
 /* Enter Score modal */
@@ -237,7 +237,7 @@
 
 .t3g-score-modal .modal-title {
     font-weight: 800;
-    color: #1e2a47;
+    color: var(--t3g-ink);
 }
 
 .t3g-modal-label {
@@ -247,7 +247,7 @@
     font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.03em;
-    color: #6b7280;
+    color: var(--t3g-muted);
     margin-bottom: 0.35rem;
 }
 
@@ -276,7 +276,7 @@
     text-transform: uppercase;
     letter-spacing: 0.03em;
     font-size: 0.8rem;
-    color: #6b7280;
+    color: var(--t3g-muted);
     margin-bottom: 0.75rem;
 }
 
@@ -285,7 +285,7 @@
     flex-direction: column;
     align-items: center;
     gap: 0.5rem;
-    background: #eef0f8;
+    background: var(--t3g-surface-raised);
     border-radius: 999px;
     padding: 0.75rem 0.5rem;
     width: 84px;
@@ -296,8 +296,8 @@
     height: 48px;
     border-radius: 50%;
     border: none;
-    background: #ffffff;
-    color: #1e2a47;
+    background: var(--t3g-surface);
+    color: var(--t3g-ink);
     font-size: 1.4rem;
     font-weight: 800;
     line-height: 1;
@@ -320,7 +320,7 @@
 .t3g-stepper-value {
     font-size: 2.1rem;
     font-weight: 800;
-    color: #1e2a47;
+    color: var(--t3g-ink);
     min-height: 2.6rem;
     display: flex;
     align-items: center;
@@ -344,12 +344,12 @@
 }
 
 .t3g-result-par {
-    color: #6b7280;
+    color: var(--t3g-muted);
 }
 
 .t3g-result-bogey,
 .t3g-result-double-bogey {
-    color: #c21861;
+    color: var(--t3g-accent);
 }
 
 /* Fairway Hit -- label sits inline to the left of the toggle instead of
@@ -381,8 +381,8 @@
     display: inline-block;
     padding: 0.5rem 1.5rem;
     border-radius: 999px;
-    background: #f4f5f9;
-    border: 1px solid #ced4da;
+    background: var(--t3g-surface-raised);
+    border: 1px solid var(--t3g-border);
     font-weight: 700;
     cursor: pointer;
     transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
@@ -407,8 +407,8 @@
 
 .t3g-scorecard-view-toggle-button {
     background: transparent;
-    border: 1px solid #e2e4ea;
-    color: #6b7280;
+    border: 1px solid var(--t3g-border);
+    color: var(--t3g-muted);
     font-weight: 700;
     font-size: 0.75rem;
     text-transform: uppercase;
@@ -420,8 +420,8 @@
 }
 
 .t3g-scorecard-view-toggle-button--active {
-    background: #c21861;
-    border-color: #c21861;
+    background: var(--t3g-accent);
+    border-color: var(--t3g-accent);
     color: #ffffff;
 }
 
@@ -447,9 +447,9 @@
     width: 40px;
     height: 40px;
     border-radius: 50%;
-    border: 1px solid #e2e4ea;
-    background: #f4f5f9;
-    color: #1e2a47;
+    border: 1px solid var(--t3g-border);
+    background: var(--t3g-surface-raised);
+    color: var(--t3g-ink);
     font-size: 1.3rem;
     font-weight: 800;
     line-height: 1;
@@ -458,7 +458,7 @@
 }
 
 .t3g-holeview-nav-button:hover {
-    background: #eef0f8;
+    background: var(--t3g-surface-raised);
 }
 
 .t3g-holeview-nav-button:active {
@@ -471,13 +471,13 @@
 }
 
 .t3g-holeview-hole-title {
-    color: #1e2a47;
+    color: var(--t3g-ink);
     font-weight: 800;
     font-size: 1.3rem;
 }
 
 .t3g-holeview-hole-meta {
-    color: #6b7280;
+    color: var(--t3g-muted);
     font-weight: 700;
     font-size: 0.78rem;
     text-transform: uppercase;
@@ -495,7 +495,7 @@
     align-items: center;
     gap: 0.75rem;
     padding: 0.85rem 0.25rem;
-    border-bottom: 1px solid #f0f1f5;
+    border-bottom: 1px solid var(--t3g-border);
 }
 
 .t3g-holeview-player-row:last-child {
@@ -523,7 +523,7 @@
 }
 
 .t3g-holeview-player-name {
-    color: #1e2a47;
+    color: var(--t3g-ink);
     font-weight: 700;
     font-size: 0.95rem;
     overflow: hidden;
@@ -532,7 +532,7 @@
 }
 
 .t3g-holeview-player-total {
-    color: #6b7280;
+    color: var(--t3g-muted);
     font-weight: 700;
     font-size: 0.78rem;
     margin-top: 0.1rem;

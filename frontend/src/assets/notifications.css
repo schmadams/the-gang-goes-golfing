@@ -1,0 +1,76 @@
+/* target path: frontend/src/assets/notifications.css (new file)
+   Backs pages/notifications.py -- the page behind the navbar bell. Reuses
+   .t3g-page/.t3g-empty-state from home.css (see that file's own
+   docstring), same as every other page in this app -- everything below is
+   specific to this page's own list/row/heading. */
+
+.t3g-notifications-heading {
+    color: #ffffff;
+    font-weight: 800;
+    margin-bottom: 1.25rem;
+}
+
+.t3g-notification-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+}
+
+.t3g-notification-row {
+    display: block;
+    background: #ffffff;
+    border-radius: 12px;
+    padding: 0.9rem 1.1rem;
+    text-decoration: none !important;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+    transition: transform 0.1s ease;
+}
+
+/* A row that has no url (rare -- only if a notification's own
+   create_notification call passed url=None, e.g. a club with no slug
+   yet) renders as a plain html.Div instead of a dcc.Link -- see
+   _notification_row in pages/notifications.py. Not clickable, so no
+   hover/active affordance either. */
+a.t3g-notification-row:hover {
+    transform: translateY(-1px);
+}
+
+.t3g-notification-row-main {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.65rem;
+}
+
+/* Same small pink accent dot used for the unread badges elsewhere in this
+   feature, just static and inline rather than a floating count -- marks
+   an individual row as unread the same visual language a count badge
+   already established, rather than inventing a second "new" indicator
+   style. */
+.t3g-notification-dot {
+    flex: 0 0 auto;
+    width: 8px;
+    height: 8px;
+    margin-top: 0.4rem;
+    border-radius: 50%;
+    background: #c21861;
+}
+
+.t3g-notification-row-text {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.t3g-notification-title {
+    color: #1e2a47;
+    font-weight: 700;
+}
+
+.t3g-notification-row--unread .t3g-notification-title {
+    font-weight: 800;
+}
+
+.t3g-notification-timestamp {
+    color: #6b7280;
+    font-size: 0.78rem;
+    margin-top: 0.15rem;
+}

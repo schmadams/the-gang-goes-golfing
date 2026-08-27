@@ -3,6 +3,7 @@ import time
 
 from backend.database import supabase
 from backend.services.friends import list_friends
+from backend.services.notifications import create_notification
 from backend.services.storage import extension_for, upload_image
 
 ROUND_POST_PHOTO_BUCKET = "round-post-photos"
@@ -121,7 +122,34 @@ def add_round_post_photo(
         .insert({"round_id": round_id, "author_id": author_id, "image_url": image_url})
         .execute()
     )
-    return response.data[0]
+    photo = response.data[0]
+
+    # Best-effort, same convention as every other create_notification call
+    # site -- every other player in the round gets one, not the uploader
+    # themself.
+    try:
+        author_response = (
+            supabase.table("players").select("first_name, surname, nickname").eq("id", author_id).maybe_single().execute()
+        )
+        author = (author_response.data if author_response is not None else None) or {}
+        author_name = (
+            author.get("nickname")
+            or f"{author.get('first_name', '')} {author.get('surname', '')}".strip()
+            or "Someone"
+        )
+        for other_player_id in player_ids:
+            if other_player_id == author_id:
+                continue
+            create_notification(
+                other_player_id,
+                "home",
+                f"{author_name} added a photo to your round",
+                url="/",
+            )
+    except Exception as exc:
+        print(f"[NOTIFY] Failed to notify round {round_id} players of new photo: {exc}")
+
+    return photo
 
 
 def _list_round_post_photos(round_id: str) -> list[dict]:

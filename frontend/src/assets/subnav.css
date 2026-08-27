@@ -1,8 +1,8 @@
 /* target path: frontend/src/assets/subnav.css (new file, same assets/ folder) */
 
 .t3g-subnav {
-    background: #f4f5f9;
-    border-bottom: 1px solid #e2e4ea;
+    background: var(--t3g-surface-raised);
+    border-bottom: 1px solid var(--t3g-border);
 }
 
 .t3g-subnav-inner {
@@ -19,7 +19,7 @@
 .t3g-subnav-greeting {
     font-size: 1.1rem;
     font-weight: 700;
-    color: #1e2a47;
+    color: var(--t3g-ink);
 }
 
 .t3g-subnav-handicap {
@@ -32,12 +32,12 @@
     text-transform: uppercase;
     letter-spacing: 0.03em;
     font-size: 0.75rem;
-    color: #6b7280;
+    color: var(--t3g-muted);
     font-weight: 700;
 }
 
 .t3g-subnav-handicap-value {
     font-size: 1.25rem;
     font-weight: 800;
-    color: #1e2a47;
+    color: var(--t3g-ink);
 }

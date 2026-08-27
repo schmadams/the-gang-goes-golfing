@@ -2,6 +2,7 @@
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
 
 from backend.models.player import PlayerCreate, PlayerResponse, PlayerUpdate
+from backend.services.calendar import get_calendar_events
 from backend.services.players import (
     NotFriendsWithPlayerError,
     create_player,
@@ -113,3 +114,12 @@ def get_player_feed_route(player_id: str):
     round_posts.py for exactly how those two sources are merged and
     de-duplicated."""
     return list_home_feed_posts(player_id)
+
+
+@router.get("/{player_id}/calendar")
+def get_player_calendar_route(player_id: str):
+    """Backs the personal Calendar page's month grid -- see
+    get_calendar_events' own docstring in backend/services/calendar.py
+    for exactly what gets merged in (historic rounds, scheduled tee
+    times, and tournament entries still awaiting a published tee time)."""
+    return get_calendar_events(player_id)

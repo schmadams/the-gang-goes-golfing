@@ -36,8 +36,8 @@
 }
 
 .t3g-analysis-card {
-    background: #ffffff;
-    border: 1px solid #e2e4ea;
+    background: var(--t3g-surface);
+    border: 1px solid var(--t3g-border);
     border-radius: 12px;
     padding: 1.25rem;
     min-width: 0; /* same CSS grid min-content gotcha as .t3g-analysis-grid above */
@@ -46,7 +46,7 @@
 
 .t3g-analysis-card-title {
     margin: 0 0 0.75rem;
-    color: #1e2a47;
+    color: var(--t3g-ink);
     font-weight: 800;
     font-size: 0.95rem;
 }

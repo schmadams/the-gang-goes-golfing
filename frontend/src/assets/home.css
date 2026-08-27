@@ -4,7 +4,7 @@
     width: 96vw; /* fills nearly the full viewport width */
     max-width: 1800px; /* still caps on ultra-wide monitors */
     margin: 0 auto;
-    padding: 3rem 1.5rem;
+    padding: 3.5rem 1.5rem;
     box-sizing: border-box;
 }
 
@@ -27,9 +27,16 @@
 }
 
 .t3g-panel {
-    background: #ffffff;
-    border-radius: 16px;
-    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
+    /* Softer, lighter card treatment (hairline border + a subtle double
+       shadow) instead of the old single heavy dark shadow -- see
+       theme.css's --t3g-shadow-card for why, and note this one rule
+       cascades to nearly every panel in the app since club.css/play.css/
+       analysis.css/etc. only override this class's margin/padding
+       locally, not its shape. */
+    background: var(--t3g-surface);
+    border: 1px solid var(--t3g-border);
+    border-radius: var(--t3g-radius-lg);
+    box-shadow: var(--t3g-shadow-card);
     margin-bottom: 2rem;
     overflow: hidden; /* keeps the panel-navbar's square corners inside the rounded panel */
 }
@@ -40,19 +47,19 @@
     justify-content: space-between;
     gap: 1rem;
     padding: 1.1rem 1.5rem;
-    background: #f4f5f9;
-    border-bottom: 1px solid #e2e4ea;
+    background: var(--t3g-surface-raised);
+    border-bottom: 1px solid var(--t3g-border);
 }
 
 .t3g-panel-navbar-title {
     margin: 0;
-    color: #1e2a47;
-    font-weight: 800;
+    color: var(--t3g-ink);
+    font-weight: 500;
     font-size: 1.1rem;
 }
 
 .t3g-panel-action-button {
-    background: #c21861;
+    background: var(--t3g-accent);
     color: #ffffff;
     border: none;
     font-weight: 700;
@@ -60,7 +67,7 @@
     text-transform: uppercase;
     letter-spacing: 0.03em;
     padding: 0.5rem 1rem;
-    border-radius: 999px;
+    border-radius: var(--t3g-radius-md);
     cursor: pointer;
     transition: opacity 0.15s ease, transform 0.08s ease;
 }
@@ -76,8 +83,8 @@
 
 .t3g-panel-action-button--secondary {
     background: transparent;
-    border: 1px solid #c21861;
-    color: #c21861;
+    border: 1px solid var(--t3g-accent);
+    color: var(--t3g-accent);
 }
 
 .t3g-panel-navbar-action {
@@ -87,7 +94,7 @@
 }
 
 .t3g-panel-body {
-    padding: 1.5rem;
+    padding: 1.75rem;
 }
 
 .t3g-panel-grid {
@@ -132,17 +139,17 @@
 .t3g-club-item {
     display: flex;
     flex-direction: column;
-    background: #f4f5f9;
-    border-radius: 10px;
+    background: var(--t3g-surface-raised);
+    border-radius: var(--t3g-radius-md);
     overflow: hidden;
-    color: #1e2a47 !important;
+    color: var(--t3g-ink) !important;
     text-decoration: none !important;
     transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
 .t3g-club-item:hover {
     transform: translateY(-3px);
-    box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
+    box-shadow: none;
 }
 
 /* Actual uploaded photo -- fixed aspect ratio so tiles line up evenly
@@ -152,7 +159,7 @@
     aspect-ratio: 4 / 3;
     object-fit: cover;
     display: block;
-    background: #dfe2ee;
+    background: var(--t3g-surface-raised);
 }
 
 /* Fallback when a club hasn't uploaded a photo yet -- same tile footprint
@@ -181,7 +188,7 @@
 }
 
 .t3g-empty-state {
-    color: #6b7280;
+    color: var(--t3g-muted);
     font-style: italic;
 }
 
@@ -209,14 +216,14 @@
 
 .t3g-pagination-button {
     background: transparent;
-    border: 1px solid #c21861;
-    color: #c21861;
+    border: 1px solid var(--t3g-accent);
+    color: var(--t3g-accent);
     font-weight: 700;
     font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.03em;
     padding: 0.4rem 0.9rem;
-    border-radius: 999px;
+    border-radius: var(--t3g-radius-md);
     cursor: pointer;
     transition: background 0.15s ease, opacity 0.15s ease;
 }
@@ -231,15 +238,15 @@
 }
 
 .t3g-pagination-label {
-    color: #6b7280;
+    color: var(--t3g-muted);
     font-weight: 700;
     font-size: 0.8rem;
 }
 
 .t3g-round-card {
-    background: #ffffff;
-    border: 1px solid #e2e4ea;
-    border-radius: 12px;
+    background: var(--t3g-surface);
+    border: 1px solid var(--t3g-border);
+    border-radius: var(--t3g-radius-lg);
     overflow: hidden;
 }
 
@@ -248,13 +255,13 @@
     align-items: center;
     justify-content: space-between;
     gap: 0.75rem;
-    background: #f4f5f9;
-    border-bottom: 1px solid #e2e4ea;
+    background: var(--t3g-surface-raised);
+    border-bottom: 1px solid var(--t3g-border);
     padding: 0.65rem 1.1rem;
 }
 
 .t3g-round-card-title {
-    color: #1e2a47;
+    color: var(--t3g-ink);
     font-weight: 700;
     font-size: 0.9rem;
 }
@@ -280,7 +287,7 @@
     letter-spacing: 0.03em;
     background: rgba(230, 57, 70, 0.1);
     border: 1px solid rgba(230, 57, 70, 0.4);
-    border-radius: 999px;
+    border-radius: var(--t3g-radius-md);
     padding: 0.25rem 0.65rem 0.25rem 0.5rem;
     white-space: nowrap;
 }
@@ -294,14 +301,14 @@
 .t3g-tournament-round-badge {
     display: inline-flex;
     align-items: center;
-    color: #1e2a47;
+    color: var(--t3g-ink);
     font-weight: 800;
     font-size: 0.65rem;
     text-transform: uppercase;
     letter-spacing: 0.03em;
     background: rgba(30, 42, 71, 0.08);
     border: 1px solid rgba(30, 42, 71, 0.25);
-    border-radius: 999px;
+    border-radius: var(--t3g-radius-md);
     padding: 0.25rem 0.65rem;
     white-space: nowrap;
 }
@@ -328,7 +335,7 @@
 }
 
 .t3g-history-scorecard-table th {
-    color: #6b7280;
+    color: var(--t3g-muted);
     text-transform: uppercase;
     letter-spacing: 0.02em;
     font-size: 0.65rem;
@@ -336,9 +343,9 @@
 }
 
 .t3g-history-par-row td {
-    color: #6b7280;
+    color: var(--t3g-muted);
     font-weight: 700;
-    border-bottom: 1px solid #e2e4ea;
+    border-bottom: 1px solid var(--t3g-border);
 }
 
 .t3g-history-row-label {
@@ -347,8 +354,8 @@
 
 .t3g-history-summary-cell {
     font-weight: 800;
-    color: #1e2a47;
-    border-left: 2px solid #e2e4ea;
+    color: var(--t3g-ink);
+    border-left: 2px solid var(--t3g-border);
 }
 
 .t3g-history-player-row td {
@@ -361,14 +368,14 @@
     gap: 0.5rem;
     text-align: left;
     font-weight: 700;
-    color: #1e2a47;
+    color: var(--t3g-ink);
 }
 
 .t3g-history-player-avatar {
     width: 26px;
     height: 26px;
     border-radius: 50%;
-    background: #c21861;
+    background: var(--t3g-accent);
     color: #ffffff;
     display: flex;
     align-items: center;
@@ -394,7 +401,7 @@
     line-height: 1;
     font-weight: 700;
     font-size: 0.82rem;
-    color: #1e2a47;
+    color: var(--t3g-ink);
     border: 2px solid transparent; /* reserves space so unmarked (par) scores don't jump size */
 }
 
@@ -406,18 +413,18 @@
 .t3g-history-score-eagle {
     border-radius: 50%;
     border: 2px solid #2a9d3f;
-    box-shadow: 0 0 0 2px #ffffff, 0 0 0 4px #2a9d3f;
+    box-shadow: 0 0 0 2px var(--t3g-surface), 0 0 0 4px #2a9d3f;
 }
 
 .t3g-history-score-bogey {
     border-radius: 0;
-    border: 2px solid #c21861;
+    border: 2px solid var(--t3g-accent);
 }
 
 .t3g-history-score-double-bogey {
     border-radius: 0;
-    border: 2px solid #c21861;
-    box-shadow: 0 0 0 2px #f4f5f9, 0 0 0 4px #c21861;
+    border: 2px solid var(--t3g-accent);
+    box-shadow: 0 0 0 2px var(--t3g-surface), 0 0 0 4px var(--t3g-accent);
 }
 
 .t3g-friend-invite-checklist {
@@ -431,7 +438,7 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    color: #1e2a47;
+    color: var(--t3g-ink);
     font-weight: 600;
 }
 
@@ -464,13 +471,13 @@
     align-items: center;
     justify-content: space-between;
     gap: 0.5rem;
-    background: #f4f5f9;
-    border-radius: 8px;
+    background: var(--t3g-surface-raised);
+    border-radius: var(--t3g-radius-md);
     padding: 0.35rem 0.4rem 0.35rem 0.7rem;
 }
 
 .t3g-friend-picker-chip-name {
-    color: #1e2a47;
+    color: var(--t3g-ink);
     font-weight: 700;
     font-size: 0.85rem;
     overflow: hidden;
@@ -483,9 +490,9 @@
     width: 22px;
     height: 22px;
     border-radius: 50%;
-    border: 1px solid #c21861;
+    border: 1px solid var(--t3g-accent);
     background: transparent;
-    color: #c21861;
+    color: var(--t3g-accent);
     font-size: 0.9rem;
     line-height: 1;
     cursor: pointer;
@@ -521,7 +528,7 @@
 }
 
 .t3g-handicap-panel-value {
-    color: #c21861;
+    color: var(--t3g-accent);
     font-weight: 800;
     font-size: 1.3rem;
 }
@@ -530,9 +537,9 @@
     width: 26px;
     height: 26px;
     border-radius: 50%;
-    border: 1px solid #c21861;
+    border: 1px solid var(--t3g-accent);
     background: transparent;
-    color: #c21861;
+    color: var(--t3g-accent);
     font-weight: 800;
     font-size: 0.8rem;
     font-style: italic;
@@ -557,21 +564,21 @@
 
 .t3g-handicap-toggle-button {
     background: transparent;
-    border: 1px solid #e2e4ea;
-    color: #6b7280;
+    border: 1px solid var(--t3g-border);
+    color: var(--t3g-muted);
     font-weight: 700;
     font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.03em;
     padding: 0.4rem 0.9rem;
-    border-radius: 999px;
+    border-radius: var(--t3g-radius-md);
     cursor: pointer;
     transition: opacity 0.15s ease;
 }
 
 .t3g-handicap-toggle-button--active {
-    background: #c21861;
-    border-color: #c21861;
+    background: var(--t3g-accent);
+    border-color: var(--t3g-accent);
     color: #ffffff;
 }
 
@@ -595,13 +602,13 @@
     align-items: center;
     gap: 0.5rem;
     padding: 1.1rem 0.5rem 0.9rem;
-    border-radius: 12px;
-    background: #f4f5f9;
+    border-radius: var(--t3g-radius-lg);
+    background: var(--t3g-surface-raised);
 }
 
 .t3g-handicap-round-card--counting {
-    background: #f9e9f0;
-    box-shadow: inset 0 0 0 2px #c21861;
+    background: var(--t3g-accent-soft);
+    box-shadow: inset 0 0 0 2px var(--t3g-accent);
 }
 
 .t3g-handicap-round-number {
@@ -613,7 +620,7 @@
 .t3g-handicap-round-gross {
     font-size: 2.1rem;
     font-weight: 800;
-    color: #1e2a47;
+    color: var(--t3g-ink);
     line-height: 1;
 }
 
@@ -624,7 +631,7 @@
     margin-left: 0.2rem;
     font-size: 0.8rem;
     font-weight: 700;
-    color: #6b7280;
+    color: var(--t3g-muted);
     line-height: 1;
     white-space: nowrap;
 }
@@ -639,12 +646,12 @@
 
 .t3g-handicap-round-card--counting .t3g-handicap-round-adjusted,
 .t3g-handicap-round-card--counting .t3g-handicap-round-slope {
-    color: #c21861;
+    color: var(--t3g-accent);
 }
 
 .t3g-handicap-round-date {
     font-size: 0.7rem;
-    color: #6b7280;
+    color: var(--t3g-muted);
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.03em;
@@ -652,22 +659,22 @@
 
 /* Info modal -- worked example box + the Rule 5.2a lookup table. */
 .t3g-handicap-example {
-    background: #f4f5f9;
-    border-radius: 10px;
+    background: var(--t3g-surface-raised);
+    border-radius: var(--t3g-radius-md);
     padding: 1rem;
     margin: 0.75rem 0 1.25rem;
 }
 
 .t3g-handicap-example-formula {
     font-weight: 800;
-    color: #1e2a47;
+    color: var(--t3g-ink);
     margin-bottom: 0.75rem;
     font-size: 0.9rem;
 }
 
 .t3g-handicap-example-label {
     font-weight: 700;
-    color: #c21861;
+    color: var(--t3g-accent);
     text-transform: uppercase;
     letter-spacing: 0.03em;
     font-size: 0.7rem;
@@ -675,7 +682,7 @@
 }
 
 .t3g-handicap-example-body {
-    color: #1e2a47;
+    color: var(--t3g-ink);
     font-size: 0.85rem;
     line-height: 1.5;
 }
@@ -692,11 +699,11 @@
 }
 
 .t3g-handicap-info-table th {
-    color: #6b7280;
+    color: var(--t3g-muted);
     text-transform: uppercase;
     letter-spacing: 0.03em;
     font-weight: 700;
-    border-bottom: 2px solid #e2e4ea;
+    border-bottom: 2px solid var(--t3g-border);
 }
 
 /* Annotated "GROSS SCORE" example diagram for the handicap info modal --
@@ -779,6 +786,83 @@
     margin: 0 auto;
 }
 
+/* Posts on the home feed specifically (not club.py's own Feed tab,
+   which keeps its bordered card look) shouldn't read as a stack of
+   separate boxed cards -- a plain list of posts divided by a hairline,
+   the way a real feed/timeline reads, with photos going edge-to-edge of
+   the feed column instead of sitting inset inside a card's own padding.
+   Scoped to .t3g-home-feed-page so club.css's shared .t3g-feed-post
+   rule (and its own Feed tab usage) is untouched. */
+.t3g-home-feed-page .t3g-feed-list {
+    gap: 0;
+}
+
+.t3g-home-feed-page .t3g-feed-post {
+    background: none;
+    border: none;
+    border-radius: 0;
+    padding: 1.25rem 1rem;
+    border-bottom: 1px solid var(--t3g-border);
+}
+
+.t3g-home-feed-page .t3g-feed-list .t3g-feed-post:last-child {
+    border-bottom: none;
+}
+
+/* Cancels the post's own 1rem side padding so the gallery -- and the
+   images inside it -- span the full post width instead of sitting
+   inset like the surrounding text. */
+.t3g-home-feed-page .t3g-feed-photo-gallery {
+    margin: 0.75rem -1rem 0;
+}
+
+.t3g-home-feed-page .t3g-feed-post-image {
+    border-radius: 0;
+    margin-top: 0;
+}
+
+/* Above phone width, the feed switches from a single flowing column
+   (divider-separated, full-bleed photos) to a multi-column grid of flat,
+   fully-bordered cells -- one continuous list of posts reads fine on a
+   phone but wastes most of a wide screen. Not a masonry layout (plain
+   CSS has no reliable cross-browser way to pack uneven-height cards
+   without a JS library) -- align-items: start plus grid-auto-rows just
+   lets each cell be its own height and leaves a gap below shorter ones,
+   which reads as "a grid of cards" well enough without faking a perfect
+   packed layout. Photos stay contained inside their own cell here
+   instead of bleeding to the edge -- bleeding past a bordered cell's own
+   edge would look broken once posts aren't full-width anymore. */
+@media (min-width: 820px) {
+    .t3g-home-feed-page {
+        max-width: 1100px;
+    }
+
+    .t3g-home-feed-page .t3g-feed-list {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+        align-items: start;
+        gap: 1.25rem;
+    }
+
+    .t3g-home-feed-page .t3g-feed-post {
+        border: 1px solid var(--t3g-border);
+        padding: 1.25rem;
+    }
+
+    /* Every cell gets its own full border in grid mode -- the mobile
+       single-column rule that drops the border on the very last post
+       (a divider between posts, not needed after the final one) would
+       otherwise leave just the last grid cell's bottom edge unbordered,
+       an asymmetry that only makes sense in a linear list. */
+    .t3g-home-feed-page .t3g-feed-list .t3g-feed-post:last-child {
+        border: 1px solid var(--t3g-border);
+    }
+
+    .t3g-home-feed-page .t3g-feed-photo-gallery {
+        margin: 0.75rem 0 0;
+    }
+}
+
 .t3g-feed-post-timestamp-row {
     display: flex;
     align-items: center;
@@ -789,7 +873,7 @@
 .t3g-feed-post-club-tag {
     font-size: 0.72rem;
     font-weight: 700;
-    color: #c21861;
+    color: var(--t3g-accent);
     text-decoration: none;
 }
 
@@ -807,24 +891,24 @@
 
 .t3g-feed-round-toggle-arrow {
     background: none;
-    border: 1px solid #edeef2;
+    border: 1px solid var(--t3g-border);
     border-radius: 999px;
     width: 1.9rem;
     height: 1.9rem;
     font-size: 1rem;
     line-height: 1;
-    color: #c21861;
+    color: var(--t3g-accent);
     cursor: pointer;
 }
 
 .t3g-feed-round-toggle-arrow:hover {
-    background: #fbe6f0;
+    background: var(--t3g-accent-soft);
 }
 
 .t3g-feed-round-toggle-label {
     font-size: 0.75rem;
     font-weight: 700;
-    color: #9aa0b0;
+    color: var(--t3g-muted);
     letter-spacing: 0.02em;
     text-transform: uppercase;
 }
@@ -851,39 +935,39 @@
 }
 
 .t3g-feed-detail-table thead th {
-    color: #9aa0b0;
+    color: var(--t3g-muted);
     font-weight: 700;
 }
 
 .t3g-feed-detail-row-label {
     text-align: left;
     font-weight: 700;
-    color: #1e2a47;
+    color: var(--t3g-ink);
 }
 
 .t3g-feed-detail-total-cell {
     font-weight: 800;
-    color: #1e2a47;
-    border-left: 1px solid #edeef2;
+    color: var(--t3g-ink);
+    border-left: 1px solid var(--t3g-border);
 }
 
 .t3g-feed-handicap-badge {
     display: inline-block;
     margin-top: 0.6rem;
     padding: 0.3rem 0.65rem;
-    border-radius: 999px;
+    border-radius: var(--t3g-radius-md);
     font-size: 0.78rem;
     font-weight: 700;
 }
 
 .t3g-feed-handicap-badge--down {
-    background: #eaf6ec;
-    color: #1e7d34;
+    background: var(--t3g-success-bg);
+    color: var(--t3g-success-text);
 }
 
 .t3g-feed-handicap-badge--up {
-    background: #fdf1e3;
-    color: #b45309;
+    background: var(--t3g-warning-bg);
+    color: var(--t3g-warning-text);
 }
 
 .t3g-feed-photo-composer {
