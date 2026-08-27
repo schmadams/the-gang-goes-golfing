@@ -1,12 +1,25 @@
-/* target path: frontend/src/assets/notifications.css (new file)
+/* target path: frontend/src/assets/notifications.css (full replacement)
    Backs pages/notifications.py -- the page behind the navbar bell. Reuses
    .t3g-page/.t3g-empty-state from home.css (see that file's own
    docstring), same as every other page in this app -- everything below is
-   specific to this page's own list/row/heading. */
+   specific to this page's own list/row/heading.
+
+   This file was written before the Sharplink retheme and never got swept
+   up in it (theme.css's rebuild, and the pass across the other ~15 CSS
+   files, both predate this one existing at its current scope) -- it was
+   still on the OLD design entirely: a solid white card
+   (background: #ffffff, border-radius: 12px, a soft drop shadow) sized
+   for a permanently-dark page, with a hardcoded white page heading and a
+   hardcoded navy #1e2a47 title. Once the page itself started following
+   the light/dark toggle, the white heading became invisible against the
+   near-white light-mode page background -- the same class of bug as the
+   calendar header. Rebuilt now to the same flat surface-card language
+   .t3g-round-card (home.css) already uses everywhere else: translucent
+   theme-following background, hairline border, 0px radius, no shadow. */
 
 .t3g-notifications-heading {
-    color: #ffffff;
-    font-weight: 800;
+    color: var(--t3g-ink);
+    font-weight: 500;
     margin-bottom: 1.25rem;
 }
 
@@ -18,12 +31,12 @@
 
 .t3g-notification-row {
     display: block;
-    background: #ffffff;
-    border-radius: 12px;
+    background: var(--t3g-surface);
+    border: 1px solid var(--t3g-border);
+    border-radius: var(--t3g-radius-lg);
     padding: 0.9rem 1.1rem;
     text-decoration: none !important;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
-    transition: transform 0.1s ease;
+    transition: background 0.15s ease;
 }
 
 /* A row that has no url (rare -- only if a notification's own
@@ -32,7 +45,7 @@
    _notification_row in pages/notifications.py. Not clickable, so no
    hover/active affordance either. */
 a.t3g-notification-row:hover {
-    transform: translateY(-1px);
+    background: var(--t3g-surface-raised);
 }
 
 .t3g-notification-row-main {
@@ -41,18 +54,20 @@ a.t3g-notification-row:hover {
     gap: 0.65rem;
 }
 
-/* Same small pink accent dot used for the unread badges elsewhere in this
-   feature, just static and inline rather than a floating count -- marks
-   an individual row as unread the same visual language a count badge
+/* Same accent dot used for the unread badges elsewhere in this feature,
+   just static and inline rather than a floating count -- marks an
+   individual row as unread the same visual language a count badge
    already established, rather than inventing a second "new" indicator
-   style. */
+   style. var(--t3g-accent) so it matches whichever accent shade the
+   current theme uses, instead of a hardcoded hex that only ever matched
+   light mode's. */
 .t3g-notification-dot {
     flex: 0 0 auto;
     width: 8px;
     height: 8px;
     margin-top: 0.4rem;
     border-radius: 50%;
-    background: #c21861;
+    background: var(--t3g-accent);
 }
 
 .t3g-notification-row-text {
@@ -61,7 +76,7 @@ a.t3g-notification-row:hover {
 }
 
 .t3g-notification-title {
-    color: #1e2a47;
+    color: var(--t3g-ink);
     font-weight: 700;
 }
 
@@ -70,7 +85,7 @@ a.t3g-notification-row:hover {
 }
 
 .t3g-notification-timestamp {
-    color: #6b7280;
+    color: var(--t3g-muted);
     font-size: 0.78rem;
     margin-top: 0.15rem;
 }

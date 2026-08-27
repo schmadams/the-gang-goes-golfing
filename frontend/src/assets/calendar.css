@@ -12,25 +12,33 @@
     margin: 1.5rem 0 0.75rem;
 }
 
+/* .t3g-calendar-header sits directly on the page background (see
+   .t3g-page in home.css -- no background of its own), which follows the
+   theme (near-white in light mode) -- these two used to be hardcoded
+   white, left over from when the whole page sat on a permanently dark
+   background, so in light mode the month label and prev/next arrows
+   rendered essentially invisible, white-on-near-white. var(--t3g-ink)
+   here follows the page the same way every other piece of page-level
+   text in the app already does. */
 .t3g-calendar-month-label {
-    color: #ffffff;
+    color: var(--t3g-ink);
     font-weight: 800;
     min-width: 12ch;
     text-align: center;
 }
 
 .t3g-calendar-nav-arrow {
-    color: #ffffff !important;
+    color: var(--t3g-ink) !important;
     text-decoration: none !important;
     font-size: 1.6rem;
     line-height: 1;
     padding: 0.25rem 0.75rem;
-    border-radius: 8px;
+    border-radius: var(--t3g-radius-md);
     transition: background 0.15s ease, transform 0.1s ease;
 }
 
 .t3g-calendar-nav-arrow:hover {
-    background: rgba(255, 255, 255, 0.1);
+    background: var(--t3g-surface-raised);
     transform: scale(1.1);
 }
 
@@ -42,11 +50,17 @@
     margin-bottom: 1.25rem;
 }
 
+/* Same page-background contrast issue as the header above -- this
+   legend row sits directly on .t3g-page too (a sibling of
+   .t3g-calendar-header, not nested inside the dark .t3g-calendar-grid
+   below it), so a translucent-white label was nearly invisible in light
+   mode. var(--t3g-muted) matches the "secondary label text" treatment
+   used everywhere else in the app. */
 .t3g-calendar-legend-item {
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
-    color: rgba(255, 255, 255, 0.75);
+    color: var(--t3g-muted);
     font-size: 0.75rem;
     font-weight: 600;
     text-transform: uppercase;
@@ -138,8 +152,13 @@
     background: var(--t3g-surface-raised);
 }
 
+/* A light gray leftover from the old dark-page design (meant to read as
+   a dim number against a dark cell) -- var(--t3g-muted-2) is the
+   themed equivalent, legible against .t3g-calendar-day--outside's own
+   var(--t3g-surface-raised) background in both light and dark mode
+   instead of just one. */
 .t3g-calendar-day--outside .t3g-calendar-day-number {
-    color: #c3c7d1;
+    color: var(--t3g-muted-2);
 }
 
 .t3g-calendar-day--today {

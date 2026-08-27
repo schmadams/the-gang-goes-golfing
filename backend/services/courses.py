@@ -139,6 +139,17 @@ def list_courses_for_club(club_name: str) -> list[dict]:
     been picked from a search_local_clubs result. Exact match (not ilike)
     since club_name here always comes from that earlier result, not free
     typing.
+
+    This is the FIRST place a club's course list is ever shown to a
+    player, before any course has been picked -- so it's also where
+    sibling-course discovery has to happen, not just import_course(). The
+    regions crawl (scripts/import_courses.py) only ever leaves one
+    nameless placeholder row per club; a two-course club used to only ever
+    surface its first course here, forever, because nothing before this
+    fix triggered the "learn every course this club has" API call until
+    AFTER a specific course was already selected. Runs at most once per
+    club (see club_courses_discovered on the returned rows) -- a cache
+    miss costs one extra request, a hit costs nothing.
     """
     query_builder = (
         supabase.table("courses")
@@ -150,7 +161,25 @@ def list_courses_for_club(club_name: str) -> list[dict]:
     with _timed(f"list_courses_for_club(club_name={club_name!r})", "database"):
         response = query_builder.execute()
 
-    return response.data or []
+    rows = response.data or []
+    if not rows:
+        return rows
+
+    external_club_id = rows[0].get("external_club_id")
+    if external_club_id and not any(row.get("club_courses_discovered") for row in rows):
+        try:
+            _ensure_club_courses_discovered(club_name, external_club_id, rows)
+        except ExternalApiError:
+            # Discovery failing shouldn't break the dropdown -- fall back
+            # to whatever's already cached rather than raising out of a
+            # read endpoint.
+            return rows
+
+        with _timed(f"list_courses_for_club(club_name={club_name!r}) re-fetch after discovery", "database"):
+            response = query_builder.execute()
+        rows = response.data or []
+
+    return rows
 
 
 def search_external_clubs(query: str) -> list[dict]:
@@ -367,6 +396,100 @@ def _fetch_and_store_course_detail(course_row: dict, course_id: str) -> dict:
     return get_course(course_row["id"])
 
 
+def _ensure_club_courses_discovered(club_name: str, external_club_id: str, existing_rows: list[dict]) -> list[dict]:
+    """
+    Spends exactly one request (GET /clubs/{id}) the FIRST time any course
+    from this club is looked at -- whether that's a player opening the
+    course dropdown for a club (list_courses_for_club, before any course
+    has been picked) or picking a specific course to import
+    (import_course). Before this existed, discovery only ever happened
+    from inside import_course, AFTER a specific course had already been
+    resolved -- so the by-club dropdown itself (a pure DB read) could only
+    ever show whichever single course a previous import happened to touch,
+    and once that one course had a cached scorecard, import_course's own
+    "already cached" early-return meant the /clubs lookup (and therefore
+    the loop that gives every sibling course its own row) never ran again
+    for that club, ever. A two-course club could permanently get stuck
+    showing only its first course. This function is the one place that
+    now runs that discovery, and it runs it BEFORE a course is resolved,
+    not after.
+
+    Idempotent per club: every row this touches gets
+    club_courses_discovered=True, and both callers skip calling this again
+    once any row for the club already has that flag set -- so a club's
+    sibling courses are only ever fetched from the live API once, no
+    matter how many times players browse or start rounds there afterward.
+    """
+    with _timed(f"GET /clubs/{external_club_id}", "external API"):
+        club_response = requests.get(
+            f"{RAPIDAPI_BASE_URL}/clubs/{external_club_id}",
+            headers=_rapidapi_headers(),
+        )
+    if club_response.status_code != 200:
+        raise ExternalApiError(club_response.status_code, club_response.text)
+
+    club = _unwrap_object(club_response.json(), "id", "name", "courses")
+
+    # Save what this call taught us about the club itself immediately, even
+    # if the course list below turns out to be empty -- this request isn't
+    # wasted either way.
+    placeholder_row = existing_rows[0] if existing_rows else None
+    placeholder_row = _upsert_course_row(placeholder_row, {
+        "external_club_id": external_club_id,
+        "club_name": club.get("name") or club_name,
+        "county": club.get("county") or (placeholder_row or {}).get("county"),
+        "postcode": club.get("postcode") or (placeholder_row or {}).get("postcode"),
+    })
+
+    club_courses = club.get("courses") or []
+    if not club_courses:
+        # Nothing more to discover -- mark the placeholder done so this
+        # club is never re-queried, and leave it as the one (nameless) row
+        # it's always been.
+        return [_upsert_course_row(placeholder_row, {"club_courses_discovered": True})]
+
+    updated_rows = []
+    placeholder_upgraded = False
+
+    for club_course in club_courses:
+        course_id = club_course.get("id")
+        course_name = club_course.get("name")
+
+        matching_existing = next(
+            (row for row in existing_rows if row.get("external_course_id") == course_id),
+            None,
+        )
+        if matching_existing:
+            updated_rows.append(_upsert_course_row(matching_existing, {
+                "club_courses_discovered": True,
+            }))
+            continue
+
+        if not placeholder_upgraded and not placeholder_row.get("external_course_id"):
+            # Upgrade the club-level placeholder row (from the regions
+            # crawl, or just created above) into this first real course,
+            # instead of leaving it dangling as a nameless duplicate.
+            updated_rows.append(_upsert_course_row(placeholder_row, {
+                "external_course_id": course_id,
+                "course_name": course_name,
+                "club_courses_discovered": True,
+            }))
+            placeholder_upgraded = True
+            continue
+
+        updated_rows.append(_upsert_course_row(None, {
+            "external_club_id": external_club_id,
+            "club_name": placeholder_row.get("club_name"),
+            "county": placeholder_row.get("county"),
+            "postcode": placeholder_row.get("postcode"),
+            "external_course_id": course_id,
+            "course_name": course_name,
+            "club_courses_discovered": True,
+        }))
+
+    return updated_rows
+
+
 def import_course(details: dict) -> dict | None:
     """
     Given a cached club (external_club_id/club_name/county/postcode, from
@@ -417,12 +540,28 @@ def import_course(details: dict) -> dict | None:
         )
     existing_rows = existing.data or []
 
-    # A specific course was asked for (its row already exists, even if
-    # that row has no scorecard cached yet) -- go straight to THAT
-    # course's own detail fetch. Without this, any course other than
-    # whichever one happened to get imported first was unreachable: the
-    # old code below always fell back to "the club's first course"
-    # regardless of which row's course_id actually triggered the call.
+    # Make sure every course this club has is already a row before trying
+    # to resolve which one the caller wants -- a requested external_course_id
+    # might belong to a course that's never been seen before (e.g. the
+    # second course of a two-course club), and this is what creates its
+    # row. Costs one extra request (GET /clubs/{id}) the first time any
+    # course from this club is touched; every row gets
+    # club_courses_discovered=True afterward so this never re-spends a
+    # request on the same club twice. In practice this has almost always
+    # already run by now, from list_courses_for_club when the by-club
+    # dropdown was populated -- this is just a safety net for callers that
+    # skip straight to import (e.g. the re-import-from-search flow).
+    if not any(row.get("club_courses_discovered") for row in existing_rows):
+        try:
+            existing_rows = _ensure_club_courses_discovered(
+                details.get("club_name"), external_club_id, existing_rows,
+            )
+        except ExternalApiError:
+            # Discovery failing (rate limit, API down) shouldn't block
+            # resolving whatever course we already have cached -- fall
+            # through to the existing-rows logic below with what we had.
+            pass
+
     if external_course_id:
         matching_row = next(
             (row for row in existing_rows if row.get("external_course_id") == external_course_id),
@@ -434,84 +573,19 @@ def import_course(details: dict) -> dict | None:
                 return cached
             return _fetch_and_store_course_detail(matching_row, external_course_id)
 
-    # No specific course known yet -- either the very first time anyone's
-    # asked about this club, or the caller only has club-level details.
-    # existing_rows[0] (if any) is the club-level placeholder the regions
-    # crawl left behind, which this flow upgrades in place into a real
-    # course row below.
-    existing_row = existing_rows[0] if existing_rows else None
-
-    if existing_row and existing_row.get("external_course_id"):
-        cached = get_course(existing_row["id"])
-        if cached and cached.get("tees"):
-            return cached
-        # We already know which course this row maps to (saved from a
-        # previous attempt) -- go straight to course detail instead of
-        # re-spending a request on /clubs to re-derive the same course id.
-        return _fetch_and_store_course_detail(existing_row, existing_row["external_course_id"])
-
-    with _timed(f"GET /clubs/{external_club_id}", "external API"):
-        club_response = requests.get(
-            f"{RAPIDAPI_BASE_URL}/clubs/{external_club_id}",
-            headers=_rapidapi_headers(),
-        )
-    if club_response.status_code != 200:
-        raise ExternalApiError(club_response.status_code, club_response.text)
-
-    club = _unwrap_object(club_response.json(), "id", "name", "courses")
-
-    # Save what this call taught us immediately -- club_name/county/postcode
-    # here may be more accurate than what the regions crawl cached -- so
-    # this request isn't wasted even if the next step (course lookup) fails.
-    existing_row = _upsert_course_row(existing_row, {
-        "external_club_id": external_club_id,
-        "club_name": details.get("club_name") or club.get("name"),
-        "county": details.get("county") or club.get("county"),
-        "postcode": details.get("postcode") or club.get("postcode"),
-    })
-
-    club_courses = club.get("courses") or []
-    if not club_courses:
-        # Include the raw body, not just our parsed (possibly empty) dict --
-        # if unwrapping still guessed wrong, this is what tells us why. The
-        # club-level info above is already saved regardless of this error.
+    # No specific course requested -- fall back to whichever course this
+    # club resolves to first (now guaranteed to exist, post-discovery,
+    # for any club that has at least one real course).
+    target_row = next((row for row in existing_rows if row.get("external_course_id")), None)
+    if not target_row:
         raise ExternalApiError(
-            404,
-            f"No courses listed for club {external_club_id}. "
-            f"Parsed: {club} | Raw: {club_response.text[:500]}",
+            404, f"No courses discovered for club {external_club_id}.",
         )
 
-    # Give every course a row -- not just club_courses[0]. If a specific
-    # course_id was requested, import that one's full detail; otherwise
-    # default to the first (unchanged behaviour for the plain single-
-    # course case).
-    target_course_id = external_course_id or club_courses[0]["id"]
-    primary_row = existing_row
-
-    for club_course in club_courses:
-        course_id = club_course["id"]
-        course_name = club_course.get("name")
-
-        if course_id == target_course_id:
-            primary_row = _upsert_course_row(existing_row, {
-                "external_course_id": course_id,
-                "course_name": course_name,
-            })
-            continue
-
-        if any(row.get("external_course_id") == course_id for row in existing_rows):
-            continue  # already has its own row from a previous run
-
-        _upsert_course_row(None, {
-            "external_club_id": external_club_id,
-            "club_name": existing_row.get("club_name"),
-            "county": existing_row.get("county"),
-            "postcode": existing_row.get("postcode"),
-            "external_course_id": course_id,
-            "course_name": course_name,
-        })
-
-    return _fetch_and_store_course_detail(primary_row, target_course_id)
+    cached = get_course(target_row["id"])
+    if cached and cached.get("tees"):
+        return cached
+    return _fetch_and_store_course_detail(target_row, target_row["external_course_id"])
 
 
 def ensure_scorecard(course_id: str) -> dict | None:

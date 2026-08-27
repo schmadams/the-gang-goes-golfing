@@ -86,6 +86,15 @@
     --t3g-accent: #c21861;
     --t3g-accent-soft: rgba(194, 24, 97, 0.08);
 
+    /* Opaque modal/dialog background. --t3g-surface is a ~5% translucent
+       wash designed for cards sitting on a solid page -- fine there
+       since the page shows through only faintly and evenly, but wrong
+       for a modal, whose whole job is to obscure the page behind it.
+       A translucent modal lets navbar/button/page chrome visibly bleed
+       through the dialog, which is exactly the bug this fixes. This is
+       a distinct, fully opaque token, not a reuse of --t3g-surface. */
+    --t3g-modal-bg: #ffffff;
+
     /* Badge/pill pairs used across club.css, live_round.css, home.css,
        and round_signoff.css (leaderboard totals, handicap up/down,
        pending/done sign-off status, NR). Light mode keeps this app's
@@ -127,6 +136,11 @@ html[data-theme="dark"] {
     --t3g-accent: #e91e78;
     --t3g-accent-soft: rgba(233, 30, 120, 0.1);
 
+    /* Opaque, slightly lifted off pure-black --t3g-bg so the dialog
+       still reads as a distinct surface even though nothing here is
+       translucent. */
+    --t3g-modal-bg: #141414;
+
     --t3g-success-bg: rgba(30, 125, 52, 0.16);
     --t3g-success-text: #79d99a;
     --t3g-warning-bg: rgba(180, 83, 9, 0.16);
@@ -141,6 +155,11 @@ html {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     background: var(--t3g-bg-gradient), var(--t3g-bg);
+    /* See .t3g-app-shell below for why background-size/repeat matter
+       here -- same fix, applied to html too since this is what shows
+       through on mobile overscroll bounce. */
+    background-repeat: no-repeat, repeat;
+    background-size: 100% 100vh, auto;
 }
 
 /* button/input/select/textarea don't inherit font-family from body under
@@ -157,6 +176,19 @@ body {
 
 .t3g-app-shell {
     background: var(--t3g-bg-gradient), var(--t3g-bg);
+    /* Without an explicit size, a gradient background covers the WHOLE
+       element -- and since this element grows as tall as the page's
+       content (a long feed can run to several thousand pixels), the
+       gradient was stretching across that entire scrollable height. The
+       visible viewport on load only ever showed the first sliver of
+       that 0%-55% blend, which reads as essentially flat black/white --
+       "the gradient isn't showing" was this, not a missing rule. Pinning
+       the gradient layer to one viewport-height and not repeating it
+       keeps the blend at the top of the page, fading into the solid
+       --t3g-bg fill (the second background layer, which does repeat/
+       cover normally) for everything below that. */
+    background-repeat: no-repeat, repeat;
+    background-size: 100% 100vh, auto;
     min-height: 100vh;
     width: 100%;
     transition: background 0.15s ease;
@@ -264,10 +296,11 @@ html[data-theme="light"] .t3g-trend-pill--negative {
    rule here fixes every untouched modal in the app at once instead of
    auditing each one individually. */
 .modal-content {
-    background: var(--t3g-surface);
+    background: var(--t3g-modal-bg);
     color: var(--t3g-ink);
     border: 1px solid var(--t3g-border);
     border-radius: var(--t3g-radius-lg);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
 }
 
 .modal-header,
@@ -282,4 +315,44 @@ html[data-theme="light"] .t3g-trend-pill--negative {
    since the default already reads fine there. */
 html[data-theme="dark"] .modal-header .btn-close {
     filter: invert(1) grayscale(100%) brightness(1.8);
+}
+
+/* Global dcc.Dropdown (react-select) text/background fix -- every
+   club/course/tee/friend picker in this app (play.py, club.py,
+   tournament.py, my_account.py) is a dcc.Dropdown, which renders through
+   react-select's OWN bundled stylesheet, not Bootstrap -- so it was never
+   touched by the dbc.themes.BOOTSTRAP layer, and per-page CSS here has
+   only ever customised its border-radius/border-color (see
+   .t3g-course-dropdown in my_account.css), never its background or text
+   color. The control's background has always been a plain opaque white
+   by library default; its SELECTED VALUE text, though, was never given
+   an explicit color by anything, so it fell through to this file's own
+   body { color: var(--t3g-ink) } rule -- white in dark mode -- which
+   read as a chosen club/course invisibly rendering white-on-white. The
+   placeholder text and the open dropdown menu weren't affected (react-
+   select's own stylesheet sets those explicitly), which is exactly why
+   this was easy to miss without actually picking a value and looking
+   again: an empty or open dropdown looked completely fine. Rather than
+   re-theme these controls to follow dark mode (a bigger, separate look
+   change), this keeps their chrome exactly as it's always been --
+   opaque white -- and just makes sure the text sitting on that white is
+   always dark, in both themes, the same way Bootstrap's own .form-control
+   already guarantees for every dbc.Input on this page. */
+.Select-control {
+    background-color: #ffffff;
+}
+
+.Select-value,
+.Select--single > .Select-control .Select-value .Select-value-label,
+.Select-value-label,
+.Select-input > input {
+    color: #111111;
+}
+
+.Select.is-disabled > .Select-control {
+    background-color: #f2f2f0;
+}
+
+.Select.is-disabled .Select-value-label {
+    color: rgba(17, 17, 17, 0.45);
 }

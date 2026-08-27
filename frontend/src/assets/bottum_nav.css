@@ -30,9 +30,14 @@
         right: 0;
         bottom: 0;
         z-index: 1000;
-        background: #1e2a47;
-        border-top: 1px solid rgba(255, 255, 255, 0.08);
-        box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.25);
+        /* var(--t3g-bg) + a hairline top border, matching navbar.css's
+           and subnav.css's own chrome treatment -- one flat, theme-
+           following bar language used everywhere instead of this one
+           staying the old permanently-dark navy slab with its own
+           drop shadow. */
+        background: var(--t3g-bg);
+        border-top: 1px solid var(--t3g-border);
+        gap: 0.35rem;
         /* env(safe-area-inset-bottom) clears the home-indicator bar on
            notched phones (iPhone X and later) so the nav's own bottom
            padding doesn't sit underneath it -- falls back to 0 on devices
@@ -41,6 +46,10 @@
     }
 }
 
+/* Same translucent-chip language as navbar.css/club.css's nav items --
+   each tab is its own low-opacity box (gap on the parent bar above keeps
+   them visually separated) instead of plain icon+label floating on the
+   bar. */
 .t3g-bottom-nav-item {
     flex: 1 1 0;
     display: flex;
@@ -49,17 +58,29 @@
     justify-content: center;
     gap: 0.2rem;
     padding: 0.35rem 0.25rem;
-    color: rgba(255, 255, 255, 0.55) !important;
+    background: var(--t3g-surface-raised);
+    color: var(--t3g-muted) !important;
     text-decoration: none !important;
-    font-weight: 700;
+    font-family: "Archivo Narrow", "Archivo", sans-serif;
+    font-weight: 500;
     font-size: 0.62rem;
     text-transform: uppercase;
-    letter-spacing: 0.02em;
-    transition: color 0.15s ease, transform 0.08s ease;
+    letter-spacing: 0.05em;
+    transition: color 0.15s ease, background 0.15s ease, transform 0.08s ease;
 }
 
 .t3g-bottom-nav-item:active {
     transform: scale(0.92);
+}
+
+/* Wraps the icon so the unread-count badge (see .t3g-bottom-nav-badge
+   below) has something to anchor to -- notifications.py's
+   refresh_bottom_nav_badges fills these in, but nothing styled the
+   wrapper or the badge itself before now, so an unread count would have
+   rendered as bare unpositioned text floating next to the icon. */
+.t3g-bottom-nav-icon-wrap {
+    position: relative;
+    display: inline-flex;
 }
 
 .t3g-bottom-nav-icon {
@@ -67,12 +88,36 @@
     line-height: 1;
 }
 
+.t3g-bottom-nav-badge {
+    position: absolute;
+    top: -0.35rem;
+    right: -0.5rem;
+    min-width: 1rem;
+    height: 1rem;
+    padding: 0 0.2rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--t3g-accent);
+    color: #ffffff;
+    font-family: "Archivo Narrow", "Archivo", sans-serif;
+    font-size: 0.6rem;
+    font-weight: 500;
+    line-height: 1;
+    border-radius: 999px;
+}
+
+.t3g-bottom-nav-badge:empty {
+    display: none;
+}
+
 .t3g-bottom-nav-label {
     line-height: 1;
 }
 
 .t3g-bottom-nav-item--active {
-    color: #ffffff !important;
+    color: var(--t3g-ink) !important;
+    background: var(--t3g-surface);
 }
 
 /* The pink accent used everywhere else in the app (buttons, badges) marks
