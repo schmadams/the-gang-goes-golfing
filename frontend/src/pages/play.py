@@ -1,3 +1,4 @@
+
 # target path: frontend/src/pages/play.py (new file -- replaces live_round.py, delete that file)
 """
 Play is the "start and see rounds" hub -- what used to be the bare Live
@@ -537,18 +538,17 @@ def _scheduled_tab_content(player_id):
 def _upload_round_modal(player_id):
     """Start New Round modal -- moved wholesale from my_profile.py (same
     ids, same markup) now that Play is the one place to start a round.
-    Builds its own club-tag/friend-picker option lists rather than reusing
-    ones fetched elsewhere on the page, since the Live tab above doesn't
-    otherwise need either."""
-    with _timed(f"GET /club-players/player/{player_id}"):
-        clubs_resp = requests.get(f"{API_BASE_URL}/club-players/player/{player_id}")
-    clubs = [row["clubs"] for row in clubs_resp.json()] if clubs_resp.status_code == 200 else []
-    # Tagging a casual round with a club (rounds.club_id, see
-    # add_round_club_id.sql) is what lets it show up in that club's player
-    # comparison analysis alongside its tournament rounds -- see
-    # get_club_player_comparison in backend/services/rounds.py.
-    club_tag_options = [{"label": c["name"], "value": c["id"]} for c in clubs]
+    Builds its own friend-picker option list rather than reusing one
+    fetched elsewhere on the page, since the Live tab above doesn't
+    otherwise need it.
 
+    No club-tag dropdown here any more -- a round used to need to be
+    manually tagged with a club to count toward that club's player
+    comparison analysis. Now that's automatic: get_club_player_comparison
+    in backend/services/rounds.py works out for itself which club(s) a
+    round belongs to, by checking which of the round's players are
+    members of which club, so there's nothing for whoever's starting the
+    round to pick here."""
     with _timed(f"GET /friends/player/{player_id}"):
         friends_resp = requests.get(f"{API_BASE_URL}/friends/player/{player_id}")
     friends = friends_resp.json() if friends_resp.status_code == 200 else []
@@ -650,22 +650,6 @@ def _upload_round_modal(player_id):
                                 ],
                             ),
                             dcc.Store(id="upload-round-manual-mode", data=False),
-                            html.Label(
-                                "Playing for a club? (optional)",
-                                className="t3g-modal-label mt-2",
-                            )
-                            if club_tag_options
-                            else None,
-                            dcc.Dropdown(
-                                id="upload-round-club-tag",
-                                placeholder="None -- just a personal round",
-                                options=club_tag_options,
-                                value=None,
-                                clearable=True,
-                                className="mb-2 t3g-course-dropdown",
-                            )
-                            if club_tag_options
-                            else None,
                             html.Label(
                                 "Add up to 3 friends to this round (optional)",
                                 className="t3g-modal-label mt-2",
@@ -951,7 +935,6 @@ def _view_switch_state(view):
     Output("upload-round-manual-fields", "style", allow_duplicate=True),
     Output("upload-round-course-fields", "style", allow_duplicate=True),
     Output("upload-round-friends-store", "data", allow_duplicate=True),
-    Output("upload-round-club-tag", "value", allow_duplicate=True),
     Input("upload-round-button", "n_clicks"),
     Input("upload-round-cancel", "n_clicks"),
     prevent_initial_call=True,
@@ -961,9 +944,8 @@ def toggle_upload_round_modal(open_clicks, cancel_clicks):
     # through the whole chain -- load_courses_for_club(None) clears the
     # course dropdown, which in turn triggers load_tees_for_course(None)
     # clearing the tee dropdown -- so the modal always starts fresh
-    # (manual mode off, no friends carried over from last time, and no
-    # leftover club tag from a previous round) rather than showing a
-    # stale selection.
+    # (manual mode off, no friends carried over from last time) rather
+    # than showing a stale selection.
     triggered_id = dash.ctx.triggered_id
     reset_manual = (False, {"display": "none"}, {})
 
@@ -980,11 +962,11 @@ def toggle_upload_round_modal(open_clicks, cancel_clicks):
             # round_id is explicit here (not just a bare "/play") so this
             # lands directly on that round's scorecard, not back on the
             # hub they just clicked away from.
-            return (False, dash.no_update, f"/play?round_id={response.json()['id']}", *reset_manual, [], None)
+            return (False, dash.no_update, f"/play?round_id={response.json()['id']}", *reset_manual, [])
 
-        return (True, None, dash.no_update, *reset_manual, [], None)
+        return (True, None, dash.no_update, *reset_manual, [])
 
-    return (False, dash.no_update, dash.no_update, *reset_manual, dash.no_update, dash.no_update)
+    return (False, dash.no_update, dash.no_update, *reset_manual, dash.no_update)
 
 
 @callback(
@@ -1131,13 +1113,12 @@ def toggle_continue_button(course_id, tee_id, is_manual, manual_club, manual_tee
     State("upload-round-manual-tee", "value"),
     State("upload-round-manual-rating", "value"),
     State("upload-round-manual-slope", "value"),
-    State("upload-round-club-tag", "value"),
     State("upload-round-friends-store", "data"),
     prevent_initial_call=True,
 )
 def handle_continue_round(
     n_clicks, course_id, tee_id, is_manual, manual_club, manual_tee,
-    manual_rating, manual_slope, club_tag_id, invited_player_ids,
+    manual_rating, manual_slope, invited_player_ids,
 ):
     player_id = session.get("player_id")
     invited_player_ids = invited_player_ids or []
@@ -1148,11 +1129,14 @@ def handle_continue_round(
             dash.no_update,
         )
 
+    # No club_id here any more -- get_club_player_comparison works out
+    # which club(s) this round counts toward itself, from whoever's
+    # actually playing in it. See this page's own _upload_round_modal
+    # docstring.
     payload = {
         "player_id": player_id,
         "is_manual": bool(is_manual),
         "invited_player_ids": invited_player_ids,
-        "club_id": club_tag_id,
     }
 
     if is_manual:

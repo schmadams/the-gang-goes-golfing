@@ -28,6 +28,36 @@ dash.register_page(__name__, path="/my-account", name="My Account")
 _ACCOUNT_TAB_BASE = "t3g-tournament-tab"
 _ACCOUNT_TAB_ACTIVE = "t3g-tournament-tab t3g-tournament-tab--active"
 
+# WHS caps Handicap Index at 54.0 -- same duplicated-as-a-plain-constant
+# pattern club.py/tournament.py's own _MAX_HANDICAP_INDEX use for their
+# min/max handicap steppers (the frontend talks to the backend over HTTP
+# only, so there's no shared Python module to import this from). -10.0 is
+# the same practical floor those two use, reused here since a self-
+# entered Handicap Index can go negative too (elite/plus players).
+_MAX_HANDICAP_INDEX = 54.0
+_MIN_HANDICAP_FLOOR = -10.0
+
+
+def _manual_handicap_stepper():
+    """+/- stepper for manually adding a handicap entry -- same
+    .t3g-stepper/-button/-value/-row/-col markup (and the
+    t3g-stepper--horizontal modifier) live_round.py's Shots/Putts entry
+    and club.py/tournament.py's own min/max handicap steppers all already
+    use, just moving in 0.1 steps instead of whole numbers, since a
+    Handicap Index is always expressed to one decimal place.
+    adjust_manual_handicap_stepper below holds the actual float value in
+    account-handicap-value-store; the display div just mirrors it as
+    text."""
+    return html.Div(
+        className="t3g-stepper t3g-stepper--horizontal",
+        children=[
+            html.Button("–", id="account-handicap-minus", className="t3g-stepper-button", n_clicks=0),
+            html.Div("–", id="account-handicap-display", className="t3g-stepper-value"),
+            html.Button("+", id="account-handicap-plus", className="t3g-stepper-button", n_clicks=0),
+            dcc.Store(id="account-handicap-value-store", data=None),
+        ],
+    )
+
 
 def _account_subnav(active):
     return html.Div(
@@ -320,17 +350,12 @@ def layout(**kwargs):
                         children=[
                             handicap_table,
                             html.Hr(),
-                            dbc.Input(
-                                id="account-handicap-input",
-                                placeholder="New handicap (e.g. 14.2)",
-                                type="number",
-                                step="0.1",
-                                className="mb-2",
-                            ),
+                            html.Div("New handicap", className="t3g-stepper-label mb-1"),
+                            _manual_handicap_stepper(),
                             html.Button(
                                 "Add Handicap Entry",
                                 id="account-handicap-submit",
-                                className="t3g-panel-action-button",
+                                className="t3g-panel-action-button mt-2",
                             ),
                             html.Div(id="account-handicap-message", className="mt-2"),
                             dcc.Location(id="account-handicap-redirect", refresh=True),
@@ -535,16 +560,43 @@ def handle_save_profile(
 
 
 @callback(
+    Output("account-handicap-value-store", "data"),
+    Output("account-handicap-display", "children"),
+    Input("account-handicap-plus", "n_clicks"),
+    Input("account-handicap-minus", "n_clicks"),
+    State("account-handicap-value-store", "data"),
+    prevent_initial_call=True,
+)
+def adjust_manual_handicap_stepper(plus_clicks, minus_clicks, current):
+    # Same asymmetric "plus starts an unset field at 0, minus starts it
+    # at -1" logic club.py's _adjust_handicap_stepper already uses for
+    # the min/max handicap steppers (see that function's own docstring
+    # for why minus isn't just plus's mirror) -- just 0.1 at a time
+    # instead of whole numbers, and rounded after every step since binary
+    # floats can't represent 0.1 exactly (0.1 + 0.1 + 0.1 != 0.3) and that
+    # drift would otherwise show up in the display after enough clicks.
+    triggered_id = dash.ctx.triggered_id
+    value = current
+
+    if triggered_id == "account-handicap-plus":
+        value = 0.0 if value is None else round(min(value + 0.1, _MAX_HANDICAP_INDEX), 1)
+    elif triggered_id == "account-handicap-minus":
+        value = -0.1 if value is None else (round(value - 0.1, 1) if value > _MIN_HANDICAP_FLOOR else None)
+
+    return value, f"{value:.1f}" if value is not None else "–"
+
+
+@callback(
     Output("account-handicap-message", "children"),
     Output("account-handicap-redirect", "href"),
     Input("account-handicap-submit", "n_clicks"),
-    State("account-handicap-input", "value"),
+    State("account-handicap-value-store", "data"),
     prevent_initial_call=True,
 )
 def handle_add_handicap(n_clicks, handicap_value):
-    if not handicap_value:
+    if handicap_value is None:
         return (
-            html.Span("Enter a handicap value.", className="text-danger"),
+            html.Span("Set a handicap value first.", className="text-danger"),
             dash.no_update,
         )
 
@@ -552,7 +604,7 @@ def handle_add_handicap(n_clicks, handicap_value):
     with _timed("POST /handicaps/"):
         response = requests.post(
             f"{API_BASE_URL}/handicaps/",
-            json={"player_id": player_id, "handicap": float(handicap_value)},
+            json={"player_id": player_id, "handicap": handicap_value},
         )
 
     if response.status_code == 201:

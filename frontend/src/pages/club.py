@@ -555,20 +555,43 @@ def _sort_directory(directory, sort_by):
     return sorted(directory, key=lambda row: _player_label(row).lower())
 
 
-def _directory_table(directory, sort_by):
+def _directory_table(directory, sort_by, addable_ids=None):
+    # addable_ids is the set of player_ids from this viewer's own
+    # GET /friends/clubmates/{player_id} response (see layout() below) --
+    # that endpoint already excludes the viewer themself, anyone already
+    # a confirmed friend, and anyone with a pending request between them,
+    # so a row only gets an Add Friend button here if it's genuinely
+    # worth offering. Everyone else's row (self, existing friends,
+    # pending requests) just gets a blank cell in that column instead of
+    # an empty string reading oddly -- no need to explain why a button
+    # isn't there.
+    addable_ids = addable_ids or set()
     ordered = _sort_directory(directory, sort_by)
 
     if not ordered:
         return html.P("No players in this club yet.", className="t3g-empty-state")
 
     rows = [
-        html.Tr([html.Td(_player_label(row)), html.Td(_format_handicap(row))])
+        html.Tr([
+            html.Td(_player_label(row)),
+            html.Td(_format_handicap(row)),
+            html.Td(
+                html.Button(
+                    "Add Friend",
+                    id={"type": "directory-friend-add", "player_id": row["player_id"]},
+                    className="t3g-panel-action-button t3g-directory-friend-button",
+                    n_clicks=0,
+                )
+                if row.get("player_id") in addable_ids
+                else None
+            ),
+        ])
         for row in ordered
     ]
 
     return dbc.Table(
         [
-            html.Thead(html.Tr([html.Th("Name"), html.Th("Handicap")])),
+            html.Thead(html.Tr([html.Th("Name"), html.Th("Handicap"), html.Th("")])),
             html.Tbody(rows),
         ],
         className="t3g-club-directory-table",
@@ -812,14 +835,13 @@ def _feed_post_card(post, slug):
 
 
 def _feed_composer():
-    """Text + optional photo, open to any club member (not just the
-    admin) -- see create_manual_post's own docstring in backend/services/
-    club_posts.py for why. Same dcc.Upload -> base64 -> POST multipart
-    pattern as every other photo upload in this app, except the preview
-    here is wired straight to the Upload component's own `contents`
-    (already a base64 data URL) rather than round-tripping to the
-    backend first -- nothing's actually posted yet at preview time, so
-    there's nothing on the server to fetch a fresh URL from."""
+    """Text-only, open to any club member (not just the admin) -- see
+    create_manual_post's own docstring in backend/services/club_posts.py
+    for why it's member-open. No photo option here anymore -- a manual
+    post has no round behind it, so it can't carry a photo; photos on
+    the feed only ever arrive attached to a round post, via the "Add
+    Photo" control on that round's own card (see home.py's
+    _feed_photo_composer)."""
     return html.Div(
         className="t3g-panel",
         children=[
@@ -832,23 +854,9 @@ def _feed_composer():
                         placeholder="Share an update with the club...",
                         className="mb-2",
                     ),
-                    html.Img(
-                        id="feed-post-photo-preview",
-                        className="t3g-feed-post-image",
-                        style={"display": "none"},
-                    ),
                     html.Div(
                         className="t3g-feed-composer-actions",
                         children=[
-                            dcc.Upload(
-                                id="feed-post-upload",
-                                children=html.Button(
-                                    "Add Photo",
-                                    className="t3g-panel-action-button t3g-panel-action-button--secondary",
-                                ),
-                                accept="image/*",
-                                style={"display": "inline-block"},
-                            ),
                             html.Button(
                                 "Post",
                                 id="feed-post-submit",
@@ -1377,6 +1385,20 @@ def layout(slug=None, tab=None, **kwargs):
     directory_resp = requests.get(f"{API_BASE_URL}/handicaps/club/{club['id']}/latest")
     directory = directory_resp.json() if directory_resp.status_code == 200 else []
 
+    # Which directory rows get an Add Friend button -- reuses the exact
+    # same endpoint the Friends page's own "Add from your Clubs" panel
+    # calls (see frontend/src/pages/friends.py), which already excludes
+    # the viewer themself, confirmed friends, and anyone with a pending
+    # request between them. That set spans every club the viewer's in,
+    # not just this one, but that's fine here -- _directory_table only
+    # ever checks it against this club's own roster.
+    clubmates_resp = requests.get(f"{API_BASE_URL}/friends/clubmates/{player_id}")
+    addable_ids = (
+        [c["player_id"] for c in clubmates_resp.json()]
+        if clubmates_resp.status_code == 200
+        else []
+    )
+
     tournaments_resp = requests.get(f"{API_BASE_URL}/tournaments/club/{club['id']}")
     tournaments = tournaments_resp.json() if tournaments_resp.status_code == 200 else []
 
@@ -1430,15 +1452,17 @@ def layout(slug=None, tab=None, **kwargs):
                                 ],
                             ),
                             dcc.Store(id="club-directory-store", data=directory),
+                            dcc.Store(id="club-directory-addable-store", data=addable_ids),
                             html.Div(
                                 id="club-directory-content",
                                 className="t3g-panel-body",
-                                children=_directory_table(directory, "name"),
+                                children=_directory_table(directory, "name", set(addable_ids)),
                             ),
                         ],
                     ),
                 ],
             ),
+            dcc.Location(id="directory-friend-redirect", refresh=True),
             html.Div(
                 id="club-tab-panel-tournaments",
                 style=tournaments_style,
@@ -1476,16 +1500,43 @@ def layout(slug=None, tab=None, **kwargs):
     Input("club-directory-sort-name", "n_clicks"),
     Input("club-directory-sort-handicap", "n_clicks"),
     State("club-directory-store", "data"),
+    State("club-directory-addable-store", "data"),
     prevent_initial_call=True,
 )
-def sort_club_directory(name_clicks, handicap_clicks, directory):
+def sort_club_directory(name_clicks, handicap_clicks, directory, addable_ids):
     triggered_id = dash.ctx.triggered_id
     sort_by = "handicap" if triggered_id == "club-directory-sort-handicap" else "name"
-    table = _directory_table(directory or [], sort_by)
+    table = _directory_table(directory or [], sort_by, set(addable_ids or []))
 
     if sort_by == "handicap":
         return table, _SORT_BUTTON_BASE, _SORT_BUTTON_ACTIVE
     return table, _SORT_BUTTON_ACTIVE, _SORT_BUTTON_BASE
+
+
+@callback(
+    Output("directory-friend-redirect", "href"),
+    Input({"type": "directory-friend-add", "player_id": ALL}, "n_clicks"),
+    State("_pages_location", "pathname"),
+    prevent_initial_call=True,
+)
+def send_directory_friend_request(n_clicks_list, current_pathname):
+    # Same immediate-refresh pattern as friends.py's own
+    # send_clubmate_friend_request -- clicking Add next to a name you can
+    # already see doesn't need a confirmation modal in between. href (not
+    # pathname) plus the cache-busting query string is the same fix noted
+    # throughout this file (see handle_club_photo_upload/handle_feed_
+    # post_submit's own comments) for dcc.Location only reloading when
+    # its value actually changes.
+    triggered_id = dash.ctx.triggered_id
+    if not triggered_id or not any(n_clicks_list):
+        return dash.no_update
+
+    player_id = session.get("player_id")
+    requests.post(
+        f"{API_BASE_URL}/friends/requests",
+        json={"requester_id": player_id, "recipient_id": triggered_id["player_id"]},
+    )
+    return f"{current_pathname}?_r={time.time()}"
 
 
 @callback(
@@ -1583,62 +1634,32 @@ def handle_club_photo_upload(contents, filename, club_id, current_pathname):
     return "", f"{current_pathname}?_r={time.time()}"
 
 
-dash.clientside_callback(
-    """
-    function(contents) {
-        if (!contents) {
-            return ["", {"display": "none"}];
-        }
-        return [contents, {}];
-    }
-    """,
-    Output("feed-post-photo-preview", "src"),
-    Output("feed-post-photo-preview", "style"),
-    Input("feed-post-upload", "contents"),
-    prevent_initial_call=True,
-)
-
-
 @callback(
     Output("feed-post-error", "children"),
     Output("feed-post-redirect", "href"),
     Input("feed-post-submit", "n_clicks"),
     State("feed-post-body", "value"),
-    State("feed-post-upload", "contents"),
-    State("feed-post-upload", "filename"),
     State("club-id-store", "data"),
     State("_pages_location", "pathname"),
     prevent_initial_call=True,
 )
-def handle_feed_post_submit(n_clicks, body_value, upload_contents, upload_filename, club_id, current_pathname):
+def handle_feed_post_submit(n_clicks, body_value, club_id, current_pathname):
     body_value = (body_value or "").strip()
-    if not body_value and not upload_contents:
-        return "Add some text or a photo before posting.", dash.no_update
+    if not body_value:
+        return "Add some text before posting.", dash.no_update
 
     player_id = session.get("player_id")
-    data = {"author_id": player_id}
-    if body_value:
-        data["body"] = body_value
-
-    files = None
-    if upload_contents:
-        header, encoded = upload_contents.split(",", 1)
-        file_bytes = base64.b64decode(encoded)
-        content_type = header.split(";")[0].replace("data:", "") or "image/jpeg"
-        files = {"file": (upload_filename or "photo.jpg", file_bytes, content_type)}
 
     response = requests.post(
         f"{API_BASE_URL}/clubs/{club_id}/feed",
-        data=data,
-        files=files,
+        data={"author_id": player_id, "body": body_value},
     )
 
     if response.status_code != 201:
         # Same "surface the real backend detail" treatment as every other
         # upload/mutation callback in this app -- create_club_post_route
-        # returns a specific message for NotClubMemberError or
-        # ImageUploadError rather than always showing the same generic
-        # line.
+        # returns a specific message for NotClubMemberError rather than
+        # always showing the same generic line.
         try:
             detail = response.json().get("detail", "Couldn't post that. Try again.")
             if not isinstance(detail, str):

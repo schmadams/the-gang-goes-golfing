@@ -1225,19 +1225,36 @@ def get_club_player_comparison(club_id: str, window: int = 5) -> dict:
       - a tournament round belonging to a tournament this club hosted
         (tournaments.club_id -> tournament_rounds.tournament_id ->
         rounds.tournament_round_id), or
-      - a casual round explicitly tagged with this club
-        (rounds.club_id, see add_round_club_id.sql -- start_round accepts
-        an optional club_id for exactly this).
-    A club member's rounds anywhere else -- a casual round at a random
-    course with no club tag, or a tournament round for a different club
-    -- never count here, even though they'd show up on that player's own
-    Player Analysis page.
+      - a casual round where at least *two* of the accepted players are
+        members of this club. No manual tagging involved (there used to
+        be a rounds.club_id a player could optionally set when starting a
+        round -- that's gone; see backend/models/round.py's own note on
+        RoundStartRequest). The two-member floor is what keeps this
+        meaningfully "the club played together" rather than just "a
+        member happened to play" -- one member's round with friends who
+        aren't in the club is that player's own business, not something
+        the whole club should see plotted here (they still get it on
+        their own Player Analysis page either way). A round counts for
+        every club it clears that floor for, automatically and
+        simultaneously -- if all of a round's players belong to the same
+        club it counts fully for that club, and if only some of them do
+        (say 2 of 3), it still counts, just with only the member(s)' own
+        scorecards plotted -- the non-member player(s) simply don't get a
+        trace here (see the round_players membership filter just below,
+        which is what actually enforces that; it applies identically
+        regardless of whether every player happened to be a member or
+        just some were).
+    A club member's rounds anywhere else -- a solo/1-member-only casual
+    round, or a tournament round for a different club -- never counts
+    here, even though it'd show up on that player's own Player Analysis
+    page.
 
-    Only club members are compared (an invited friend from outside the
-    club who tagged along on a casual club round still gets a scorecard,
-    just not a spot in this comparison), and only members with at least
-    one qualifying round show up at all -- a member who hasn't played a
-    club round yet has nothing to plot.
+    Only club members are compared (a non-member who played alongside one
+    still gets their own scorecard on the round itself, just not a spot
+    in this comparison), and only members with at least one qualifying
+    round show up at all -- a member who hasn't played a round with any
+    fellow member (or in one of this club's tournaments) yet has nothing
+    to plot.
 
     Returns per-player series in the same shapes the single-player
     functions already use (get_player_analysis / get_player_scoring_
@@ -1289,7 +1306,7 @@ def get_club_player_comparison(club_id: str, window: int = 5) -> dict:
 
     # Keyed by round id to naturally dedupe -- a round can only ever match
     # one of the two paths below in practice (a tournament round's
-    # tournament_round_id path, or a casual round's direct club_id tag),
+    # tournament_round_id path, or a casual round with a member in it),
     # but a dict here costs nothing and removes any doubt.
     scoped_rounds: dict[str, dict] = {}
 
@@ -1306,17 +1323,44 @@ def get_club_player_comparison(club_id: str, window: int = 5) -> dict:
         for row in (tourney_rounds_response.data or []):
             scoped_rounds[row["id"]] = row
 
-    with _timed(f"select casual club-tagged rounds for club {club_id} (comparison)"):
-        casual_rounds_response = (
+    # Casual rounds -- no rounds.club_id tag to filter on any more (see
+    # this function's own docstring), so instead: find every round any
+    # member of this club was an accepted player in, then fetch those
+    # rounds directly. tournament_round_id IS NULL keeps this to casual
+    # rounds only -- a tournament round with a member in it is already
+    # covered (or not) by the tournament_round_ids path above, and
+    # letting it through here too would risk pulling in a round for a
+    # *different* club's tournament just because one of this club's
+    # members happened to be entered in it.
+    with _timed(f"select round_players for club {club_id} members (comparison)"):
+        member_round_players_response = (
             supabase
-            .table("rounds")
-            .select("*")
-            .eq("club_id", club_id)
-            .eq("status", "completed")
+            .table("round_players")
+            .select("round_id")
+            .in_("player_id", list(member_ids))
+            .eq("status", "accepted")
             .execute()
         )
-    for row in (casual_rounds_response.data or []):
-        scoped_rounds[row["id"]] = row
+    member_counts_by_round: dict[str, int] = {}
+    for rp in (member_round_players_response.data or []):
+        member_counts_by_round[rp["round_id"]] = member_counts_by_round.get(rp["round_id"], 0) + 1
+    # >= 2, not >= 1 -- see this function's own docstring for why a
+    # single member playing with non-member friends shouldn't count.
+    member_round_ids = [round_id for round_id, count in member_counts_by_round.items() if count >= 2]
+
+    if member_round_ids:
+        with _timed(f"select casual rounds for club {club_id} members (comparison)"):
+            casual_rounds_response = (
+                supabase
+                .table("rounds")
+                .select("*")
+                .in_("id", member_round_ids)
+                .eq("status", "completed")
+                .is_("tournament_round_id", "null")
+                .execute()
+            )
+        for row in (casual_rounds_response.data or []):
+            scoped_rounds[row["id"]] = row
 
     rounds = sorted(scoped_rounds.values(), key=lambda r: r.get("completed_at") or "")
     if not rounds:
@@ -1500,10 +1544,10 @@ def start_round(payload: dict) -> dict:
         "manual_tee_name": payload.get("manual_tee_name"),
         "manual_course_rating": payload.get("manual_course_rating"),
         "manual_slope_rating": payload.get("manual_slope_rating"),
-        # Optional club tag (see add_round_club_id.sql) -- lets a casual
-        # round count toward that club's player comparison analysis, the
-        # same way a tournament round already does via tournament_round_id.
-        "club_id": payload.get("club_id"),
+        # No club_id written here any more -- get_club_player_comparison
+        # now figures out which clubs a casual round counts toward itself
+        # (by round_players membership), rather than relying on a tag set
+        # at creation time. See that function's own docstring.
     }
 
     with _timed("insert rounds row"):

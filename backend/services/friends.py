@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 
 from backend.database import supabase
+from backend.services.club_players import list_clubs_for_player, list_players_in_club
 
 # PostgREST embed hints for the two FKs friend_requests has onto players --
 # without the "!constraint_name" hint, a select("*, players(...)") would be
@@ -136,6 +137,74 @@ def list_friends(player_id: str) -> list[dict]:
                 "nickname": other.get("nickname"),
             })
     return friends
+
+
+def list_clubmates_available_to_add(player_id: str) -> list[dict]:
+    """Every player who shares at least one club with this player, minus
+    anyone there's no point offering: this player themself, anyone
+    already a confirmed friend, and anyone with a friend request already
+    pending between the two of them in either direction (an already-
+    declined request doesn't block this -- same "declined isn't final"
+    rule _existing_request already applies to sending a fresh request by
+    ID). Powers the "Add from your Clubs" panel on the Friends page (see
+    frontend/src/pages/friends.py) -- the alternative to typing in a
+    Player ID by hand, for the common case of wanting to friend someone
+    you already know through a shared club.
+
+    Returns [{"player_id", "first_name", "surname", "nickname",
+    "club_names"}, ...], sorted by name. club_names is every club shared
+    with this player (usually just one, but a pair of players in more
+    than one club together will have all of them listed) -- shown
+    alongside their name so it's clear where you know them from."""
+    my_clubs = list_clubs_for_player(player_id)
+    club_name_by_id = {
+        row["club_id"]: (row.get("clubs") or {}).get("name", "a club")
+        for row in my_clubs
+    }
+    if not club_name_by_id:
+        return []
+
+    clubmates: dict[str, dict] = {}
+    for club_id, club_name in club_name_by_id.items():
+        for row in list_players_in_club(club_id):
+            other_id = row.get("player_id")
+            if not other_id or other_id == player_id:
+                continue
+            other = row.get("players") or {}
+            entry = clubmates.setdefault(other_id, {
+                "player_id": other_id,
+                "first_name": other.get("first_name"),
+                "surname": other.get("surname"),
+                "nickname": other.get("nickname"),
+                "club_names": [],
+            })
+            if club_name not in entry["club_names"]:
+                entry["club_names"].append(club_name)
+
+    if not clubmates:
+        return []
+
+    # Exclude confirmed friends and anyone with a pending request already
+    # between us in either direction -- same "nothing worth offering
+    # twice" idea as play.py's upload-round-friend-picker filtering
+    # already-selected friends back out of its own remaining options,
+    # just against club rosters instead of an in-progress selection.
+    existing_response = (
+        supabase
+        .table("friend_requests")
+        .select("requester_id, recipient_id, status")
+        .or_(f"requester_id.eq.{player_id},recipient_id.eq.{player_id}")
+        .neq("status", "declined")
+        .execute()
+    )
+    for row in (existing_response.data or []):
+        other_id = row["recipient_id"] if row["requester_id"] == player_id else row["requester_id"]
+        clubmates.pop(other_id, None)
+
+    return sorted(
+        clubmates.values(),
+        key=lambda p: p.get("nickname") or f"{p.get('first_name', '')} {p.get('surname', '')}".strip(),
+    )
 
 
 def are_friends(player_a: str, player_b: str) -> bool:

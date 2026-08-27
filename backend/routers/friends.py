@@ -9,6 +9,7 @@ from backend.services.friends import (
     PlayerNotFoundError,
     SelfFriendRequestError,
     cancel_friend_request,
+    list_clubmates_available_to_add,
     list_friends,
     list_pending_requests,
     remove_friend,
@@ -71,6 +72,13 @@ def decline_friend_request_route(request_id: str, player_id: str):
 @router.get("/player/{player_id}")
 def list_friends_route(player_id: str):
     return list_friends(player_id)
+
+
+@router.get("/clubmates/{player_id}")
+def list_clubmates_available_to_add_route(player_id: str):
+    """Powers the Friends page's "Add from your Clubs" panel -- the
+    alternative to typing in a Player ID by hand."""
+    return list_clubmates_available_to_add(player_id)
 
 
 @router.delete("/{friend_id}", status_code=status.HTTP_204_NO_CONTENT)

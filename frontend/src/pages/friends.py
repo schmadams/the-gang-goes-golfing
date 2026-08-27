@@ -69,11 +69,18 @@ def _player_label(player):
     return player.get("nickname") or f"{player.get('first_name', '')} {player.get('surname', '')}".strip()
 
 
-def _request_row(other_player, action_children):
+def _request_row(other_player, action_children, subtitle=None):
+    # subtitle is only ever used by _clubmate_row below (the shared
+    # club(s) this suggestion came from) -- every other caller leaves it
+    # unset, so the plain single-line row (incoming/outgoing requests)
+    # keeps rendering exactly as before.
+    name_children = [html.Span(_player_label(other_player), className="t3g-friend-request-name")]
+    if subtitle:
+        name_children.append(html.Span(subtitle, className="t3g-friend-request-subtitle"))
     return html.Div(
         className="t3g-friend-request-row",
         children=[
-            html.Span(_player_label(other_player), className="t3g-friend-request-name"),
+            html.Div(name_children, className="t3g-friend-request-name-group"),
             html.Div(action_children, className="t3g-friend-request-actions"),
         ],
     )
@@ -106,6 +113,27 @@ def _friend_row(friend):
     )
 
 
+def _clubmate_row(clubmate):
+    # Same _request_row shell everything else on this page uses, but the
+    # action is a single "Add" button rather than the request-row's
+    # usual Accept/Decline or Cancel pair -- clicking it sends the
+    # request immediately (see send_clubmate_friend_request below), no
+    # confirmation modal in between, since seeing someone's real name
+    # right here already gives the same reassurance the "who did this
+    # go to" confirmation modal exists to give the Player-ID flow below.
+    club_names = ", ".join(clubmate.get("club_names") or [])
+    return _request_row(
+        clubmate,
+        html.Button(
+            "Add",
+            id={"type": "clubmate-add", "player_id": clubmate["player_id"]},
+            className="t3g-panel-action-button",
+            n_clicks=0,
+        ),
+        subtitle=club_names,
+    )
+
+
 def layout(**kwargs):
     player_id = session.get("player_id")
 
@@ -120,6 +148,23 @@ def layout(**kwargs):
 
     friends_resp = requests.get(f"{API_BASE_URL}/friends/player/{player_id}")
     friends = friends_resp.json() if friends_resp.status_code == 200 else []
+
+    clubmates_resp = requests.get(f"{API_BASE_URL}/friends/clubmates/{player_id}")
+    clubmates = clubmates_resp.json() if clubmates_resp.status_code == 200 else []
+
+    if clubmates:
+        clubmates_section = html.Div(
+            className="t3g-friend-request-list",
+            children=[_clubmate_row(c) for c in clubmates],
+        )
+    else:
+        # Covers both "not in any clubs yet" and "already friends with
+        # (or already have a pending request with) everyone you share a
+        # club with" -- no need to tell those two apart here, since
+        # either way there's nothing left to suggest.
+        clubmates_section = html.P(
+            "No one new to add from your clubs right now.", className="t3g-empty-state"
+        )
 
     if incoming:
         received_section = html.Div(
@@ -183,12 +228,20 @@ def layout(**kwargs):
             html.Div(
                 className="t3g-panel",
                 children=[
-                    build_panel_navbar("Add a Friend"),
+                    build_panel_navbar("Add from your Clubs"),
+                    html.Div(clubmates_section, className="t3g-panel-body"),
+                ],
+            ),
+            html.Div(
+                className="t3g-panel",
+                children=[
+                    build_panel_navbar("Add by Player ID"),
                     html.Div(
                         className="t3g-panel-body",
                         children=[
                             html.P(
-                                "Ask your friend for their Player ID -- it's on their My Account page.",
+                                "For anyone you don't share a club with -- ask your friend "
+                                "for their Player ID, it's on their My Account page.",
                                 className="t3g-empty-state mb-2",
                             ),
                             dbc.Input(
@@ -298,6 +351,30 @@ def close_friend_request_sent_modal(n_clicks):
     # behavior) swapped the whole page out right as the button was
     # clicked, which is exactly why it wasn't clear anything had happened.
     return False, _refresh_href()
+
+
+@callback(
+    Output("friends-refresh", "href", allow_duplicate=True),
+    Input({"type": "clubmate-add", "player_id": ALL}, "n_clicks"),
+    prevent_initial_call=True,
+)
+def send_clubmate_friend_request(n_clicks_list):
+    # No confirmation modal here, unlike send_friend_request above --
+    # that one exists because typing a Player ID by hand has real typo
+    # risk ("did this actually go to who I meant?"). Clicking Add next to
+    # a name you can already see doesn't have that problem, so this just
+    # refreshes straight away, same immediate-refresh pattern as accept/
+    # decline/cancel/remove below.
+    triggered_id = dash.ctx.triggered_id
+    if not triggered_id or not any(n_clicks_list):
+        return dash.no_update
+
+    player_id = session.get("player_id")
+    requests.post(
+        f"{API_BASE_URL}/friends/requests",
+        json={"requester_id": player_id, "recipient_id": triggered_id["player_id"]},
+    )
+    return _refresh_href()
 
 
 @callback(

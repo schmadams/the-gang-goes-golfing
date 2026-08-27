@@ -1,5 +1,4 @@
-
-# target path: backend/routers/clubs.py (new file -- replaces backend/routers/groups.py, which should be deleted)
+# target path: backend/routers/clubs.py (full replacement)
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 
 from backend.models.club import ClubCreate, ClubResponse
@@ -99,31 +98,25 @@ def get_club_feed_route(club_id: str, limit: int = 30):
 
 
 @router.post("/{club_id}/feed", status_code=status.HTTP_201_CREATED)
-async def create_club_post_route(
+def create_club_post_route(
     club_id: str,
     author_id: str = Form(...),
-    body: str | None = Form(None),
-    file: UploadFile | None = File(None),
+    body: str = Form(...),
 ):
-    # Same "at least one of text or photo" requirement the frontend
-    # composer already enforces client-side -- checked again here since
-    # this route has no other way to reject an entirely-empty post.
-    if not (body and body.strip()) and file is None:
+    # Text-only -- a manual post has no round behind it, so it can't
+    # carry a photo (only a round post can, via add_round_post_photo on
+    # the finished round itself). Still checked server-side even though
+    # the frontend composer already requires text before enabling Post.
+    if not body.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Add some text or a photo before posting.",
+            detail="Add some text before posting.",
         )
 
-    file_bytes = await file.read() if file is not None else None
-    filename = file.filename if file is not None else None
-    content_type = file.content_type if file is not None else None
-
     try:
-        return create_manual_post(club_id, author_id, body, file_bytes, filename, content_type)
+        return create_manual_post(club_id, author_id, body.strip())
     except NotClubMemberError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
-    except ImageUploadError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
 
 
 @router.delete("/{club_id}", response_model=ClubResponse)

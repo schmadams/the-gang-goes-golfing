@@ -20,6 +20,23 @@
     padding: 0.5rem 0.75rem;
     color: #1e2a47;
 }
+
+/* The Add Friend column's header cell is intentionally blank (see
+   _directory_table in club.py) -- this just keeps the button column from
+   stretching wider than the button itself needs. */
+.t3g-club-directory-table th:last-child,
+.t3g-club-directory-table td:last-child {
+    width: 1%;
+    white-space: nowrap;
+}
+
+/* Smaller than the standard .t3g-panel-action-button -- sitting inside a
+   table row alongside plain text, the usual size reads oversized. Same
+   pink pill, just tightened down. */
+.t3g-directory-friend-button {
+    padding: 0.3rem 0.7rem;
+    font-size: 0.68rem;
+}
 /* Tighter panel spacing for this page only -- .t3g-panel/-navbar/-body
    are shared globally, so these overrides are scoped under
    .t3g-club-page (set on the page's root div) rather than changing them

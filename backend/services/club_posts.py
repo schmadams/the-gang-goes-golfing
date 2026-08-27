@@ -1,10 +1,5 @@
-# target path: backend/services/club_posts.py (new file)
-import time
-
+# target path: backend/services/club_posts.py (full replacement)
 from backend.database import supabase
-from backend.services.storage import extension_for, upload_image
-
-CLUB_POST_PHOTO_BUCKET = "club-post-photos"
 
 # club_posts.author_id has exactly one FK onto players (unlike
 # club_invites' two), so a plain unqualified embed is unambiguous --
@@ -36,36 +31,21 @@ def _is_club_member(club_id: str, player_id: str) -> bool:
     return bool(response is not None and response.data)
 
 
-def create_manual_post(
-    club_id: str,
-    author_id: str,
-    body: str | None,
-    file_bytes: bytes | None,
-    filename: str | None,
-    content_type: str | None,
-) -> dict:
-    """A member-authored update on the club's feed -- text, a photo, or
-    both (the router requires at least one of the two before this is
-    ever called). Any club member can post here, not just the admin --
-    unlike Invite/Club Photo/Create Tournament, which stay admin-only
-    actions gathered under the Admin tab, the feed is meant to feel like
-    a shared space every member can contribute to, not another
-    announcement channel.
+def create_manual_post(club_id: str, author_id: str, body: str) -> dict:
+    """A member-authored text update on the club's feed. Any club member
+    can post here, not just the admin -- unlike Invite/Club Photo/Create
+    Tournament, which stay admin-only actions gathered under the Admin
+    tab, the feed is meant to feel like a shared space every member can
+    contribute to, not another announcement channel.
 
-    Reuses the same storage.upload_image/extension_for helper the
-    profile-picture and club-photo uploads already share -- unlike those
-    two, though, each post's photo needs its own unique storage path
-    (a member can post more than one photo over time; player/club photos
-    are always exactly one file that a fresh upload should overwrite),
-    so the path includes a millisecond timestamp rather than being keyed
-    purely on club_id/author_id."""
+    Text-only, deliberately -- photos on the feed now only ever arrive
+    attached to a round post (see round_posts.add_round_post_photo).
+    club_posts.image_url stays in the table (still populated on old
+    rows), it just never gets written by this path anymore, the same
+    "leave the column, stop writing it" treatment as rounds.club_id
+    after the auto club-scoping change."""
     if not _is_club_member(club_id, author_id):
         raise NotClubMemberError("Only members of this club can post to its feed.")
-
-    image_url = None
-    if file_bytes:
-        storage_path = f"{club_id}/{author_id}-{int(time.time() * 1000)}{extension_for(filename)}"
-        image_url = upload_image(CLUB_POST_PHOTO_BUCKET, storage_path, file_bytes, content_type)
 
     response = (
         supabase
@@ -75,7 +55,6 @@ def create_manual_post(
             "post_type": "manual",
             "author_id": author_id,
             "body": body,
-            "image_url": image_url,
         })
         .execute()
     )

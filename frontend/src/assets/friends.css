@@ -1,4 +1,4 @@
-/* target path: frontend/src/assets/friends.css (new file) */
+/* target path: frontend/src/assets/friends.css (full replacement) */
 
 .t3g-friend-request-list {
     display: flex;
@@ -19,6 +19,26 @@
 .t3g-friend-request-name {
     color: #1e2a47;
     font-weight: 700;
+}
+
+/* Wraps the name + subtitle on the "Add from your Clubs" rows -- every
+   other row on this page (incoming/outgoing requests, confirmed
+   friends) only ever passes a bare name with no subtitle, so this stays
+   a plain block with no extra spacing unless a subtitle is actually
+   present (see _request_row's own subtitle param in friends.py). */
+.t3g-friend-request-name-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+}
+
+/* The shared club name(s) a clubmate suggestion came from -- same muted
+   small-caps-adjacent treatment as .t3g-friend-request-pending below,
+   just not uppercase (a club's real name, not a status label). */
+.t3g-friend-request-subtitle {
+    color: #6b7280;
+    font-weight: 600;
+    font-size: 0.78rem;
 }
 
 .t3g-friend-request-actions {

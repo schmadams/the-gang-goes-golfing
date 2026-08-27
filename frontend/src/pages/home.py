@@ -190,6 +190,15 @@ def _feed_round_body(post, view):
 
 
 def _feed_photo_composer(round_id, can_add_photo):
+    """The only place a photo can still be attached to a feed post -- see
+    club.py's _feed_composer for why manual posts lost their own upload
+    control. multiple=True here (unlike every other single-file
+    dcc.Upload in this app -- profile picture, club photo, manual post)
+    since a round can carry as many photos as its players want to add,
+    with no cap in add_round_post_photo; selecting several at once in
+    the file picker is the deliberate "attach as many as you like"
+    affordance, on top of the fact that re-opening the picker to add
+    more later still works too."""
     if not can_add_photo:
         return None
     return html.Div(
@@ -198,9 +207,10 @@ def _feed_photo_composer(round_id, can_add_photo):
             dcc.Upload(
                 id={"type": "feed-photo-upload", "round_id": round_id},
                 children=html.Button(
-                    "Add Photo", className="t3g-panel-action-button t3g-panel-action-button--secondary"
+                    "Add Photos", className="t3g-panel-action-button t3g-panel-action-button--secondary"
                 ),
                 accept="image/*",
+                multiple=True,
                 style={"display": "inline-block"},
             ),
             html.Div(id={"type": "feed-photo-error", "round_id": round_id}, className="text-danger mt-2"),
@@ -388,31 +398,48 @@ def switch_feed_round_view(prev_clicks, next_clicks, current_view, post):
     State({"type": "feed-photo-list", "round_id": MATCH}, "children"),
     prevent_initial_call=True,
 )
-def handle_feed_photo_upload(contents, filename, current_children):
-    if not contents:
+def handle_feed_photo_upload(contents_list, filename_list, current_children):
+    # multiple=True on the Upload component means both of these arrive
+    # as lists (one entry per file picked in a single dialog), even for
+    # a single file -- posted one at a time in a plain loop rather than
+    # batched server-side, same add_round_post_photo call repeated per
+    # file, so one bad file (wrong type, upload failure) doesn't have to
+    # take the rest down with it: whatever succeeds still lands in the
+    # gallery, and the error line reports only the ones that didn't.
+    if not contents_list:
         return "", dash.no_update
 
     round_id = dash.ctx.triggered_id["round_id"]
     player_id = session.get("player_id")
+    filename_list = filename_list or []
 
-    header, encoded = contents.split(",", 1)
-    file_bytes = base64.b64decode(encoded)
-    content_type = header.split(";")[0].replace("data:", "") or "image/jpeg"
+    new_photos = []
+    failures = []
+    for i, contents in enumerate(contents_list):
+        filename = filename_list[i] if i < len(filename_list) else None
 
-    response = requests.post(
-        f"{API_BASE_URL}/rounds/{round_id}/post/photo",
-        data={"author_id": player_id},
-        files={"file": (filename or "photo.jpg", file_bytes, content_type)},
-    )
+        header, encoded = contents.split(",", 1)
+        file_bytes = base64.b64decode(encoded)
+        content_type = header.split(";")[0].replace("data:", "") or "image/jpeg"
 
-    if response.status_code != 201:
-        try:
-            detail = response.json().get("detail", "Couldn't add that photo. Try again.")
-            if not isinstance(detail, str):
-                detail = "Couldn't add that photo. Try again."
-        except ValueError:
-            detail = "Couldn't add that photo. Try again."
-        return detail, dash.no_update
+        response = requests.post(
+            f"{API_BASE_URL}/rounds/{round_id}/post/photo",
+            data={"author_id": player_id},
+            files={"file": (filename or "photo.jpg", file_bytes, content_type)},
+        )
 
-    new_photo = html.Img(src=response.json()["image_url"], className="t3g-feed-post-image")
-    return "", (current_children or []) + [new_photo]
+        if response.status_code != 201:
+            try:
+                detail = response.json().get("detail", "Couldn't add that photo.")
+                if not isinstance(detail, str):
+                    detail = "Couldn't add that photo."
+            except ValueError:
+                detail = "Couldn't add that photo."
+            failures.append(f"{filename or 'A photo'}: {detail}")
+            continue
+
+        new_photos.append(html.Img(src=response.json()["image_url"], className="t3g-feed-post-image"))
+
+    error_text = " ".join(failures)
+    children = (current_children or []) + new_photos if new_photos else dash.no_update
+    return error_text, children
