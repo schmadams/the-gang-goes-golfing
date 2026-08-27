@@ -123,14 +123,28 @@
 
 /* Fixed 2-column grid (2xN) rather than auto-fill -- auto-fill let a
    short club list (e.g. 3 clubs) spread into a single wide row of N
-   narrow tiles instead of wrapping into a stable, predictable shape. */
+   narrow tiles instead of wrapping into a stable, predictable shape.
+
+   The mobile override below used to switch to 500px instead of the
+   700px cutoff every other mobile treatment in this app uses (.t3g-page,
+   .t3g-panel-grid, the bottom nav's own visibility breakpoint) -- so on
+   a real phone (anywhere from 500px up to 700px wide, where the bottom
+   nav is already showing and everything else has already gone
+   full-width), this grid was still rendering 2 fixed-width columns side
+   by side. With not enough room for two, the row overflowed horizontally
+   instead of wrapping, which is what pushed the second column off-screen
+   -- a club tile that LOOKED like a single narrow column with a gap on
+   the right was actually the left half of a 2-column row the phone
+   couldn't fit, with the right half scrolled out of view. Matching the
+   700px cutoff here is the actual fix, not a width tweak on the tile
+   itself. */
 .t3g-clubs-list {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
     gap: 1rem;
 }
 
-@media (max-width: 500px) {
+@media (max-width: 700px), (max-height: 500px) {
     .t3g-clubs-list {
         grid-template-columns: 1fr;
     }

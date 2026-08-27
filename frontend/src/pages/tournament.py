@@ -335,10 +335,23 @@ def _tee_times_panel(tournament, is_admin, player_id):
             entrant_options = [
                 {"label": _entrant_label(e), "value": e["player_id"]} for e in confirmed_entrants
             ]
+            # Fixed-minimum column widths (not minmax(0, ...)) -- on a
+            # narrow phone, letting player columns squeeze all the way to
+            # 0 is what caused labels/dropdown text to overlap and clip
+            # (e.g. "Player B"'s label bleeding into "Player A"'s column).
+            # minmax(88px, 1fr) means a column never goes below a legible
+            # width; the row can end up wider than the viewport instead,
+            # which is what .t3g-teetime-assign-table-scroll (wrapped
+            # around this table below) is for -- same horizontal-scroll
+            # pattern the read-only recap table already uses for the same
+            # reason (see .t3g-teetime-group-list-scroll in club.css). The
+            # Tee Time column itself is also narrower now (140px vs the
+            # old 210px) since a compact time input + Save button doesn't
+            # need that much room.
             grid_style = (
-                {"gridTemplateColumns": f"210px repeat({group_size}, minmax(0, 1fr))"}
+                {"gridTemplateColumns": f"140px repeat({group_size}, minmax(88px, 1fr))"}
                 if is_manual
-                else {"gridTemplateColumns": "210px 1fr"}
+                else {"gridTemplateColumns": "140px 1fr"}
             )
 
             header_children = [html.Span("Tee Time", className="t3g-teetime-assign-col-label")]
@@ -442,7 +455,10 @@ def _tee_times_panel(tournament, is_admin, player_id):
                         "Assign Players" if is_manual else "Manage Tee Times",
                         className="t3g-modal-label t3g-tournament-rounds-label mt-2 mb-1",
                     ),
-                    html.Div([header_row] + slot_rows, className="t3g-teetime-assign-table"),
+                    html.Div(
+                        html.Div([header_row] + slot_rows, className="t3g-teetime-assign-table"),
+                        className="t3g-teetime-assign-table-scroll",
+                    ),
                     html.Button(
                         "Save Assignments",
                         id={"type": "tournament-teetime-save-assignments", "round_id": round_id},

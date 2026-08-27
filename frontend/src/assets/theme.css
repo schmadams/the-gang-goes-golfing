@@ -1,12 +1,9 @@
 /* target path: frontend/src/assets/theme.css (new file)
 
-   App-wide design tokens, base typography, and light/dark theme
-   switching. Rebuilt from computed styles measured directly on
-   sharplink.com/dashboard and sharplink.com/investors via Chrome
-   devtools, not from screenshots or assumptions. The earlier version of
-   this file (Inter font, 800-weight headings, 20px card radius, soft
-   double box-shadows) was wrong on every one of those points, this
-   version replaces it wholesale.
+   App-wide design tokens and base typography. Rebuilt from computed
+   styles measured directly on sharplink.com/dashboard and
+   sharplink.com/investors via Chrome devtools, not from screenshots or
+   assumptions.
 
    Real measured values this file is built from:
    - Fonts: "Archivo" (body text, big numbers) and "Archivo Narrow"
@@ -29,27 +26,24 @@
    - Text input: background rgba(38,38,41,0.45), radius 0.
    - Essentially everything sampled has border-radius: 0 and
      box-shadow: none -- the real site's whole aesthetic is flat and
-     shadow-free, the opposite of this file's first draft.
+     shadow-free.
 
    The accent stays this app's existing pink rather than switching to
    Sharplink's light blue -- pink is already the one interactive accent
    used in roughly a hundred places across this app (buttons, links,
-   live indicators, notification badges), and the biggest gap between
-   the first re-theme attempt and the real site was structural (font,
-   radius, shadow, card treatment), not hue. The accent is now shaped
-   like Sharplink's own chips though: flat, uppercase, tracked-out
-   Archivo Narrow labels instead of soft filled pills.
+   live indicators, notification badges). The accent is shaped like
+   Sharplink's own chips though: flat, uppercase, tracked-out Archivo
+   Narrow labels instead of soft filled pills.
 
-   Sharplink itself doesn't appear to have a true light-background
-   dashboard anywhere sampled (the /investors page still uses a dark
-   navy gradient hero) -- so the light theme below is this app's own
-   extrapolation of the same flat/sharp/shadow-free structural rules
-   onto a light page, not a direct copy of a light Sharplink screen.
-
-   How the toggle actually works: see layouts/navbar.py for the button
-   and its clientside callback, and app.py's index_string for the small
-   inline script that applies a saved preference before Dash mounts
-   (so there is no flash of the wrong theme on first paint).
+   Dark-only: this app shipped with a light/dark toggle for a few
+   iterations, but the light theme was always this app's own
+   extrapolation (Sharplink itself has no true light dashboard to
+   measure against) and it wasn't landing well visually, so the toggle,
+   the second token block, and every `data-theme` branch have been
+   removed -- there is exactly one palette now, the dark one below, and
+   it's just `:root`, not conditional on anything. See layouts/navbar.py
+   and app.py for the corresponding removal of the toggle button and its
+   callbacks/localStorage-read script.
 
    Not included here: a rebrand of the app's semantic golf colors
    (birdie/eagle green, NR/pending amber, leaderboard-leader green in
@@ -59,70 +53,18 @@
    to one accent would remove information rather than tidy up
    decoration. Those badge-style colors (pending, done, over/under par,
    NR, handicap up/down) read var(--t3g-success-bg/text), --t3g-warning-
-   bg/text, and --t3g-danger-bg/text below, each theme block gets its
-   own light/dark-appropriate pairing, and (per this rebuild) a 0px
-   radius to match the real site's flat chip shape. */
+   bg/text, and --t3g-danger-bg/text below, with a 0px radius to match
+   the real site's flat chip shape. */
 
 @import url('https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Archivo+Narrow:wght@400;500;600&display=swap');
 
 :root {
-    color-scheme: light;
-
-    --t3g-bg: #f7f7f5;
-    /* Subtle top-to-bottom blend rather than a flat fill -- matches the
-       soft color blending on sharplink.com's own gradient hero sections
-       (confirmed via devtools on /investors), just inverted light-to-
-       lighter instead of dark-to-black since this theme's base is light. */
-    --t3g-bg-gradient: linear-gradient(180deg, #e9ecf3 0%, #f7f7f5 55%);
-    --t3g-surface: rgba(17, 17, 17, 0.045);
-    --t3g-surface-raised: rgba(17, 17, 17, 0.07);
-    --t3g-border: rgba(17, 17, 17, 0.12);
-    --t3g-border-strong: rgba(17, 17, 17, 0.22);
-
-    --t3g-ink: #111111;
-    --t3g-muted: rgba(17, 17, 17, 0.6);
-    --t3g-muted-2: rgba(17, 17, 17, 0.4);
-
-    --t3g-accent: #c21861;
-    --t3g-accent-soft: rgba(194, 24, 97, 0.08);
-
-    /* Opaque modal/dialog background. --t3g-surface is a ~5% translucent
-       wash designed for cards sitting on a solid page -- fine there
-       since the page shows through only faintly and evenly, but wrong
-       for a modal, whose whole job is to obscure the page behind it.
-       A translucent modal lets navbar/button/page chrome visibly bleed
-       through the dialog, which is exactly the bug this fixes. This is
-       a distinct, fully opaque token, not a reuse of --t3g-surface. */
-    --t3g-modal-bg: #ffffff;
-
-    /* Badge/pill pairs used across club.css, live_round.css, home.css,
-       and round_signoff.css (leaderboard totals, handicap up/down,
-       pending/done sign-off status, NR). Light mode keeps this app's
-       original pastel-background-plus-dark-text look. */
-    --t3g-success-bg: #eaf6ec;
-    --t3g-success-text: #1f7a34;
-    --t3g-warning-bg: #fdf1e3;
-    --t3g-warning-text: #b45309;
-    --t3g-danger-bg: #fdecec;
-    --t3g-danger-text: #dc2626;
-
-    /* Sharplink's real dashboard is flat: 0px radius, no shadow, on
-       every card/chip/button sampled. Kept as variables (not replaced
-       with literal 0/none inline everywhere) so this is still one
-       place to change, not a hardcoded assumption baked into every
-       file that references it. */
-    --t3g-radius-lg: 0px;
-    --t3g-radius-md: 0px;
-    --t3g-shadow-card: none;
-}
-
-html[data-theme="dark"] {
     color-scheme: dark;
 
     --t3g-bg: #000000;
-    /* Same subtle blend as light mode's, dark-navy-to-black -- matches
-       the measured gradient on sharplink.com's own dark hero sections
-       rather than a completely flat fill. */
+    /* Subtle top-to-bottom blend rather than a flat fill -- matches the
+       soft color blending on sharplink.com's own gradient hero sections
+       (confirmed via devtools on /investors). */
     --t3g-bg-gradient: linear-gradient(180deg, #0a0e1a 0%, #000000 55%);
     --t3g-surface: rgba(255, 255, 255, 0.06);
     --t3g-surface-raised: rgba(255, 255, 255, 0.1);
@@ -136,9 +78,11 @@ html[data-theme="dark"] {
     --t3g-accent: #e91e78;
     --t3g-accent-soft: rgba(233, 30, 120, 0.1);
 
-    /* Opaque, slightly lifted off pure-black --t3g-bg so the dialog
-       still reads as a distinct surface even though nothing here is
-       translucent. */
+    /* Opaque, slightly lifted off pure-black --t3g-bg so a modal still
+       reads as a distinct surface even though nothing here is
+       translucent -- --t3g-surface itself is only ~6% opacity, fine for
+       a card sitting on the page but not opaque enough for a dialog
+       that needs to fully obscure whatever's behind it. */
     --t3g-modal-bg: #141414;
 
     --t3g-success-bg: rgba(30, 125, 52, 0.16);
@@ -148,6 +92,13 @@ html[data-theme="dark"] {
     --t3g-danger-bg: rgba(220, 38, 38, 0.16);
     --t3g-danger-text: #f28b8b;
 
+    /* Sharplink's real dashboard is flat: 0px radius, no shadow, on
+       every card/chip/button sampled. Kept as variables (not replaced
+       with literal 0/none inline everywhere) so this is still one
+       place to change, not a hardcoded assumption baked into every
+       file that references it. */
+    --t3g-radius-lg: 0px;
+    --t3g-radius-md: 0px;
     --t3g-shadow-card: none;
 }
 
@@ -243,44 +194,9 @@ a {
     color: #6fa8ff;
 }
 
-html[data-theme="light"] .t3g-trend-pill--positive {
-    color: #2f6fd6;
-}
-
 .t3g-trend-pill--negative {
     background: rgba(255, 107, 107, 0.08);
     color: #ff8f8f;
-}
-
-html[data-theme="light"] .t3g-trend-pill--negative {
-    color: #c23b3b;
-}
-
-/* Theme toggle button, see layouts/navbar.py. Same translucent-chip
-   treatment as the nav links next to it (var(--t3g-surface-raised)
-   resting background) rather than sitting bare, so it reads as one more
-   item in the same nav row instead of a visually separate control -- a
-   thin fa-regular sun/moon glyph (not the old bold solid icon) keeps it
-   from feeling heavier than the text links either side of it. */
-.t3g-theme-toggle {
-    background: var(--t3g-surface-raised);
-    border: none;
-    color: var(--t3g-muted);
-    width: 2.3rem;
-    height: 2.3rem;
-    border-radius: var(--t3g-radius-md);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    font-size: 0.9rem;
-    transition: color 0.15s ease, background 0.15s ease, transform 0.15s ease;
-}
-
-.t3g-theme-toggle:hover {
-    background: var(--t3g-surface);
-    color: var(--t3g-ink);
-    transform: rotate(-12deg);
 }
 
 /* Global dbc.Modal theming -- every modal in this app renders via
@@ -309,11 +225,9 @@ html[data-theme="light"] .t3g-trend-pill--negative {
 }
 
 /* Bootstrap's default close-button "X" is a black SVG applied via a CSS
-   mask/background-image, invisible against a dark modal now that
-   .modal-content above follows the theme instead of always being white.
-   invert(1) flips it to white in dark mode; light mode is untouched
-   since the default already reads fine there. */
-html[data-theme="dark"] .modal-header .btn-close {
+   mask/background-image, invisible against this app's always-dark modal
+   background -- invert(1) flips it to white. */
+.modal-header .btn-close {
     filter: invert(1) grayscale(100%) brightness(1.8);
 }
 
@@ -355,4 +269,25 @@ html[data-theme="dark"] .modal-header .btn-close {
 
 .Select.is-disabled .Select-value-label {
     color: rgba(17, 17, 17, 0.45);
+}
+
+/* Global dbc.Table (Bootstrap table) background fix -- used for the
+   Handicap history table (my_account.py) and Player Directory table
+   (club.py), among others. Bootstrap 5's real compiled CSS sets
+   --bs-table-bg: var(--bs-body-bg) at the .table level, and every cell
+   underneath reads --bs-table-bg back via a box-shadow trick that forces
+   it to fully cover the cell regardless of any background this app's own
+   CSS puts on an ancestor -- so every dbc.Table rendered a solid white
+   box (Bootstrap's own light-theme --bs-body-bg default) no matter what
+   panel it sat inside on this always-dark page. Table TEXT already used
+   this app's own muted/ink colors correctly (see .t3g-handicap-table th
+   etc.) -- it was specifically dim text on top of that leftover white
+   background that was unreadable, not the text color itself. Overriding
+   the same custom properties Bootstrap's own cell rule reads from is the
+   fix, not fighting it with a background-color override that would lose
+   a specificity tie. */
+.table {
+    --bs-table-bg: transparent;
+    --bs-table-color: var(--t3g-ink);
+    --bs-table-border-color: var(--t3g-border);
 }

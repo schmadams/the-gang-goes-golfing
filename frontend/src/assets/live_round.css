@@ -32,27 +32,38 @@
    own overflow-x above is still the fallback for whatever doesn't fit
    even at this smaller size. */
 @media (max-width: 700px), (max-height: 500px) {
+    /* Tightened further than the first pass at this -- a multiplayer
+       Full Scorecard (Hole/Yards/S.I./Par plus one Score column per
+       player) was still wider than a phone screen even at 0.72rem/
+       0.3rem-0.4rem padding, so .t3g-player-scorecard's horizontal
+       scroll fallback was kicking in on essentially every round with 2+
+       players, not just wide ones -- which is what made buttons/text
+       look clipped (a horizontally-scrolled view starting a few pixels
+       into the row, not actual CSS truncation; "Enter Score" showing as
+       "iter Score" is the left edge being scrolled past, not an
+       ellipsis). Smaller still here so a typical 3-4 player round fits
+       without needing to scroll at all. */
     .t3g-scorecard-table th,
     .t3g-scorecard-table td {
-        padding: 0.3rem 0.4rem;
-        font-size: 0.72rem;
+        padding: 0.22rem 0.28rem;
+        font-size: 0.62rem;
     }
 
     .t3g-score-button {
-        padding: 0.35rem 0.55rem;
-        font-size: 0.72rem;
+        padding: 0.28rem 0.4rem;
+        font-size: 0.62rem;
     }
 
     .t3g-score-button-filled {
-        width: 32px;
-        height: 32px;
-        font-size: 0.82rem;
+        width: 26px;
+        height: 26px;
+        font-size: 0.68rem;
     }
 
     .t3g-manual-input {
-        width: 44px;
-        padding: 0.25rem 0.35rem;
-        font-size: 0.78rem;
+        width: 36px;
+        padding: 0.2rem 0.25rem;
+        font-size: 0.65rem;
     }
 }
 
@@ -144,7 +155,7 @@
     width: 60px;
     padding: 0.35rem 0.5rem;
     border: 1px solid var(--t3g-warning-text);
-    border-radius: 6px;
+    border-radius: var(--t3g-radius-md);
     font-weight: 700;
     text-align: center;
     background: var(--t3g-warning-bg);
@@ -162,7 +173,7 @@
     display: inline-block;
     padding: 0.5rem 0.9rem;
     border: 1px solid var(--t3g-border);
-    border-radius: 6px;
+    border-radius: var(--t3g-radius-md);
     background: var(--t3g-surface-raised);
     font-weight: 700;
     text-align: center;
@@ -173,7 +184,7 @@
 
 .t3g-score-button:hover {
     transform: translateY(-1px);
-    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.12);
+    box-shadow: none;
 }
 
 /* Once a hole has a score, the button becomes a fixed-size square so the
@@ -225,7 +236,7 @@
 
 /* Enter Score modal */
 .t3g-score-modal .modal-content {
-    border-radius: 20px;
+    border-radius: var(--t3g-radius-lg);
     border: none;
     overflow: hidden;
 }
@@ -286,7 +297,7 @@
     align-items: center;
     gap: 0.5rem;
     background: var(--t3g-surface-raised);
-    border-radius: 999px;
+    border-radius: var(--t3g-radius-md);
     padding: 0.75rem 0.5rem;
     width: 84px;
 }
@@ -305,12 +316,12 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+    box-shadow: none;
     transition: transform 0.08s ease, box-shadow 0.15s ease;
 }
 
 .t3g-stepper-button:hover {
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+    box-shadow: none;
 }
 
 .t3g-stepper-button:active {
@@ -380,7 +391,7 @@
 .t3g-fairway-toggle .form-check-label {
     display: inline-block;
     padding: 0.5rem 1.5rem;
-    border-radius: 999px;
+    border-radius: var(--t3g-radius-md);
     background: var(--t3g-surface-raised);
     border: 1px solid var(--t3g-border);
     font-weight: 700;
@@ -414,7 +425,7 @@
     text-transform: uppercase;
     letter-spacing: 0.03em;
     padding: 0.4rem 0.9rem;
-    border-radius: 999px;
+    border-radius: var(--t3g-radius-md);
     cursor: pointer;
     transition: opacity 0.15s ease;
 }
@@ -562,7 +573,7 @@
    "NR" button color (Bootstrap warning), so the two stay visually tied
    together as the same action. */
 .t3g-score-nr {
-    border-radius: 6px;
+    border-radius: var(--t3g-radius-md);
     border: 2px dashed #b45309;
     color: #b45309;
     font-size: 0.85rem;

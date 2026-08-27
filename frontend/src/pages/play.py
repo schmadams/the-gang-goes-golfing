@@ -1,4 +1,3 @@
-
 # target path: frontend/src/pages/play.py (new file -- replaces live_round.py, delete that file)
 """
 Play is the "start and see rounds" hub -- what used to be the bare Live
@@ -1454,6 +1453,21 @@ def save_score(n_clicks, n_clicks_nr, active_hole, round_id, shots, putts, fairw
         # see HoleScoreUpdate.nr's docstring for why that's the intended
         # "undo", not a separate action.
         fairway_hit = None if par == 3 else _FAIRWAY_RADIO_TO_BOOL.get(fairway_radio)
+
+        # Catching this here, before the request ever goes out, instead of
+        # relying on whatever the backend happens to do with a null
+        # fairway_hit -- this used to surface as a flat "Couldn't save
+        # that score." with no indication of which field was the problem,
+        # which is exactly what forgetting to tap Yes/No on the Fairway
+        # Hit toggle produced (the field defaults to no selection, and
+        # nothing else stops the Enter button from being pressed anyway).
+        # Skipped for par 3s (no toggle shown at all) and for NR saves
+        # (handled by the branch above, never reaches here).
+        if par != 3 and fairway_hit is None:
+            return _save_score_result(
+                error="Select whether the fairway was hit (Yes or No) before saving this score."
+            )
+
         update = {"strokes": shots, "putts": putts, "fairway_hit": fairway_hit, "nr": False}
 
     response = requests.patch(
