@@ -38,11 +38,19 @@
     font-weight: 600;
 }
 
-/* Match the dcc.Dropdown's default look to the surrounding dbc.Input fields */
-.t3g-course-dropdown .Select-control,
-.t3g-course-dropdown .Select--single > .Select-control {
+/* Match the dcc.Dropdown's default look to the surrounding dbc.Input
+   fields. Real class names -- see theme.css's global .dash-dropdown fix
+   for why ".Select-*" (this rule's original selectors) never matched
+   anything real; border-radius/border-color already get set globally
+   there too now, but min-height is specific to this page's fields, so
+   it stays here. min-height targets ".dash-dropdown-trigger", the inner
+   span that actually carries height -- not ".dash-dropdown" itself. */
+.t3g-course-dropdown .dash-dropdown {
     border-radius: 0.375rem;
     border-color: var(--t3g-border);
+}
+
+.t3g-course-dropdown .dash-dropdown-trigger {
     min-height: 38px;
 }
 

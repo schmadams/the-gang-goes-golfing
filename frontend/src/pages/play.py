@@ -929,7 +929,7 @@ def _view_switch_state(view):
 @callback(
     Output("upload-round-modal", "is_open"),
     Output("upload-round-club", "value"),
-    Output("upload-round-redirect", "pathname", allow_duplicate=True),
+    Output("upload-round-redirect", "href", allow_duplicate=True),
     Output("upload-round-manual-mode", "data", allow_duplicate=True),
     Output("upload-round-manual-fields", "style", allow_duplicate=True),
     Output("upload-round-course-fields", "style", allow_duplicate=True),
@@ -961,6 +961,20 @@ def toggle_upload_round_modal(open_clicks, cancel_clicks):
             # round_id is explicit here (not just a bare "/play") so this
             # lands directly on that round's scorecard, not back on the
             # hub they just clicked away from.
+            #
+            # BUG FIX: this Output used to target dcc.Location's
+            # "pathname" property, not "href" -- pathname is meant to hold
+            # ONLY the path (e.g. "/play"), with any query string going in
+            # the separate "search" property. Handing it the full
+            # "/play?round_id=..." string made the client-side router look
+            # for a page registered at that exact literal pathname
+            # (query string and all), find nothing, and render Dash's
+            # built-in "404 - Page not found" instead of navigating.
+            # "href" takes a full URL and is parsed correctly -- same fix
+            # already applied everywhere else in this app (see every other
+            # dcc.Location's Output) after this exact bug first showed up
+            # elsewhere; this one callback was missed when play.py was
+            # split out of live_round.py.
             return (False, dash.no_update, f"/play?round_id={response.json()['id']}", *reset_manual, [])
 
         return (True, None, dash.no_update, *reset_manual, [])
@@ -1103,7 +1117,7 @@ def toggle_continue_button(course_id, tee_id, is_manual, manual_club, manual_tee
 
 @callback(
     Output("upload-round-status", "children"),
-    Output("upload-round-redirect", "pathname", allow_duplicate=True),
+    Output("upload-round-redirect", "href", allow_duplicate=True),
     Input("upload-round-continue", "n_clicks"),
     State("upload-round-course", "value"),
     State("upload-round-tee", "value"),
@@ -1164,7 +1178,12 @@ def handle_continue_round(
 
     if response.status_code == 201:
         # round_id explicit -- lands straight on the new round's scorecard
-        # rather than back on the hub.
+        # rather than back on the hub. Output is "href" (not "pathname")
+        # for the same reason as the redirect in toggle_upload_round_modal
+        # above -- see that function's comment. This was the main path
+        # that hit the 404 bug, since it fires every time someone actually
+        # finishes starting a round, not just the already-has-one-going
+        # edge case.
         return "", f"/play?round_id={response.json()['id']}"
 
     try:

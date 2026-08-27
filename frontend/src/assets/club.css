@@ -859,13 +859,19 @@
         font-size: 0.62rem;
     }
 
-    .t3g-teetime-assign-dropdown .Select-control {
+    /* Real class names -- see theme.css's global .dash-dropdown fix for
+       the full story on why ".Select-*" (this block's original
+       selectors) never matched anything: this app's Dash version
+       renders dcc.Dropdown as ".dash-dropdown*", not the old
+       react-select v1 markup. min-height lives on the inner
+       ".dash-dropdown-trigger", not the outer ".dash-dropdown" itself. */
+    .t3g-teetime-assign-dropdown .dash-dropdown-trigger {
         min-height: 30px;
     }
 
-    .t3g-teetime-assign-dropdown .Select-value-label,
-    .t3g-teetime-assign-dropdown .Select-placeholder,
-    .t3g-teetime-assign-dropdown .Select-input > input {
+    .t3g-teetime-assign-dropdown .dash-dropdown-value,
+    .t3g-teetime-assign-dropdown .dash-dropdown-placeholder,
+    .t3g-teetime-assign-dropdown .dash-dropdown-search {
         font-size: 0.72rem;
     }
 

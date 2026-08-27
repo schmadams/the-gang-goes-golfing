@@ -231,44 +231,73 @@ a {
     filter: invert(1) grayscale(100%) brightness(1.8);
 }
 
-/* Global dcc.Dropdown (react-select) text/background fix -- every
-   club/course/tee/friend picker in this app (play.py, club.py,
-   tournament.py, my_account.py) is a dcc.Dropdown, which renders through
-   react-select's OWN bundled stylesheet, not Bootstrap -- so it was never
-   touched by the dbc.themes.BOOTSTRAP layer, and per-page CSS here has
-   only ever customised its border-radius/border-color (see
-   .t3g-course-dropdown in my_account.css), never its background or text
-   color. The control's background has always been a plain opaque white
-   by library default; its SELECTED VALUE text, though, was never given
-   an explicit color by anything, so it fell through to this file's own
-   body { color: var(--t3g-ink) } rule -- white in dark mode -- which
-   read as a chosen club/course invisibly rendering white-on-white. The
-   placeholder text and the open dropdown menu weren't affected (react-
-   select's own stylesheet sets those explicitly), which is exactly why
-   this was easy to miss without actually picking a value and looking
-   again: an empty or open dropdown looked completely fine. Rather than
-   re-theme these controls to follow dark mode (a bigger, separate look
-   change), this keeps their chrome exactly as it's always been --
-   opaque white -- and just makes sure the text sitting on that white is
-   always dark, in both themes, the same way Bootstrap's own .form-control
-   already guarantees for every dbc.Input on this page. */
-.Select-control {
-    background-color: #ffffff;
+/* Global dcc.Dropdown text/background fix, REAL version -- every past
+   round of this exact bug (selected club/course text rendering
+   invisible) was "fixed" by targeting ".Select-control" /
+   ".Select-value-label" etc, the class names react-select v1 used to
+   use. Those fixes never did anything: this app is pinned to a Dash
+   version whose dcc.Dropdown was rewritten from scratch on top of Radix
+   UI, and the real rendered markup uses ".dash-dropdown*" class names
+   instead -- confirmed by grepping the actual bundled
+   dash/dcc/async-dropdown.js this app ships. Every ".Select-*" selector
+   in every previous fix matched nothing in the real DOM, which is why
+   !important made no difference either -- there was nothing to out-
+   specificity.
+
+   The real component's own default CSS sets the trigger button's
+   background to var(--Dash-Fill-Inverse-Strong) and its text to
+   color: inherit -- both part of a newer Dash design-token system this
+   app has never defined anywhere. An undefined custom property makes a
+   non-inherited property like background fall back to its initial value
+   (transparent), and makes an inherited property like color keep
+   inheriting past the dropdown entirely, up to this file's own
+   body { color: var(--t3g-ink) } -- white, in this dark-only theme. The
+   "opaque white box" every round assumed it was fighting was never the
+   dropdown's own styling at all -- it was the bare browser default
+   <button> background showing through an effectively unstyled element,
+   with white text sitting on top of it.
+
+   Styling the real classes directly, to match this app's own dark
+   surfaces, sidesteps ever having to define Dash's whole --Dash-* token
+   system just to keep chasing "white chrome" that was never an actual
+   design decision -- it was a misdiagnosis the first time this bug got
+   "fixed". !important kept for the same reason as before: this bug has
+   now silently survived two rounds of "fixes" already, so nothing here
+   should be able to lose a future specificity fight by accident. */
+.dash-dropdown,
+.dash-dropdown-content {
+    /* --t3g-surface is only ~6% white -- fine for a big card sitting on
+       top of the page gradient, but nowhere near opaque enough for a
+       small control that needs to read as its own distinct box; against
+       the gradient background it was barely different from the page
+       itself, i.e. "too transparent". --t3g-modal-bg is this app's
+       existing solution to exactly this problem (see theme.css's own
+       docstring on it, and the very first fix of this whole retheme --
+       the modal background was too transparent too, for the same
+       reason) -- opaque, just slightly lifted off pure black, so it
+       reads as a clearly separate surface. */
+    background: var(--t3g-modal-bg) !important;
+    border-color: var(--t3g-border) !important;
+    color: var(--t3g-ink) !important;
 }
 
-.Select-value,
-.Select--single > .Select-control .Select-value .Select-value-label,
-.Select-value-label,
-.Select-input > input {
-    color: #111111;
+.dash-dropdown-value,
+.dash-dropdown-value-item,
+.dash-dropdown-search,
+.dash-dropdown-option {
+    color: var(--t3g-ink) !important;
 }
 
-.Select.is-disabled > .Select-control {
-    background-color: #f2f2f0;
+.dash-dropdown-placeholder {
+    color: var(--t3g-muted) !important;
 }
 
-.Select.is-disabled .Select-value-label {
-    color: rgba(17, 17, 17, 0.45);
+.dash-dropdown-option:hover {
+    background: var(--t3g-surface-raised) !important;
+}
+
+.dash-dropdown:disabled {
+    color: var(--t3g-muted-2) !important;
 }
 
 /* Global dbc.Table (Bootstrap table) background fix -- used for the

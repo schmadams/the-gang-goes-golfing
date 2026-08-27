@@ -150,16 +150,31 @@ def list_courses_for_club(club_name: str) -> list[dict]:
     AFTER a specific course was already selected. Runs at most once per
     club (see club_courses_discovered on the returned rows) -- a cache
     miss costs one extra request, a hit costs nothing.
-    """
-    query_builder = (
-        supabase.table("courses")
-        .select("*")
-        .eq("club_name", club_name)
-        .order("course_name")
-    )
 
+    BUG FIX (this was still only surfacing one of two courses after the
+    above fix shipped): this used to re-fetch after discovery by re-running
+    the SAME club_name-filtered query used to find the row in the first
+    place. But _ensure_club_courses_discovered can (and, the very first
+    time it runs for a club, does) overwrite club_name on the placeholder
+    row with whatever the external API calls this club -- which doesn't
+    have to be byte-identical to the string this function was called with.
+    The moment those two differ, the by-name re-fetch silently drops
+    every row discovery just touched (including, sometimes, the original
+    placeholder itself), permanently -- club_courses_discovered is already
+    True on every row after that, so discovery never runs again to fix it.
+    Using _ensure_club_courses_discovered's own return value instead (the
+    exact rows it just upserted, straight from Supabase) sidesteps the
+    problem entirely: no second query, no name to go stale on.
+    """
     with _timed(f"list_courses_for_club(club_name={club_name!r})", "database"):
-        response = query_builder.execute()
+        response = (
+            supabase
+            .table("courses")
+            .select("*")
+            .eq("club_name", club_name)
+            .order("course_name")
+            .execute()
+        )
 
     rows = response.data or []
     if not rows:
@@ -168,16 +183,14 @@ def list_courses_for_club(club_name: str) -> list[dict]:
     external_club_id = rows[0].get("external_club_id")
     if external_club_id and not any(row.get("club_courses_discovered") for row in rows):
         try:
-            _ensure_club_courses_discovered(club_name, external_club_id, rows)
+            rows = _ensure_club_courses_discovered(club_name, external_club_id, rows)
         except ExternalApiError:
             # Discovery failing shouldn't break the dropdown -- fall back
             # to whatever's already cached rather than raising out of a
             # read endpoint.
             return rows
 
-        with _timed(f"list_courses_for_club(club_name={club_name!r}) re-fetch after discovery", "database"):
-            response = query_builder.execute()
-        rows = response.data or []
+        rows.sort(key=lambda row: row.get("course_name") or "")
 
     return rows
 
@@ -428,11 +441,35 @@ def _ensure_club_courses_discovered(club_name: str, external_club_id: str, exist
     if club_response.status_code != 200:
         raise ExternalApiError(club_response.status_code, club_response.text)
 
-    club = _unwrap_object(club_response.json(), "id", "name", "courses")
+    payload = club_response.json()
+
+    # BUG FIX: confirmed via a live call against a real multi-course club
+    # (The Players Golf Club -- exactly the one that kept losing its
+    # second course no matter how many times this got "fixed") that this
+    # endpoint's real response is a BARE LIST of course objects, not the
+    # {"id", "name", "courses": [...]} wrapper this function assumed --
+    # that assumption came from the provider's docs and was never
+    # actually checked against a real multi-course club until now.
+    # _unwrap_object returns {} for anything that isn't a dict, so
+    # club.get("courses") was silently [] on every single call this
+    # function ever made -- discovery always "succeeded" (no exception,
+    # club_courses_discovered got set True, so it never tried again) while
+    # never once looking at an actual course. Every previous fix to this
+    # feature's CALLERS was correct, and never had a chance to work: this
+    # function itself was throwing the whole list away before any of that
+    # code ran.
+    if isinstance(payload, list):
+        club_courses = payload
+        club = {}
+    else:
+        club = _unwrap_object(payload, "id", "name", "courses")
+        club_courses = club.get("courses") or []
 
     # Save what this call taught us about the club itself immediately, even
     # if the course list below turns out to be empty -- this request isn't
-    # wasted either way.
+    # wasted either way. When the response is a bare list (the real shape,
+    # per the fix above) there's no club-level name/county/postcode to
+    # learn here, so these all just fall back to whatever's already cached.
     placeholder_row = existing_rows[0] if existing_rows else None
     placeholder_row = _upsert_course_row(placeholder_row, {
         "external_club_id": external_club_id,
@@ -441,11 +478,28 @@ def _ensure_club_courses_discovered(club_name: str, external_club_id: str, exist
         "postcode": club.get("postcode") or (placeholder_row or {}).get("postcode"),
     })
 
-    club_courses = club.get("courses") or []
     if not club_courses:
         # Nothing more to discover -- mark the placeholder done so this
         # club is never re-queried, and leave it as the one (nameless) row
         # it's always been.
+        return [_upsert_course_row(placeholder_row, {"club_courses_discovered": True})]
+
+    # This provider's own data has real duplicates -- confirmed live for
+    # The Players Golf Club, which returned FOUR entries for what is
+    # physically two courses. One of those four ("Stranahan Course",
+    # holes=1, par=null, ~100-yard total tee length) is obviously
+    # corrupted rather than a genuine short course -- filtered out here
+    # rather than ever being offered to a player as something they can
+    # select and try to play. The other duplicate (a second "Codrington"
+    # entry alongside the one already cached) is left alone: it's real,
+    # playable data, just redundant, and picking which of two real
+    # entries to drop is a judgment call this function shouldn't make
+    # silently.
+    club_courses = [
+        c for c in club_courses
+        if (c.get("holes") or 0) >= 9 and c.get("par")
+    ]
+    if not club_courses:
         return [_upsert_course_row(placeholder_row, {"club_courses_discovered": True})]
 
     updated_rows = []
