@@ -307,7 +307,22 @@ a {
 }
 
 .dash-dropdown-search {
+    /* type="search" inputs get their own native rendering in WebKit
+       (-webkit-appearance: searchfield by default) -- background/border/
+       text-color overrides can get partially ignored by the browser's
+       native control chrome until that's explicitly turned off. Also
+       setting -webkit-text-fill-color directly: WebKit sometimes uses it
+       instead of color for form controls specifically (most commonly seen
+       with autofill, but cheap insurance here too since this is exactly
+       the "text renders invisible despite a correct color rule" failure
+       mode). caret-color makes sure the typing cursor itself is visible
+       against the dark background as well. */
+    -webkit-appearance: none;
+    appearance: none;
     background: transparent !important;
+    color: var(--t3g-ink) !important;
+    -webkit-text-fill-color: var(--t3g-ink) !important;
+    caret-color: var(--t3g-ink) !important;
 }
 
 .dash-dropdown-placeholder {
