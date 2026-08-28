@@ -490,17 +490,41 @@ def _ensure_club_courses_discovered(club_name: str, external_club_id: str, exist
     # holes=1, par=null, ~100-yard total tee length) is obviously
     # corrupted rather than a genuine short course -- filtered out here
     # rather than ever being offered to a player as something they can
-    # select and try to play. The other duplicate (a second "Codrington"
-    # entry alongside the one already cached) is left alone: it's real,
-    # playable data, just redundant, and picking which of two real
-    # entries to drop is a judgment call this function shouldn't make
-    # silently.
+    # select and try to play.
     club_courses = [
         c for c in club_courses
         if (c.get("holes") or 0) >= 9 and c.get("par")
     ]
     if not club_courses:
         return [_upsert_course_row(placeholder_row, {"club_courses_discovered": True})]
+
+    # The remaining duplicates are real, playable data though -- this
+    # provider names the same physical course two different ways ("The
+    # Players-The Codrington" alongside a separate, older "Codrington
+    # Course" entry, both 18 holes/full tee sets). Initially left both in
+    # rather than guessing which to drop -- which just meant the Start New
+    # Round course dropdown showed the same club's course twice. Comparing
+    # names after stripping this provider's own "The Players-The " prefix
+    # and a trailing " Course" catches this specific pattern without
+    # needing anything more elaborate. Only applied to courses that don't
+    # already match something in existing_rows by external_course_id
+    # (checked inside the loop below) -- the already-cached course itself
+    # would otherwise "match its own name" and get skipped before ever
+    # reaching the code that actually updates it.
+    def _normalized_course_name(name):
+        name = (name or "").strip()
+        prefix = "The Players-The "
+        if name.startswith(prefix):
+            name = name[len(prefix):]
+        if name.lower().endswith(" course"):
+            name = name[: -len(" course")]
+        return name.strip().lower()
+
+    seen_normalized_names = {
+        _normalized_course_name(row.get("course_name"))
+        for row in existing_rows
+        if row.get("course_name")
+    }
 
     updated_rows = []
     placeholder_upgraded = False
@@ -518,6 +542,16 @@ def _ensure_club_courses_discovered(club_name: str, external_club_id: str, exist
                 "club_courses_discovered": True,
             }))
             continue
+
+        normalized_name = _normalized_course_name(course_name)
+        if normalized_name and normalized_name in seen_normalized_names:
+            # Same physical course as something already cached or already
+            # queued for insertion this run, just named differently by
+            # this provider -- skip rather than create a second row for
+            # it.
+            continue
+        if normalized_name:
+            seen_normalized_names.add(normalized_name)
 
         if not placeholder_upgraded and not placeholder_row.get("external_course_id"):
             # Upgrade the club-level placeholder row (from the regions

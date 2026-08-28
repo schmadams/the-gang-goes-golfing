@@ -288,6 +288,28 @@ a {
     color: var(--t3g-ink) !important;
 }
 
+/* The search box inside an open dropdown's menu is its OWN element
+   (".dash-dropdown-search-container"), not covered by the
+   ".dash-dropdown, .dash-dropdown-content" rule above -- its own default
+   background is the same undefined --Dash-Fill-Inverse-Strong var()
+   everything else in this block was fighting, but this one wasn't caught
+   the first time because the rest of the dropdown (the closed control,
+   the open menu's dark background) already looked right without it --
+   only the search box itself was left rendering however the browser's
+   own UA stylesheet draws an unstyled <input>, which is a plain white
+   box, with white text sitting on top of it once .dash-dropdown-search's
+   color rule above took hold. Same background as the rest of the
+   dropdown so the search box reads as part of it, not a separate control
+   dropped on top. */
+.dash-dropdown-search-container {
+    background: var(--t3g-modal-bg) !important;
+    border-color: var(--t3g-border) !important;
+}
+
+.dash-dropdown-search {
+    background: transparent !important;
+}
+
 .dash-dropdown-placeholder {
     color: var(--t3g-muted) !important;
 }

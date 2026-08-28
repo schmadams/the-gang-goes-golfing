@@ -742,21 +742,46 @@ def render_live_round_body(round_data, player_id, initial_view="holebyhole"):
                 dbc.ModalFooter(
                     [
                         dbc.Button("Cancel", id="live-round-score-cancel", color="secondary"),
-                    ]
-                    # "NR" is a third save action, tournament rounds only --
-                    # it saves this one hole as No Return regardless of
-                    # whatever's currently sitting in the shots/putts
-                    # steppers, instead of the numeric payload "Enter"
-                    # sends. See save_score in live_round.py, which
-                    # branches on which of these two buttons actually
-                    # triggered it -- everything downstream of that
-                    # (closing the modal, Hole by Hole auto-advance, the
-                    # hole-18 switch to Full Scorecard) is identical either
-                    # way, since marking a hole NR is "done with this hole"
-                    # exactly the same as entering a real score is.
-                    + ([dbc.Button("NR", id="live-round-score-nr-save", color="warning", outline=True)]
-                       if is_tournament_round else [])
-                    + [
+                        # "NR" is a third save action, tournament rounds
+                        # only -- it saves this one hole as No Return
+                        # regardless of whatever's currently sitting in the
+                        # shots/putts steppers, instead of the numeric
+                        # payload "Enter" sends. See save_score in
+                        # live_round.py, which branches on which of these
+                        # two buttons actually triggered it -- everything
+                        # downstream of that (closing the modal, Hole by
+                        # Hole auto-advance, the hole-18 switch to Full
+                        # Scorecard) is identical either way, since marking
+                        # a hole NR is "done with this hole" exactly the
+                        # same as entering a real score is.
+                        #
+                        # BUG FIX: this button used to be left OUT of the
+                        # tree entirely for a casual round (the `if
+                        # is_tournament_round else []` this replaced), not
+                        # just hidden -- but play.py's save_score callback
+                        # always declares
+                        # Input("live-round-score-nr-save", "n_clicks")
+                        # unconditionally, since one callback has to handle
+                        # both buttons for whichever hole/round is
+                        # currently open. Dash requires every id named in a
+                        # callback's Input/State/Output list to exist
+                        # somewhere in the CURRENT layout -- for a casual
+                        # round, this one never did, so the very first
+                        # score save on a casual round threw "a nonexistent
+                        # object was used in an Input of a Dash callback"
+                        # and nothing saved. Rendering the button always,
+                        # and hiding it with a style instead of omitting
+                        # it, keeps the id permanently present for the
+                        # callback graph while still keeping it invisible
+                        # (and unclickable, via pointer-events) outside a
+                        # tournament round.
+                        dbc.Button(
+                            "NR",
+                            id="live-round-score-nr-save",
+                            color="warning",
+                            outline=True,
+                            style={} if is_tournament_round else {"display": "none"},
+                        ),
                         dbc.Button(
                             "Enter",
                             id="live-round-score-save",
