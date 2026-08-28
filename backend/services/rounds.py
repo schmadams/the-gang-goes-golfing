@@ -2187,6 +2187,20 @@ def finish_round(round_id: str, requesting_player_id: str) -> dict | None:
             "completed_at": datetime.now(timezone.utc).isoformat(),
         }).eq("id", round_id).execute()
 
+    # A solo round has nobody else who needs to sign off, so it reaches
+    # status=completed right here rather than at the end of sign_off_round
+    # below -- this is the only place that ever happens for a solo round,
+    # so this is also the only place its feed post can be created.
+    # Best-effort, same convention as sign_off_round's own call to this:
+    # a feed post failing should never be able to block the round itself
+    # from finishing.
+    if not is_multiplayer:
+        try:
+            from backend.services.round_posts import create_round_post
+            create_round_post(round_id, [p["player_id"] for p in round_data["players"]])
+        except Exception as exc:
+            print(f"[FEED] Failed to create round post for round={round_id}: {exc}")
+
     # Everyone else in a multiplayer round still needs to sign off before
     # it's actually done -- best-effort, same convention as every other
     # create_notification call site, a notification failing to write
@@ -2281,23 +2295,48 @@ def sign_off_round(round_id: str, player_id: str) -> dict:
                 .execute()
             )
         accepted_player_ids = [row["player_id"] for row in (accepted_response.data or [])]
+        # Captured per-player so create_round_post below can show each
+        # player their own before/after Handicap Index change on the
+        # feed card (see round_posts.py's viewer_handicap_change). Read
+        # BEFORE recalculating, not after -- get_current_player_handicap
+        # would otherwise just return the same freshly-written row
+        # recalculate_and_store_handicap itself just inserted, making
+        # every change look like zero.
+        handicap_changes = {}
         for pid in accepted_player_ids:
             try:
-                recalculate_and_store_handicap(pid)
+                before = get_current_player_handicap(pid)
+                before_value = before.get("handicap") if before else None
+                after = recalculate_and_store_handicap(pid)
+                after_value = after.get("handicap") if after else before_value
+                if before_value is not None and after_value is not None:
+                    handicap_changes[pid] = round(after_value - before_value, 1)
             except Exception as exc:
                 print(f"[WHS] Failed to recalculate handicap for player {pid}: {exc}")
 
         # Best-effort, same reasoning as every other automated feed post
         # hook (join/tournament) -- a feed post failing should never be
         # able to block a round actually completing. Only fires here (not
-        # in finish_round) because a multiplayer round never reaches
-        # status=completed anywhere else -- see create_scorecard_posts's
-        # own docstring in club_posts.py.
+        # in finish_round's multiplayer branch) because a multiplayer
+        # round never reaches status=completed anywhere else.
+        #
+        # BUG FIX: this used to import create_scorecard_posts from
+        # backend.services.club_posts -- the OLD scorecard-post path,
+        # retired in favor of round_posts.create_round_post (see that
+        # module's own docstring, which already describes this exact
+        # call site as if it existed). create_scorecard_posts no longer
+        # exists in club_posts.py at all, so this import has been
+        # silently raising ImportError and getting swallowed by the
+        # except below on every single sign-off, for every multiplayer
+        # round, since the retirement landed -- rounds completed and
+        # handicaps recalculated exactly as expected, but no feed post
+        # was ever created, with nothing visible anywhere to say so.
+        # Calling the actual current function instead.
         try:
-            from backend.services.club_posts import create_scorecard_posts
-            create_scorecard_posts(round_id, accepted_player_ids)
+            from backend.services.round_posts import create_round_post
+            create_round_post(round_id, accepted_player_ids, handicap_changes=handicap_changes)
         except Exception as exc:
-            print(f"[FEED] Failed to create scorecard post(s) for round={round_id}: {exc}")
+            print(f"[FEED] Failed to create round post for round={round_id}: {exc}")
 
     return get_round(round_id, viewer_player_id=player_id)
 

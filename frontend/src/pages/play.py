@@ -1316,10 +1316,40 @@ def toggle_score_modal(button_clicks, holeview_button_clicks, cancel_clicks, pla
         "live-round-score-button",
         "live-round-holeview-score-button",
     ):
-        all_clicks = (button_clicks or []) + (holeview_button_clicks or [])
-        if not any(all_clicks):
-            # The set of buttons re-rendering also fires this (all
-            # n_clicks reset to 0) -- only actually open on a real click.
+        # BUG FIX: this used to check `any(all_clicks)` -- whether ANY
+        # score button anywhere (any hole, any player, either view)
+        # currently has a nonzero n_clicks -- to tell a real tap apart
+        # from "the set of buttons re-rendering also fires this (all
+        # n_clicks reset to 0)". That only works as long as every
+        # button's n_clicks stays at 0 until genuinely clicked. Full
+        # Scorecard's buttons never get reset the way Hole by Hole's do
+        # -- refresh_scorecard only ever patches their children/
+        # className, never recreates the components -- so the very
+        # first tap on ANY Full Scorecard button, for ANY hole, at ANY
+        # point in the round, leaves that one button's n_clicks sitting
+        # nonzero for the rest of the round. From then on, any(all_
+        # clicks) was permanently true regardless of what actually
+        # triggered this callback, so every phantom "buttons
+        # re-rendered" event -- which fires on every single Hole by Hole
+        # save, since render_holeview_panel below rebuilds that hole's
+        # buttons from scratch whenever players_store changes -- slipped
+        # past the guard instead of being discarded. dash.ctx.triggered_
+        # id then resolved to whichever button rendered first in that
+        # freshly-rebuilt set -- players' own list order, i.e. always
+        # the same player -- which is exactly the "reverts back to the
+        # player A modal" symptom: nothing the user tapped, just the
+        # next unrelated save's re-render reopening the first player's
+        # modal.
+        #
+        # Checking the SPECIFIC triggered entry's own value (the same
+        # fix already used a few callbacks down in navigate_holeview_
+        # hole, for this identical class of phantom trigger) is immune
+        # to this: a reset-to-0 event reports value 0 right on the entry
+        # that actually changed, regardless of what some unrelated
+        # button's n_clicks happens to be sitting at elsewhere in the
+        # group.
+        triggered = dash.ctx.triggered[0] if dash.ctx.triggered else None
+        if not triggered or not triggered.get("value"):
             raise PreventUpdate
 
         hole_number = triggered_id["hole"]

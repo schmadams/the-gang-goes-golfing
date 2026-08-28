@@ -337,6 +337,102 @@ a {
     color: var(--t3g-muted-2) !important;
 }
 
+/* dcc.DatePickerSingle/Range, REAL version -- same misdiagnosis as the
+   dropdown fix above, just never even attempted for this component: this
+   app had ZERO rules anywhere targeting a date picker, old classes or
+   new (confirmed by grep -- nothing). First reported on the tournament
+   round-date field ("the date field isn't showing a value"), which was
+   never actually a data/callback bug -- the field had no value yet
+   because nothing had been picked, and the placeholder that should have
+   said so was rendering in the same invisible-white-on-white way the
+   dropdown text did: this Dash version's real class here is
+   ".dash-datepicker*" (confirmed the same way, grepping the bundled
+   dash/dcc/async-datepicker.js), whose own default CSS sets
+   background: var(--Dash-Fill-Inverse-Strong) and color: inherit --
+   both undefined design tokens this app never defines, so the input
+   fell back to a bare white <input> box with this file's own
+   body { color: var(--t3g-ink) } (white) inherited on top of it. */
+.dash-datepicker,
+.dash-datepicker-input-wrapper,
+.dash-datepicker-content {
+    background: var(--t3g-modal-bg) !important;
+    border-color: var(--t3g-border) !important;
+    color: var(--t3g-ink) !important;
+}
+
+.dash-datepicker-input {
+    background: transparent !important;
+    color: var(--t3g-ink) !important;
+    -webkit-text-fill-color: var(--t3g-ink) !important;
+    caret-color: var(--t3g-ink) !important;
+}
+
+.dash-datepicker-input::placeholder {
+    color: var(--t3g-muted) !important;
+}
+
+.dash-datepicker-caret-icon,
+.dash-datepicker-clear,
+.dash-datepicker-range-arrow {
+    color: var(--t3g-ink) !important;
+    fill: var(--t3g-ink) !important;
+}
+
+.dash-datepicker-month-nav {
+    color: var(--t3g-accent) !important;
+}
+
+.dash-datepicker-month-nav:hover:not(:disabled) {
+    background: var(--t3g-surface-raised) !important;
+}
+
+.dash-datepicker-month-nav:disabled {
+    color: var(--t3g-muted-2) !important;
+}
+
+/* The calendar popup (both the inline dropdown-style popover and the
+   mobile "fullscreen" variant) is a second, separate surface from the
+   input above -- same undefined-token background/text problem, styled
+   here so it reads as one continuous dark control instead of a dark
+   input opening onto a stray white panel. */
+.dash-datepicker-calendar-wrapper,
+.dash-datepicker-fullscreen {
+    background: var(--t3g-modal-bg) !important;
+}
+
+.dash-datepicker-portal {
+    background: rgba(0, 0, 0, 0.6) !important;
+}
+
+.dash-datepicker-close-button {
+    background: var(--t3g-modal-bg) !important;
+    color: var(--t3g-ink) !important;
+}
+
+.dash-datepicker-calendar-date-inside {
+    color: var(--t3g-ink) !important;
+}
+
+.dash-datepicker-calendar td:hover {
+    background-color: var(--t3g-surface-raised) !important;
+}
+
+.dash-datepicker-calendar
+    td.dash-datepicker-calendar-date-highlighted:not(
+        .dash-datepicker-calendar-date-outside
+    ) {
+    background-color: var(--t3g-accent-soft) !important;
+    color: var(--t3g-accent) !important;
+}
+
+.dash-datepicker-calendar
+    td.dash-datepicker-calendar-date-selected:not(
+        .dash-datepicker-calendar-date-outside
+    ) {
+    background-color: var(--t3g-accent) !important;
+    color: #ffffff !important;
+}
+
 /* Global dbc.Table (Bootstrap table) background fix -- used for the
    Handicap history table (my_account.py) and Player Directory table
    (club.py), among others. Bootstrap 5's real compiled CSS sets
