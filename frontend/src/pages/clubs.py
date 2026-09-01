@@ -39,6 +39,16 @@ def layout(**kwargs):
         else []
     )
 
+    # "clubs" category notifications (published tournament tee times)
+    # mostly link straight to a specific tournament rather than here --
+    # see tournament.py's own version of this call for that path -- but
+    # landing on the Clubs index itself, e.g. by tapping the bottom-nav
+    # tab directly, is just as much "I've seen my clubs activity".
+    try:
+        requests.post(f"{API_BASE_URL}/notifications/{player_id}/read/clubs")
+    except requests.RequestException:
+        pass
+
     if clubs:
         clubs_section = html.Div(
             className="t3g-clubs-list",
