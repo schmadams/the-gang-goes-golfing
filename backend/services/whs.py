@@ -506,13 +506,18 @@ def recalculate_and_store_handicap(player_id: str) -> dict | None:
     if new_index is None:
         return None
 
-    current = get_current_player_handicap(player_id)
+    # Compared against the latest T3G-SOURCED row specifically, not
+    # just "whatever's newest" -- otherwise a manual entry that happens
+    # to (coincidentally or not) match this recalculation's own result
+    # would short-circuit this into never actually recording a proper
+    # T3G history entry at all.
+    current = get_current_player_handicap(player_id, source="t3g")
     if current is not None and current.get("handicap") == new_index:
         return current
 
     response = (
         supabase.table("player_handicaps")
-        .insert({"player_id": player_id, "handicap": new_index})
+        .insert({"player_id": player_id, "handicap": new_index, "source": "t3g"})
         .execute()
     )
     return response.data[0] if response.data else None

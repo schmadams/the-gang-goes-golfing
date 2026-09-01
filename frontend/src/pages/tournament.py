@@ -1906,6 +1906,17 @@ def layout(slug=None, tournament_id=None, tab=None, **kwargs):
         return _not_found_page()
     tournament = tournament_resp.json()
 
+    # This is exactly where a "clubs" category notification's own url
+    # points (tee times published -- see backend/services/
+    # tournament_tee_times.py's create_notification call) -- most people
+    # will land here straight from that notification, bypassing the
+    # Clubs index entirely, so this needs its own copy of clubs.py's
+    # mark-read call rather than relying on that one alone.
+    try:
+        requests.post(f"{API_BASE_URL}/notifications/{player_id}/read/clubs")
+    except requests.RequestException:
+        pass
+
     is_admin = bool(player_id) and str(club.get("club_admin")) == player_id
     entrants = tournament.get("entrants", [])
     my_entry = next((e for e in entrants if str(e.get("player_id")) == player_id), None)

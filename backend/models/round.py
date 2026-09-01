@@ -25,6 +25,16 @@ class RoundStartRequest(BaseModel):
     # accept before their scorecard exists (see backend/services/rounds.py
     # start_round / respond_to_round_invite).
     invited_player_ids: list[str] = []
+    # 't3g' or 'manual', or omitted entirely -- which handicap the
+    # starting player wants used for their own Net score on this
+    # specific round. Omitted/None means "use my account preference"
+    # (see backend/services/handicaps.py's get_effective_handicap_source),
+    # stored on the owner's own round_players row so it stays fixed to
+    # this one round even if their account preference changes later.
+    # Only ever set for the player starting the round -- an invited
+    # player who accepts uses their own account preference; there's no
+    # UI yet for them to override it per-round the way the starter can.
+    handicap_source: Optional[str] = None
     # No club_id here any more -- a casual round used to need to be
     # manually tagged with a club to count toward that club's player
     # comparison analysis (see add_round_club_id.sql). That's gone now:

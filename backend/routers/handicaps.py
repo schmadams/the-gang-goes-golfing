@@ -6,6 +6,7 @@ from backend.services.handicaps import (
     add_player_handicap,
     get_current_player_handicap,
     get_handicap_breakdown,
+    get_player_handicap_sources,
     list_latest_handicaps_for_club,
     list_player_handicaps,
 )
@@ -38,6 +39,14 @@ def get_current_player_handicap_route(player_id: str):
         )
 
     return handicap
+
+
+@router.get("/player/{player_id}/sources")
+def get_player_handicap_sources_route(player_id: str):
+    """Both the T3G (WHS-calculated) and manually-entered current
+    handicap values side by side, plus which one this player has set as
+    their default -- see get_player_handicap_sources's own docstring."""
+    return get_player_handicap_sources(player_id)
 
 
 @router.get("/club/{club_id}/latest")

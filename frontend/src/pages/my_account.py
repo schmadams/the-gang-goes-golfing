@@ -145,6 +145,18 @@ def layout(**kwargs):
         handicaps_resp = requests.get(f"{API_BASE_URL}/handicaps/player/{player_id}")
     handicaps = handicaps_resp.json() if handicaps_resp.status_code == 200 else []
 
+    # Both current handicaps side by side, plus which one this player has
+    # set as their default -- see get_player_handicap_sources's own
+    # docstring in backend/services/handicaps.py. This is what actually
+    # lets someone tell "my T3G handicap" and "my manually entered one"
+    # apart, rather than just seeing whichever's most recently written.
+    with _timed(f"GET /handicaps/player/{player_id}/sources"):
+        handicap_sources_resp = requests.get(f"{API_BASE_URL}/handicaps/player/{player_id}/sources")
+    handicap_sources = handicap_sources_resp.json() if handicap_sources_resp.status_code == 200 else {}
+    t3g_handicap = (handicap_sources.get("t3g") or {}).get("handicap")
+    manual_handicap = (handicap_sources.get("manual") or {}).get("handicap")
+    preferred_source = handicap_sources.get("preferred_source") or "t3g"
+
     # Preload every cached club once on page load (a few hundred rows --
     # cheap) so the dropdown can filter client-side as the player types,
     # rather than round-tripping to the backend on every keystroke.
@@ -164,11 +176,22 @@ def layout(**kwargs):
     if handicaps:
         handicap_table = dbc.Table(
             children=[
-                html.Thead(html.Tr([html.Th("Handicap"), html.Th("Valid From")])),
+                html.Thead(html.Tr([html.Th("Handicap"), html.Th("Source"), html.Th("Valid From")])),
                 html.Tbody(
                     [
                         html.Tr(
-                            [html.Td(h["handicap"]), html.Td(h["valid_from"])]
+                            [
+                                html.Td(h["handicap"]),
+                                html.Td(
+                                    "T3G" if h.get("source", "t3g") == "t3g" else "Manual",
+                                    className=(
+                                        "t3g-handicap-source-badge t3g-handicap-source-badge--t3g"
+                                        if h.get("source", "t3g") == "t3g"
+                                        else "t3g-handicap-source-badge t3g-handicap-source-badge--manual"
+                                    ),
+                                ),
+                                html.Td(h["valid_from"]),
+                            ]
                         )
                         for h in handicaps
                     ]
@@ -183,6 +206,68 @@ def layout(**kwargs):
         handicap_table = html.P(
             "No handicap history yet.", className="t3g-empty-state"
         )
+
+    def _source_summary_row(label, value, source_key):
+        # One of the two headline numbers above the full history --
+        # "Not set yet" rather than blank when that source has no entry
+        # at all (very likely for Manual, on a player who's never used
+        # it), so the row still explains itself instead of just showing
+        # nothing next to a label.
+        display_value = f"{value:.1f}" if value is not None else "Not set yet"
+        is_preferred = preferred_source == source_key
+        return html.Div(
+            className="t3g-handicap-source-summary-row",
+            children=[
+                html.Span(label, className="t3g-handicap-source-summary-label"),
+                html.Span(display_value, className="t3g-handicap-source-summary-value"),
+                html.Span("Preferred", className="t3g-handicap-source-preferred-badge")
+                if is_preferred
+                else None,
+            ],
+        )
+
+    handicap_source_summary = html.Div(
+        className="t3g-handicap-source-summary",
+        children=[
+            _source_summary_row("T3G Handicap", t3g_handicap, "t3g"),
+            _source_summary_row("Manual Handicap", manual_handicap, "manual"),
+        ],
+    )
+
+    handicap_source_toggle = html.Div(
+        className="t3g-handicap-source-toggle",
+        children=[
+            html.Div("Use for rounds & tournaments by default", className="t3g-stepper-label mb-1"),
+            html.Div(
+                className="t3g-scorecard-view-toggle",
+                children=[
+                    html.Button(
+                        "T3G Handicap",
+                        id="account-handicap-source-t3g",
+                        className=(
+                            "t3g-scorecard-view-toggle-button t3g-scorecard-view-toggle-button--active"
+                            if preferred_source == "t3g"
+                            else "t3g-scorecard-view-toggle-button"
+                        ),
+                        n_clicks=0,
+                    ),
+                    html.Button(
+                        "Manual Handicap",
+                        id="account-handicap-source-manual",
+                        className=(
+                            "t3g-scorecard-view-toggle-button t3g-scorecard-view-toggle-button--active"
+                            if preferred_source == "manual"
+                            else "t3g-scorecard-view-toggle-button"
+                        ),
+                        n_clicks=0,
+                    ),
+                ],
+            ),
+            html.Div(id="account-handicap-source-message", className="mt-2"),
+            dcc.Store(id="account-handicap-source-store", data=preferred_source),
+            dcc.Location(id="account-handicap-source-redirect", refresh=True),
+        ],
+    )
 
     return html.Div(
         className="t3g-page",
@@ -353,6 +438,9 @@ def layout(**kwargs):
                     html.Div(
                         className="t3g-panel-body",
                         children=[
+                            handicap_source_summary,
+                            handicap_source_toggle,
+                            html.Hr(),
                             handicap_table,
                             html.Hr(),
                             html.Div("New handicap", className="t3g-stepper-label mb-1"),
@@ -617,5 +705,43 @@ def handle_add_handicap(n_clicks, handicap_value):
 
     return (
         html.Span("Couldn't update handicap. Try again.", className="text-danger"),
+        dash.no_update,
+    )
+
+@callback(
+    Output("account-handicap-source-message", "children"),
+    Output("account-handicap-source-redirect", "href"),
+    Input("account-handicap-source-t3g", "n_clicks"),
+    Input("account-handicap-source-manual", "n_clicks"),
+    prevent_initial_call=True,
+)
+def handle_set_preferred_handicap_source(t3g_clicks, manual_clicks):
+    # Which button was actually pressed -- mirrors adjust_manual_handicap_stepper's
+    # use of dash.ctx.triggered_id above rather than trusting the two n_clicks
+    # values directly, since both Inputs fire this callback and only one of them
+    # corresponds to the real click.
+    triggered_id = dash.ctx.triggered_id
+    if triggered_id == "account-handicap-source-t3g":
+        source = "t3g"
+    elif triggered_id == "account-handicap-source-manual":
+        source = "manual"
+    else:
+        raise PreventUpdate
+
+    player_id = session.get("player_id")
+    with _timed(f"PATCH /players/{player_id}"):
+        response = requests.patch(
+            f"{API_BASE_URL}/players/{player_id}",
+            json={"preferred_handicap_source": source},
+        )
+
+    if response.status_code == 200:
+        # Reload so the toggle's --active state and both summary rows'
+        # "Preferred" badge re-render against the new preference, same
+        # pattern as every other save callback on this page.
+        return "", _refresh_href()
+
+    return (
+        html.Span("Couldn't update your preference. Try again.", className="text-danger"),
         dash.no_update,
     )

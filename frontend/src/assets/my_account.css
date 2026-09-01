@@ -112,3 +112,91 @@
     overflow-x: auto;
     white-space: nowrap;
 }
+/* T3G vs Manual handicap distinction -- the headline summary rows above
+   the full handicap history table, the preferred-source toggle beneath
+   them (reuses .t3g-scorecard-view-toggle* from live_round.css for the
+   pill buttons themselves), and the small source badge shown against
+   each row of the history table. */
+.t3g-handicap-source-summary {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+.t3g-handicap-source-summary-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    background: var(--t3g-surface-raised);
+    border-radius: 10px;
+    padding: 0.65rem 0.9rem;
+}
+
+.t3g-handicap-source-summary-label {
+    color: var(--t3g-muted);
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    flex: 1;
+}
+
+.t3g-handicap-source-summary-value {
+    color: var(--t3g-ink);
+    font-weight: 700;
+    font-size: 1rem;
+}
+
+.t3g-handicap-source-preferred-badge {
+    background: var(--t3g-accent-soft);
+    color: var(--t3g-accent);
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 0.2rem 0.5rem;
+    border-radius: 999px;
+}
+
+.t3g-handicap-source-toggle {
+    margin-bottom: 1.25rem;
+}
+
+/* Small pill next to each row of the handicap history table, flagging
+   whether that entry was WHS-calculated or typed in manually -- these
+   two modifiers are also reused as-is by play.py's and tournament.py's
+   own per-round/per-entry handicap-source displays, so keep the color
+   pairing generic (accent vs muted) rather than anything page-specific. */
+.t3g-handicap-source-badge {
+    display: inline-block;
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 0.15rem 0.5rem;
+    border-radius: 999px;
+}
+
+.t3g-handicap-source-badge--t3g {
+    background: var(--t3g-accent-soft);
+    color: var(--t3g-accent);
+}
+
+.t3g-handicap-source-badge--manual {
+    background: var(--t3g-surface-raised);
+    color: var(--t3g-muted);
+}
+
+/* Disabled state for the T3G/Manual toggle buttons themselves (play.py's
+   Start New Round modal and tournament.py's entry panel disable
+   whichever side has no handicap set yet, rather than hiding it, so the
+   choice/gap is visible instead of silently missing). */
+.t3g-scorecard-view-toggle-button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.t3g-scorecard-view-toggle-button:disabled:hover {
+    opacity: 0.4;
+}

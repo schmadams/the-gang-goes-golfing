@@ -88,6 +88,15 @@ class TournamentRoundResponse(BaseModel):
 
 class TournamentEntrantCreate(BaseModel):
     player_id: UUID
+    # 't3g' or 'manual', or omitted -- which handicap this player wants
+    # used for the tournament's min/max entry gate and for every net/
+    # Stableford calculation of theirs throughout the tournament.
+    # Omitted means "use my account preference" (see backend/services/
+    # handicaps.py's get_effective_handicap_source). Captured once at
+    # entry, alongside handicap_at_entry, and stays fixed for this
+    # tournament even if the player's account preference changes later --
+    # same reasoning as handicap_at_entry itself.
+    handicap_source: str | None = None
 
 
 class TournamentEntrantResponse(BaseModel):
@@ -96,6 +105,7 @@ class TournamentEntrantResponse(BaseModel):
     player_id: UUID
     status: str
     handicap_at_entry: float | None = None
+    handicap_source: str | None = None
     created_at: datetime
     responded_at: datetime | None = None
     first_name: str | None = None

@@ -151,6 +151,20 @@ def layout(**kwargs):
     incoming = pending.get("incoming", [])
     outgoing = pending.get("outgoing", [])
 
+    # A friend request notification's own url (see backend/services/
+    # friends.py's create_notification call) points straight here --
+    # landing on this page at all, whether or not there's actually
+    # anything incoming right now, is "I've seen my friend requests", so
+    # the Account tab's badge (bottom_nav.py's "friends" category) clears
+    # the same moment this page loads rather than needing a separate
+    # trip through /notifications. Best-effort, same as every other
+    # notification-related call in this app -- a failure here just means
+    # the badge takes one more visit to clear.
+    try:
+        requests.post(f"{API_BASE_URL}/notifications/{player_id}/read/friends")
+    except requests.RequestException:
+        pass
+
     friends_resp = requests.get(f"{API_BASE_URL}/friends/player/{player_id}")
     friends = friends_resp.json() if friends_resp.status_code == 200 else []
 

@@ -111,3 +111,38 @@ def mark_all_read(player_id: str) -> None:
         .is_("read_at", "null")
         .execute()
     )
+
+
+def mark_category_read(player_id: str, category: str) -> None:
+    """The other way a badge clears -- just landing on wherever that
+    category's notifications actually point you (friends.py for
+    "friends", home.py for "home", the /play hub and round_signoff.py
+    for "play", clubs.py's index for "clubs"), rather than only via the
+    dedicated /notifications page.
+
+    Before this existed, mark_all_read was the ONLY thing that ever
+    cleared a badge -- so a player who saw and acted on, say, a friend
+    request straight from the Friends page (never once visiting the
+    bell/notifications page) would see that badge stuck at its old count
+    forever, even though there was nothing left to see. Each page above
+    now calls this for its own category the same best-effort way
+    mark_all_read is called, right after it's fetched whatever it's
+    about to show, so a real visit to the place a notification actually
+    points to counts as "seen" -- it no longer takes a detour through
+    /notifications to clear a tab's own badge.
+
+    Deliberately scoped to one category at a time (unlike mark_all_read)
+    -- visiting Friends shouldn't also silently clear your Play badge."""
+    if category not in CATEGORIES:
+        raise ValueError(f"Unknown notification category: {category!r} (expected one of {CATEGORIES})")
+
+    now = datetime.now(timezone.utc).isoformat()
+    (
+        supabase
+        .table("notifications")
+        .update({"read_at": now})
+        .eq("player_id", player_id)
+        .eq("category", category)
+        .is_("read_at", "null")
+        .execute()
+    )

@@ -358,6 +358,14 @@ def layout(**kwargs):
     feed_resp = requests.get(f"{API_BASE_URL}/players/{player_id}/feed")
     posts = feed_resp.json() if feed_resp.status_code == 200 else []
 
+    # "home" category notifications (a club post, a photo added to your
+    # round) both point back to "/" -- landing here at all is "seen",
+    # same best-effort pattern as friends.py's own version of this call.
+    try:
+        requests.post(f"{API_BASE_URL}/notifications/{player_id}/read/home")
+    except requests.RequestException:
+        pass
+
     if posts:
         body = html.Div([_feed_post_card(post, player_id) for post in posts], className="t3g-feed-list")
     else:

@@ -2,7 +2,7 @@
 from datetime import datetime, timezone
 
 from backend.database import supabase
-from backend.services.handicaps import get_current_player_handicap
+from backend.services.handicaps import get_current_player_handicap, get_effective_handicap_source
 
 _PLAYER_EMBED = "players(id, first_name, surname, nickname)"
 
@@ -77,7 +77,7 @@ def list_entrants_for_tournament(tournament_id: str) -> list[dict]:
     return [_flatten_player(e) for e in (response.data or [])]
 
 
-def enter_tournament(tournament_id: str, player_id: str) -> dict:
+def enter_tournament(tournament_id: str, player_id: str, handicap_source: str | None = None) -> dict:
     """
     entry_mode='self': confirmed immediately, unless a min/max handicap is
     set on the tournament and the player's current handicap falls outside
@@ -106,7 +106,8 @@ def enter_tournament(tournament_id: str, player_id: str) -> dict:
     if existing and existing["status"] in ("pending", "confirmed"):
         raise AlreadyEnteredError("You've already entered this tournament.")
 
-    handicap_row = get_current_player_handicap(player_id)
+    resolved_source = get_effective_handicap_source(player_id, handicap_source)
+    handicap_row = get_current_player_handicap(player_id, source=resolved_source)
     handicap = handicap_row["handicap"] if handicap_row else None
 
     if tournament["entry_mode"] == "self":
@@ -126,6 +127,7 @@ def enter_tournament(tournament_id: str, player_id: str) -> dict:
         "player_id": player_id,
         "status": status,
         "handicap_at_entry": handicap,
+        "handicap_source": resolved_source,
     }
 
     if existing:
@@ -211,7 +213,8 @@ def admin_add_entrant(tournament_id: str, player_id: str, admin_id: str) -> dict
     if existing and existing["status"] in ("pending", "confirmed"):
         raise AlreadyEnteredError("Player has already entered this tournament.")
 
-    handicap_row = get_current_player_handicap(player_id)
+    resolved_source = get_effective_handicap_source(player_id)
+    handicap_row = get_current_player_handicap(player_id, source=resolved_source)
     handicap = handicap_row["handicap"] if handicap_row else None
 
     payload = {
@@ -219,6 +222,7 @@ def admin_add_entrant(tournament_id: str, player_id: str, admin_id: str) -> dict
         "player_id": player_id,
         "status": "confirmed",
         "handicap_at_entry": handicap,
+        "handicap_source": resolved_source,
         "responded_at": datetime.now(timezone.utc).isoformat(),
     }
 

@@ -7,7 +7,7 @@ from backend.models.tournament import (
     TournamentCreate,
     TournamentUpdate,
 )
-from backend.services.handicaps import get_current_player_handicap
+from backend.services.handicaps import get_current_player_handicap, get_effective_handicap_source
 from backend.services.rounds import _hole_handicap_strokes, _stableford_points
 from backend.services.tournament_tee_times import fetch_tee_times_by_round
 
@@ -503,7 +503,17 @@ def get_tournament_leaderboard(tournament_id: str, round_id: str) -> dict:
 
     handicap_by_player: dict[str, float | None] = {}
     for entrant in entrants:
-        handicap_row = get_current_player_handicap(entrant["player_id"])
+        # BUG FIX: this used to call get_current_player_handicap with no
+        # source, so a player's live leaderboard Net/Stableford could
+        # silently flip between using their T3G-calculated handicap and a
+        # manually-typed one depending on which was most recently
+        # written -- not even the source captured at entry time
+        # (entrant["handicap_source"]). Resolving it the same way
+        # enter_tournament itself did (entry's own choice, falling back
+        # to the player's account preference) keeps this tournament's
+        # scoring consistent with whatever was actually agreed at entry.
+        source = get_effective_handicap_source(entrant["player_id"], entrant.get("handicap_source"))
+        handicap_row = get_current_player_handicap(entrant["player_id"], source=source)
         handicap_by_player[entrant["player_id"]] = handicap_row["handicap"] if handicap_row else None
 
     # Prior totals -- sum each earlier round's own line (its own course/

@@ -167,7 +167,7 @@ def list_entrants_route(tournament_id: str):
 @router.post("/{tournament_id}/entrants", status_code=status.HTTP_201_CREATED)
 def enter_tournament_route(tournament_id: str, payload: TournamentEntrantCreate):
     try:
-        return enter_tournament(tournament_id, str(payload.player_id))
+        return enter_tournament(tournament_id, str(payload.player_id), payload.handicap_source)
     except EntrantTournamentNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
     except AlreadyEnteredError as exc:

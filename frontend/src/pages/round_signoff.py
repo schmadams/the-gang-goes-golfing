@@ -254,6 +254,16 @@ def layout(**kwargs):
     response = requests.get(f"{API_BASE_URL}/rounds/pending-signoff/{player_id}")
     pending_rounds = response.json() if response.status_code == 200 else []
 
+    # This is the exact page a "needs sign-off" notification's own url
+    # points to (see backend/services/rounds.py's create_notification
+    # call) -- landing here counts as "seen" the same way play.py's hub
+    # mode does for the rest of the "play" category, so either route
+    # into this category clears the same badge.
+    try:
+        requests.post(f"{API_BASE_URL}/notifications/{player_id}/read/play")
+    except requests.RequestException:
+        pass
+
     return html.Div(
         className="t3g-page",
         children=[

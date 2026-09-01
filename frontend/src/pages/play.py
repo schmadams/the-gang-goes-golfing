@@ -738,6 +738,19 @@ def layout(round_id=None, view=None, tab=None, **kwargs):
         # which of my up-to-two live rounds I meant".
         active_tab = "scheduled" if tab == "scheduled" else "live"
         content = _scheduled_tab_content(player_id) if active_tab == "scheduled" else _live_tab_content(player_id)
+
+        # "play" category notifications (a round needing your sign-off,
+        # a round sent back for edits) point to /round-signoff or here --
+        # landing on the hub at all counts as "seen" the same way home.py/
+        # friends.py's own versions of this call do. Only fired in hub
+        # mode, not for a specific round_id, so opening one live
+        # scorecard doesn't silently clear a badge about a *different*
+        # round you haven't looked at yet.
+        try:
+            requests.post(f"{API_BASE_URL}/notifications/{player_id}/read/play")
+        except requests.RequestException:
+            pass
+
         return html.Div(
             className="t3g-page t3g-play-page",
             children=[_play_subnav(active_tab), *content, _upload_round_modal(player_id)],
