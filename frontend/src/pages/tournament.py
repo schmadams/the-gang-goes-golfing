@@ -624,11 +624,62 @@ def _entry_toggle_meta(tournament, my_entry):
     return label, action, button_class, status_message
 
 
-def _entrants_panel(tournament, entrants, my_entry, is_admin):
+def _entrants_panel(tournament, entrants, my_entry, is_admin, player_id):
     pending = [e for e in entrants if e["status"] == "pending"]
     confirmed = [e for e in entrants if e["status"] == "confirmed"]
 
     toggle_label, toggle_action, toggle_class, status_message = _entry_toggle_meta(tournament, my_entry)
+
+    # Handicap-source choice, captured once at entry time (same idea as
+    # the existing handicap_at_entry snapshot) -- only relevant while
+    # you're actually about to enter, not once you're already
+    # pending/confirmed, since TournamentEntrantCreate.handicap_source is
+    # only read on the POST /entrants call itself. get_effective_handicap_source
+    # still resolves a sensible source if this toggle never renders (no
+    # handicap set on either side yet) or if its Store never gets a
+    # real click -- see this page's set_tournament_entry_handicap_source
+    # callback and handle_tournament_entry's payload below.
+    handicap_source_toggle = None
+    if toggle_action == "enter" and player_id:
+        # tournament.py doesn't have a _timed() helper like play.py/
+        # my_account.py do (each page defines its own copy rather than
+        # sharing one) -- not worth introducing just for this one call.
+        handicap_sources_resp = requests.get(f"{API_BASE_URL}/handicaps/player/{player_id}/sources")
+        handicap_sources = handicap_sources_resp.json() if handicap_sources_resp.status_code == 200 else {}
+        t3g_handicap = (handicap_sources.get("t3g") or {}).get("handicap")
+        manual_handicap = (handicap_sources.get("manual") or {}).get("handicap")
+        preferred_handicap_source = handicap_sources.get("preferred_source") or "t3g"
+
+        if t3g_handicap is not None or manual_handicap is not None:
+            def _entry_source_button(label, value, source_key, active_source):
+                return html.Button(
+                    f"{label} ({value:.1f})" if value is not None else f"{label} (not set)",
+                    id=f"tournament-entry-handicap-source-{source_key}",
+                    className=(
+                        "t3g-scorecard-view-toggle-button t3g-scorecard-view-toggle-button--active"
+                        if active_source == source_key
+                        else "t3g-scorecard-view-toggle-button"
+                    ),
+                    disabled=value is None,
+                    n_clicks=0,
+                )
+
+            handicap_source_toggle = html.Div(
+                className="mb-2",
+                children=[
+                    html.Div("Handicap to use for this tournament", className="t3g-modal-label"),
+                    html.Div(
+                        className="t3g-scorecard-view-toggle",
+                        children=[
+                            _entry_source_button("T3G Handicap", t3g_handicap, "t3g", preferred_handicap_source),
+                            _entry_source_button("Manual Handicap", manual_handicap, "manual", preferred_handicap_source),
+                        ],
+                    ),
+                ],
+            )
+        preferred_default = preferred_handicap_source
+    else:
+        preferred_default = None
 
     action_buttons = [
         html.Button(toggle_label, id="tournament-entry-toggle-button", className=toggle_class, n_clicks=0),
@@ -730,6 +781,8 @@ def _entrants_panel(tournament, entrants, my_entry, is_admin):
                 className="t3g-panel-body",
                 children=[
                     html.P(status_message, className="t3g-empty-state mb-2") if status_message else None,
+                    handicap_source_toggle,
+                    dcc.Store(id="tournament-entry-handicap-source-store", data=preferred_default),
                     html.Div(id="tournament-entry-error", className="text-danger mb-2"),
                     admin_pending_section,
                     html.Div("Confirmed", className="t3g-modal-label t3g-tournament-rounds-label mt-2 mb-1"),
@@ -1950,7 +2003,7 @@ def layout(slug=None, tournament_id=None, tab=None, **kwargs):
                             _tournament_info_leaderboard_panel(tournament),
                         ],
                     ),
-                    _entrants_panel(tournament, entrants, my_entry, is_admin),
+                    _entrants_panel(tournament, entrants, my_entry, is_admin, player_id),
                 ],
             ),
             html.Div(
@@ -2015,15 +2068,44 @@ def switch_tournament_tab(info_clicks, startsheet_clicks, leaderboard_clicks, li
 
 
 @callback(
+    Output("tournament-entry-handicap-source-store", "data"),
+    Output("tournament-entry-handicap-source-t3g", "className"),
+    Output("tournament-entry-handicap-source-manual", "className"),
+    Input("tournament-entry-handicap-source-t3g", "n_clicks"),
+    Input("tournament-entry-handicap-source-manual", "n_clicks"),
+    prevent_initial_call=True,
+)
+def set_tournament_entry_handicap_source(t3g_clicks, manual_clicks):
+    # Same local-toggle-only pattern as play.py's set_round_handicap_source
+    # -- nothing persisted here, just read off the store by
+    # handle_tournament_entry below at the moment they actually submit
+    # their entry.
+    triggered_id = dash.ctx.triggered_id
+    if triggered_id == "tournament-entry-handicap-source-t3g":
+        source = "t3g"
+    elif triggered_id == "tournament-entry-handicap-source-manual":
+        source = "manual"
+    else:
+        raise PreventUpdate
+
+    active = "t3g-scorecard-view-toggle-button t3g-scorecard-view-toggle-button--active"
+    inactive = "t3g-scorecard-view-toggle-button"
+    if source == "t3g":
+        return source, active, inactive
+    return source, inactive, active
+
+
+@callback(
     Output("tournament-entry-error", "children"),
     Output("tournament-entry-redirect", "href"),
     Input("tournament-entry-toggle-button", "n_clicks"),
     State("tournament-entry-action-store", "data"),
     State("tournament-id-store", "data"),
     State("_pages_location", "pathname"),
+    State("tournament-entry-handicap-source-store", "data"),
     prevent_initial_call=True,
 )
-def handle_tournament_entry(n_clicks, action, tournament_id, current_pathname):
+def handle_tournament_entry(n_clicks, action, tournament_id, current_pathname, handicap_source):
     player_id = session.get("player_id")
 
     if action == "withdraw":
@@ -2034,7 +2116,7 @@ def handle_tournament_entry(n_clicks, action, tournament_id, current_pathname):
 
     response = requests.post(
         f"{API_BASE_URL}/tournaments/{tournament_id}/entrants",
-        json={"player_id": player_id},
+        json={"player_id": player_id, "handicap_source": handicap_source},
     )
     if response.status_code == 201:
         return "", f"{current_pathname}?_r={time.time()}"

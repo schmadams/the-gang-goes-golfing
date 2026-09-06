@@ -137,6 +137,21 @@ def layout(**kwargs):
         session.clear()
         return dcc.Location(pathname="/signin", id="my-account-redirect", refresh=True)
 
+    # The bottom nav's "Account" tab (layouts/bottom_nav.py) links here,
+    # not to /friends directly -- Friends only shows up one tap deeper,
+    # via this page's own subnav. But the badge on that tab is keyed to
+    # the "friends" category, and from wherever's looking at that tab,
+    # landing on My Account at all IS "I've checked Account" -- nobody
+    # should have to specifically click through to the Friends subnav
+    # tab before the number on the tab they already tapped goes away.
+    # See friends.py's own version of this same call for the other half
+    # (someone who lands straight on /friends via a notification link,
+    # bypassing My Account entirely).
+    try:
+        requests.post(f"{API_BASE_URL}/notifications/{player_id}/read/friends")
+    except requests.RequestException:
+        pass
+
     with _timed(f"GET /players/{player_id}"):
         player_resp = requests.get(f"{API_BASE_URL}/players/{player_id}")
     player = player_resp.json() if player_resp.status_code == 200 else {}

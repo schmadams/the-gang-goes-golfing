@@ -556,6 +556,52 @@ def _upload_round_modal(player_id):
         for f in friends
     ]
 
+    # T3G vs Manual handicap toggle for whoever's starting this round --
+    # only affects their OWN Net score in this round (see
+    # RoundStartRequest.handicap_source's docstring: invited players don't
+    # get a per-round choice yet, just the starter). Defaults to whatever
+    # they've set as their account-wide preference on My Account, same
+    # "Default + override" idea as My Account's own toggle -- starting
+    # here already lets them override it for just this round without
+    # having to go change their account default first.
+    with _timed(f"GET /handicaps/player/{player_id}/sources"):
+        handicap_sources_resp = requests.get(f"{API_BASE_URL}/handicaps/player/{player_id}/sources")
+    handicap_sources = handicap_sources_resp.json() if handicap_sources_resp.status_code == 200 else {}
+    t3g_handicap = (handicap_sources.get("t3g") or {}).get("handicap")
+    manual_handicap = (handicap_sources.get("manual") or {}).get("handicap")
+    preferred_handicap_source = handicap_sources.get("preferred_source") or "t3g"
+
+    def _handicap_source_button(label, value, source_key, active_source):
+        return html.Button(
+            f"{label} ({value:.1f})" if value is not None else f"{label} (not set)",
+            id=f"upload-round-handicap-source-{source_key}",
+            className=(
+                "t3g-scorecard-view-toggle-button t3g-scorecard-view-toggle-button--active"
+                if active_source == source_key
+                else "t3g-scorecard-view-toggle-button"
+            ),
+            disabled=value is None,
+            n_clicks=0,
+        )
+
+    handicap_source_toggle = html.Div(
+        className="mb-2",
+        children=[
+            html.Label("Handicap to use for this round", className="t3g-modal-label"),
+            html.Div(
+                className="t3g-scorecard-view-toggle",
+                children=[
+                    _handicap_source_button("T3G Handicap", t3g_handicap, "t3g", preferred_handicap_source),
+                    _handicap_source_button("Manual Handicap", manual_handicap, "manual", preferred_handicap_source),
+                ],
+            ),
+            dcc.Store(id="upload-round-handicap-source-store", data=preferred_handicap_source),
+        ],
+    ) if (t3g_handicap is not None or manual_handicap is not None) else html.Div(
+        dcc.Store(id="upload-round-handicap-source-store", data=preferred_handicap_source),
+        style={"display": "none"},
+    )
+
     return html.Div(
         children=[
             dbc.Modal(
@@ -649,6 +695,7 @@ def _upload_round_modal(player_id):
                                 ],
                             ),
                             dcc.Store(id="upload-round-manual-mode", data=False),
+                            handicap_source_toggle,
                             html.Label(
                                 "Add up to 3 friends to this round (optional)",
                                 className="t3g-modal-label mt-2",
@@ -1129,6 +1176,35 @@ def toggle_continue_button(course_id, tee_id, is_manual, manual_club, manual_tee
 
 
 @callback(
+    Output("upload-round-handicap-source-store", "data"),
+    Output("upload-round-handicap-source-t3g", "className"),
+    Output("upload-round-handicap-source-manual", "className"),
+    Input("upload-round-handicap-source-t3g", "n_clicks"),
+    Input("upload-round-handicap-source-manual", "n_clicks"),
+    prevent_initial_call=True,
+)
+def set_round_handicap_source(t3g_clicks, manual_clicks):
+    # Just a local toggle for the duration of this modal being open --
+    # nothing persisted here, unlike My Account's version of this same
+    # toggle. handle_continue_round below reads the store's current
+    # value at submit time and sends it as this round's explicit
+    # handicap_source override.
+    triggered_id = dash.ctx.triggered_id
+    if triggered_id == "upload-round-handicap-source-t3g":
+        source = "t3g"
+    elif triggered_id == "upload-round-handicap-source-manual":
+        source = "manual"
+    else:
+        raise PreventUpdate
+
+    active = "t3g-scorecard-view-toggle-button t3g-scorecard-view-toggle-button--active"
+    inactive = "t3g-scorecard-view-toggle-button"
+    if source == "t3g":
+        return source, active, inactive
+    return source, inactive, active
+
+
+@callback(
     Output("upload-round-status", "children"),
     Output("upload-round-redirect", "href", allow_duplicate=True),
     Input("upload-round-continue", "n_clicks"),
@@ -1140,11 +1216,12 @@ def toggle_continue_button(course_id, tee_id, is_manual, manual_club, manual_tee
     State("upload-round-manual-rating", "value"),
     State("upload-round-manual-slope", "value"),
     State("upload-round-friends-store", "data"),
+    State("upload-round-handicap-source-store", "data"),
     prevent_initial_call=True,
 )
 def handle_continue_round(
     n_clicks, course_id, tee_id, is_manual, manual_club, manual_tee,
-    manual_rating, manual_slope, invited_player_ids,
+    manual_rating, manual_slope, invited_player_ids, handicap_source,
 ):
     player_id = session.get("player_id")
     invited_player_ids = invited_player_ids or []
@@ -1163,6 +1240,12 @@ def handle_continue_round(
         "player_id": player_id,
         "is_manual": bool(is_manual),
         "invited_player_ids": invited_player_ids,
+        # Only ever set for the starter's own row -- see
+        # RoundStartRequest.handicap_source's docstring. None here (no
+        # toggle rendered because neither handicap source has a value
+        # yet) just falls through to get_effective_handicap_source's
+        # normal default/preference resolution.
+        "handicap_source": handicap_source,
     }
 
     if is_manual:

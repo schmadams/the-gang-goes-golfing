@@ -2226,6 +2226,18 @@ def finish_round(round_id: str, requesting_player_id: str) -> dict | None:
                 )
             except Exception as exc:
                 print(f"[NOTIFY] Failed to notify {p['player_id']} of round {round_id} needing sign-off: {exc}")
+    else:
+        # Solo round -- this is the only place it ever reaches
+        # status=completed, so this is the only place its feed post can
+        # be created. No handicap_changes here (a solo round never
+        # contributes to anyone's index -- see the comment on
+        # is_multiplayer above). Best-effort, same convention as every
+        # other feed-post hook.
+        try:
+            from backend.services.round_posts import create_round_post
+            create_round_post(round_id, [p["player_id"] for p in round_data["players"]])
+        except Exception as exc:
+            print(f"[FEED] Failed to create round post for round={round_id}: {exc}")
 
     # No recalculation triggered here for either branch. A solo round is
     # permanently excluded from _gather_round_inputs, so recalculating
@@ -2301,23 +2313,45 @@ def sign_off_round(round_id: str, player_id: str) -> dict:
                 .execute()
             )
         accepted_player_ids = [row["player_id"] for row in (accepted_response.data or [])]
+        # Handicap deltas per player -- read each one's current index
+        # BEFORE recalculating, so the round post can show "your
+        # handicap moved from X to Y" rather than just the after-value.
+        # Uses the 't3g' source specifically (not the bare/no-source
+        # lookup) since this delta is about the WHS recalculation this
+        # round just triggered, not whichever source happens to be
+        # "current" for the player overall.
+        handicap_changes = {}
+        before_by_player = {
+            pid: (get_current_player_handicap(pid, source="t3g") or {}).get("handicap")
+            for pid in accepted_player_ids
+        }
         for pid in accepted_player_ids:
             try:
                 recalculate_and_store_handicap(pid)
             except Exception as exc:
                 print(f"[WHS] Failed to recalculate handicap for player {pid}: {exc}")
+            after = (get_current_player_handicap(pid, source="t3g") or {}).get("handicap")
+            before = before_by_player.get(pid)
+            if before is not None and after is not None:
+                handicap_changes[pid] = round(after - before, 1)
 
         # Best-effort, same reasoning as every other automated feed post
         # hook (join/tournament) -- a feed post failing should never be
         # able to block a round actually completing. Only fires here (not
         # in finish_round) because a multiplayer round never reaches
-        # status=completed anywhere else -- see create_scorecard_posts's
-        # own docstring in club_posts.py.
+        # status=completed anywhere else -- see create_round_post's own
+        # docstring in round_posts.py. This replaces a stale call to the
+        # since-retired club_posts.create_scorecard_posts, which no
+        # longer exists -- that import was silently failing every single
+        # time a multiplayer round completed, with the ImportError
+        # swallowed by this same try/except, so no round post (and no
+        # feed entry for anyone, including friends who weren't even in
+        # the round) was ever actually created.
         try:
-            from backend.services.club_posts import create_scorecard_posts
-            create_scorecard_posts(round_id, accepted_player_ids)
+            from backend.services.round_posts import create_round_post
+            create_round_post(round_id, accepted_player_ids, handicap_changes=handicap_changes)
         except Exception as exc:
-            print(f"[FEED] Failed to create scorecard post(s) for round={round_id}: {exc}")
+            print(f"[FEED] Failed to create round post for round={round_id}: {exc}")
 
     return get_round(round_id, viewer_player_id=player_id)
 
