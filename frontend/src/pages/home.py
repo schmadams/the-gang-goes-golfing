@@ -18,7 +18,13 @@ multiplayer round shows the group scorecard first, with prev/next
 arrows to page across to your own detailed scorecard (putts, fairways)
 plus any handicap change, when you were one of the players -- a
 friend's round you didn't play in only ever shows the group view, since
-there's no personal detail of yours to page to.
+there's no personal detail of yours to page to. That detailed scorecard
+renders front 9 stacked above back 9 (see _feed_detail_table) rather
+than all 18 holes in one wide row, so it fits a feed card without
+horizontal scrolling. Any photos on the round render as a swipeable
+carousel (see _feed_round_post_card's photo_gallery, and
+assets/round_photo_carousel.js for the swipe/counter/dot behavior)
+rather than a stacked list.
 
 The other three post types (join/tournament/manual) reuse the exact
 same rendering club.py's own Feed tab already uses -- duplicated here,
@@ -112,46 +118,108 @@ def _handicap_delta_badge(change):
     return html.Span(f"Handicap {before:.1f} {arrow} {after:.1f}", className=css_class)
 
 
-def _feed_detail_table(detail):
-    """One player's hole-by-hole breakdown -- Hole/Par/Score/Putts/FIR,
-    18 holes across, plus a totals row. FIR (fairway in regulation) is
-    left blank on a par 3 -- see _detailed_player_scorecard's own
-    docstring in round_posts.py for why those holes are excluded from
-    the fairway count entirely rather than counted as a miss."""
-    holes = detail.get("holes", [])
+def _score_mark(strokes, par, nr):
+    """One hole's score, in the same circle/square shorthand a paper
+    scorecard uses -- a filled circle for eagle-or-better, an outlined
+    circle for birdie, plain text for par, an outlined square for
+    bogey, and a filled square for double-bogey-or-worse. Needs both
+    strokes and a real (non-NR) par to classify at all; an unplayed
+    hole or one marked NR just shows a dash/label with no shape."""
+    if nr:
+        return html.Span("NR", className="t3g-score-mark")
+    if strokes is None:
+        return html.Span("—", className="t3g-score-mark")
+    if not par:
+        return html.Span(str(strokes), className="t3g-score-mark")
+
+    diff = strokes - par
+    if diff <= -2:
+        modifier = "eagle"
+    elif diff == -1:
+        modifier = "birdie"
+    elif diff == 0:
+        modifier = "par"
+    elif diff == 1:
+        modifier = "bogey"
+    else:
+        modifier = "double-bogey-plus"
+
+    return html.Span(str(strokes), className=f"t3g-score-mark t3g-score-mark--{modifier}")
+
+
+def _feed_hole_table(holes, subtotal_label, out_in_total):
+    """One half (front 9 or back 9) of a player's hole-by-hole
+    breakdown -- just Hole/Par/Score, 9 holes across plus a subtotal
+    column, rather than the old single 18-column table with Putts/FIR
+    rows too (that level of detail is still in the API response --
+    _detailed_player_scorecard in round_posts.py -- just not shown on
+    this compact feed card anymore). See _feed_detail_table below for
+    why it's split front-9-over-back-9 instead of all 18 in one row.
+    The Hole/Par rows sit in a <thead> and the Score row in a <tbody>
+    specifically so home.css can tint them differently (see
+    .t3g-feed-detail-table thead) -- a real scorecard's hole/par line
+    reads as the "fixed" part and the score line as the "played" part,
+    and the two rows getting different backgrounds makes that reading
+    order obvious at a glance."""
     header = html.Tr(
-        [html.Th("Hole")] + [html.Th(str(h["hole_number"])) for h in holes] + [html.Th("Tot")]
+        [html.Th("Hole")] + [html.Th(str(h["hole_number"])) for h in holes] + [html.Th(subtotal_label)]
     )
     par_row = html.Tr(
         [html.Td("Par", className="t3g-feed-detail-row-label")]
         + [html.Td(h.get("par") if h.get("par") is not None else "—") for h in holes]
-        + [html.Td("")]
+        + [html.Td(out_in_total["par"] if out_in_total["par"] is not None else "—")]
     )
     score_row = html.Tr(
         [html.Td("Score", className="t3g-feed-detail-row-label")]
-        + [html.Td(h.get("strokes") if h.get("strokes") is not None else "—") for h in holes]
-        + [html.Td(detail.get("total_strokes", "—"), className="t3g-feed-detail-total-cell")]
-    )
-    putts_row = html.Tr(
-        [html.Td("Putts", className="t3g-feed-detail-row-label")]
-        + [html.Td(h.get("putts") if h.get("putts") is not None else "—") for h in holes]
-        + [html.Td(detail.get("total_putts", "—"), className="t3g-feed-detail-total-cell")]
-    )
-    fairway_row = html.Tr(
-        [html.Td("FIR", className="t3g-feed-detail-row-label")]
+        + [html.Td(_score_mark(h.get("strokes"), h.get("par"), h.get("nr"))) for h in holes]
         + [
-            html.Td("—" if not h.get("par") or h["par"] <= 3 else ("✓" if h.get("fairway_hit") else "✗"))
-            for h in holes
+            html.Td(
+                out_in_total["strokes"] if out_in_total["strokes"] is not None else "—",
+                className="t3g-feed-detail-total-cell",
+            )
         ]
-        + [html.Td(f"{detail.get('fairways_hit', 0)}/{detail.get('fairways_eligible', 0)}", className="t3g-feed-detail-total-cell")]
     )
-    return html.Div(
-        className="t3g-feed-detail-table-wrap",
-        children=html.Table(
-            className="t3g-feed-detail-table",
-            children=[html.Thead([header, par_row]), html.Tbody([score_row, putts_row, fairway_row])],
-        ),
+    return html.Table(
+        className="t3g-feed-detail-table",
+        children=[html.Thead([header, par_row]), html.Tbody([score_row])],
     )
+
+
+def _feed_hole_subtotals(holes):
+    """Par/strokes totals for one half (front 9 or back 9) of a round --
+    the Out/In column each _feed_hole_table ends with."""
+    played = [h for h in holes if h.get("strokes") is not None]
+    return {
+        "par": sum(h["par"] for h in holes if h.get("par") is not None) or None,
+        "strokes": sum(h["strokes"] for h in played) if played else None,
+    }
+
+
+def _feed_detail_table(detail):
+    """One player's hole-by-hole breakdown, front 9 stacked above back
+    9 rather than all 18 holes across in one row -- 18 columns plus a
+    Hole label and a totals column never fit a phone width, which used
+    to force this table into its own horizontal scroll
+    (.t3g-feed-detail-table-wrap's old overflow-x: auto). Two 9-wide
+    tables both fit without scrolling instead, the same OUT/IN split a
+    real scorecard uses, just stacked rather than side by side (see
+    analysis.py's full scorecard for the side-by-side version -- that
+    one's fine with a horizontal scroll since it's a deliberate,
+    single-round detail page rather than a feed card). Deliberately
+    just Hole/Par/Score -- Putts and FIR made this card busier than a
+    quick feed glance needs; that detail's still available via the full
+    scorecard on analysis.py for anyone who wants it."""
+    holes = detail.get("holes", [])
+    front = [h for h in holes if h.get("hole_number") and h["hole_number"] <= 9]
+    back = [h for h in holes if h.get("hole_number") and h["hole_number"] > 9]
+
+    tables = []
+    if front:
+        tables.append(_feed_hole_table(front, "Out", _feed_hole_subtotals(front)))
+    if back:
+        tables.append(_feed_hole_table(back, "In", _feed_hole_subtotals(back)))
+
+    return html.Div(className="t3g-feed-detail-table-wrap", children=tables)
 
 
 def _feed_group_view(post):
@@ -187,6 +255,80 @@ def _feed_detail_view(post):
 
 def _feed_round_body(post, view):
     return _feed_detail_view(post) if view == "detail" else _feed_group_view(post)
+
+
+def _format_score_to_par(value):
+    """Standard golf shorthand -- "E" for level par, a leading + for
+    over, a bare - for under (Python's own str() of a negative int
+    already has the minus sign)."""
+    if value is None:
+        return "—"
+    if value == 0:
+        return "E"
+    return f"+{value}" if value > 0 else str(value)
+
+
+def _feed_stats_slide(detail):
+    """An auto-generated extra "photo" -- a 2x2 grid of round-summary
+    stats that swipes in the same carousel as any real photos on the
+    post (see _feed_round_post_card), always first since a round has
+    these numbers the moment it posts, before anyone's necessarily
+    added a real photo yet. Score to Par carries Net (this player's
+    handicap-adjusted score to par) as a smaller line underneath and
+    Stableford points as a superscript next to the headline number --
+    see _round_scoring_stats in round_posts.py for exactly how each
+    stat here (score_to_par, net_score_to_par, stableford_points,
+    gir_hit/gir_eligible) is derived; fairways_hit/fairways_eligible and
+    total_putts were already part of the detail payload."""
+    score_row_children = [html.Span(_format_score_to_par(detail.get("score_to_par")), className="t3g-stat-value")]
+    if detail.get("stableford_points") is not None:
+        score_row_children.append(
+            html.Span(f"{detail['stableford_points']}pts", className="t3g-stat-superscript")
+        )
+
+    score_tile_children = [
+        html.Span("Score to Par", className="t3g-stat-label"),
+        html.Div(score_row_children, className="t3g-stat-value-row"),
+    ]
+    if detail.get("net_score_to_par") is not None:
+        score_tile_children.append(
+            html.Span(f"Net {_format_score_to_par(detail['net_score_to_par'])}", className="t3g-stat-subvalue")
+        )
+
+    fairways_hit, fairways_eligible = detail.get("fairways_hit"), detail.get("fairways_eligible")
+    putts = detail.get("total_putts")
+    gir_hit, gir_eligible = detail.get("gir_hit"), detail.get("gir_eligible")
+    gir_pct = round(100 * gir_hit / gir_eligible) if gir_eligible else None
+
+    tiles = [
+        html.Div(score_tile_children, className="t3g-stat-tile"),
+        html.Div(
+            [
+                html.Span("Fairways", className="t3g-stat-label"),
+                html.Span(
+                    f"{fairways_hit}/{fairways_eligible}" if fairways_eligible is not None else "—",
+                    className="t3g-stat-value",
+                ),
+            ],
+            className="t3g-stat-tile",
+        ),
+        html.Div(
+            [
+                html.Span("Putts", className="t3g-stat-label"),
+                html.Span(str(putts) if putts is not None else "—", className="t3g-stat-value"),
+            ],
+            className="t3g-stat-tile",
+        ),
+        html.Div(
+            [
+                html.Span("GIR", className="t3g-stat-label"),
+                html.Span(f"{gir_pct}%" if gir_pct is not None else "—", className="t3g-stat-value"),
+            ],
+            className="t3g-stat-tile",
+        ),
+    ]
+
+    return html.Div(html.Div(tiles, className="t3g-stat-grid"), className="t3g-feed-stats-slide")
 
 
 def _feed_photo_composer(round_id, can_add_photo):
@@ -263,10 +405,45 @@ def _feed_round_post_card(post, player_id):
         )
 
     photos = post.get("photos") or []
+    # The auto-generated stats slide (see _feed_stats_slide) comes after
+    # any real photos, as one more thing to swipe to rather than the
+    # first thing shown -- a round with no photos yet still only has the
+    # stats slide to show (there's nothing to put in front of it), but
+    # one with real photos shows those first, exactly like paging past a
+    # cover photo to the stats. Only built at all when this viewer has a
+    # detail payload to build it from -- a friend's round they didn't
+    # play in has neither solo_detail nor viewer_detail, so it correctly
+    # falls back to just whatever real photos exist (or none at all).
+    detail_for_stats = post.get("solo_detail") or post.get("viewer_detail")
+    stats_slide = [_feed_stats_slide(detail_for_stats)] if detail_for_stats else []
+
+    # The scroll track itself keeps the same id/className the upload
+    # callback already targets (handle_feed_photo_upload just appends
+    # more <img> children to it, unchanged) -- everything new here is
+    # the outer carousel shell around it. The counter badge and dots are
+    # empty placeholders on the Python/Dash side; assets/
+    # round_photo_carousel.js fills and updates them from the track's
+    # actual scroll position and slide count client-side (counting every
+    # direct child, not just <img> tags, so the stats slide counts as
+    # one too), since neither "which slide is centered right now" nor
+    # "how many slides are there after an upload" is state Dash needs to
+    # know about on the server. Note the upload callback appends new
+    # photos to whatever's already in this list -- if a photo gets added
+    # after the stats slide is already showing, it'll land after the
+    # stats slide too, not before it; not worth the extra callback
+    # complexity of re-sorting on every upload just to keep the stats
+    # slide pinned last.
     photo_gallery = html.Div(
-        id={"type": "feed-photo-list", "round_id": round_id},
-        className="t3g-feed-photo-gallery",
-        children=[html.Img(src=url, className="t3g-feed-post-image") for url in photos],
+        className="t3g-feed-photo-carousel",
+        children=[
+            html.Div(
+                id={"type": "feed-photo-list", "round_id": round_id},
+                className="t3g-feed-photo-gallery",
+                children=[html.Img(src=url, className="t3g-feed-post-image") for url in photos] + stats_slide,
+            ),
+            html.Div(className="t3g-feed-photo-counter"),
+            html.Div(className="t3g-feed-photo-dots"),
+        ],
     )
 
     return html.Div(

@@ -3,8 +3,17 @@ import time
 
 from backend.database import supabase
 from backend.services.friends import list_friends
+from backend.services.handicaps import get_current_player_handicap, get_effective_handicap_source
 from backend.services.notifications import create_notification
 from backend.services.storage import extension_for, upload_image
+# _hole_handicap_strokes/_stableford_points are rounds.py's own WHS
+# stroke-allocation and Stableford-scoring math (used for the Rounds
+# History / Analysis HCP/NET/Stableford columns) -- imported rather than
+# re-derived here, unlike this file's other small per-module helpers,
+# because getting handicap-stroke allocation subtly wrong is exactly the
+# kind of thing that's better to share one implementation of than risk
+# two copies quietly drifting apart.
+from backend.services.rounds import _hole_handicap_strokes, _stableford_points
 
 ROUND_POST_PHOTO_BUCKET = "round-post-photos"
 
@@ -203,11 +212,71 @@ def _group_scorecard_summary(round_data: dict, player_ids: list[str]) -> dict:
     }
 
 
+def _round_scoring_stats(player_id: str, holes: list[dict], played_holes: list[dict]) -> dict:
+    """The round-summary numbers behind the feed's stats card (see
+    home.py's _feed_stats_slide): score to par, net score to par,
+    Stableford points, and green-in-regulation rate. All derived from
+    data this module already has -- GIR in particular has no dedicated
+    column anywhere (there's no green_in_regulation field in
+    round_scores), so it's computed the same way most scoring apps that
+    don't ask players to tap "on the green" separately do: a hole counts
+    as GIR when the ball got there in (par - 2) strokes or fewer, i.e.
+    strokes-to-green (strokes minus putts) leaves the standard 2 putts
+    or better to make par.
+
+    Net/Stableford both need *a* handicap to mean anything -- rather
+    than inventing a third resolution rule, this uses the exact same
+    "player's current effective source (T3G or Manual), applied to every
+    round of theirs" approach list_player_rounds already uses for the
+    Rounds History / Analysis HCP/NET/Stableford columns (see
+    _build_round_summary in rounds.py), so a round's Net score here
+    always matches what that round shows everywhere else in the app --
+    not the handicap that was actually in effect back when the round was
+    played, which this app doesn't retroactively snapshot anywhere.
+    """
+    total_par = sum(h["par"] for h in played_holes if h.get("par") is not None) or None
+    total_strokes = sum(h["strokes"] for h in played_holes) if played_holes else None
+    score_to_par = total_strokes - total_par if (total_strokes is not None and total_par is not None) else None
+
+    handicap_row = get_current_player_handicap(player_id, source=get_effective_handicap_source(player_id))
+    handicap = handicap_row["handicap"] if handicap_row else None
+
+    net_strokes = round(total_strokes - handicap) if (total_strokes is not None and handicap is not None) else None
+    net_score_to_par = (
+        net_strokes - total_par if (net_strokes is not None and total_par is not None) else None
+    )
+
+    stableford_points = None
+    if handicap is not None:
+        points = [
+            _stableford_points(h["strokes"] - _hole_handicap_strokes(handicap, h.get("stroke_index")), h["par"])
+            for h in played_holes
+            if h.get("par") is not None and h.get("stroke_index") is not None
+        ]
+        stableford_points = sum(p for p in points if p is not None) if points else None
+
+    gir_holes = [h for h in played_holes if h.get("putts") is not None and h.get("par") is not None]
+    gir_hit = sum(1 for h in gir_holes if (h["strokes"] - h["putts"]) <= (h["par"] - 2))
+
+    return {
+        "total_par": total_par,
+        "score_to_par": score_to_par,
+        "handicap": handicap,
+        "net_strokes": net_strokes,
+        "net_score_to_par": net_score_to_par,
+        "stableford_points": stableford_points,
+        "gir_hit": gir_hit,
+        "gir_eligible": len(gir_holes),
+    }
+
+
 def _detailed_player_scorecard(round_data: dict, player_id: str) -> dict | None:
     """The single player's own hole-by-hole breakdown (putts, fairways
     hit) that a round post pages across to from the group summary --
     "the extra detailed scorecard" the solo case posts immediately with,
-    since a solo round has no group view to show first."""
+    since a solo round has no group view to show first. Also carries the
+    round-summary stats (_round_scoring_stats) the feed's stats card is
+    built from."""
     player = next((p for p in round_data.get("players", []) if p["player_id"] == player_id), None)
     if not player:
         return None
@@ -216,6 +285,7 @@ def _detailed_player_scorecard(round_data: dict, player_id: str) -> dict | None:
         {
             "hole_number": h.get("hole_number"),
             "par": h.get("par") or h.get("manual_par"),
+            "stroke_index": h.get("stroke_index") or h.get("manual_stroke_index"),
             "strokes": h.get("strokes"),
             "putts": h.get("putts"),
             "fairway_hit": h.get("fairway_hit"),
@@ -239,6 +309,7 @@ def _detailed_player_scorecard(round_data: dict, player_id: str) -> dict | None:
         "fairways_hit": sum(1 for h in fairway_eligible if h.get("fairway_hit")),
         "fairways_eligible": len(fairway_eligible),
         "thru": len(played_holes),
+        **_round_scoring_stats(player_id, holes, played_holes),
     }
 
 

@@ -826,7 +826,7 @@
 /* Cancels the post's own 1rem side padding so the gallery -- and the
    images inside it -- span the full post width instead of sitting
    inset like the surrounding text. */
-.t3g-home-feed-page .t3g-feed-photo-gallery {
+.t3g-home-feed-page .t3g-feed-photo-carousel {
     margin: 0.75rem -1rem 0;
 }
 
@@ -872,7 +872,7 @@
         border: 1px solid var(--t3g-border);
     }
 
-    .t3g-home-feed-page .t3g-feed-photo-gallery {
+    .t3g-home-feed-page .t3g-feed-photo-carousel {
         margin: 0.75rem 0 0;
     }
 }
@@ -931,26 +931,73 @@
     margin-top: 0.75rem;
 }
 
+/* The two 9-hole tables (see _feed_detail_table's docstring in
+   home.py for why front/back are stacked rather than side by side)
+   get a little breathing room between them. */
 .t3g-feed-detail-table-wrap {
-    overflow-x: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    max-width: 100%;
+    overflow: hidden;
 }
 
+/* table-layout: fixed (rather than the default content-sized columns)
+   is what actually makes "fits a phone width without scrolling" true --
+   content-sized columns let the 1.5rem score-mark circles/squares push
+   each hole column wider than the card, which overflowed the whole
+   page horizontally (not just the table) since nothing here was
+   clipping it. Fixed layout instead divides 100% of the card's own
+   width across exactly 11 columns every time, so it can never be wider
+   than its container regardless of screen size. */
 .t3g-feed-detail-table {
     width: 100%;
+    table-layout: fixed;
     border-collapse: collapse;
     font-size: 0.78rem;
 }
 
 .t3g-feed-detail-table th,
 .t3g-feed-detail-table td {
-    padding: 0.3rem 0.4rem;
+    box-sizing: border-box;
+    padding: 0.3rem 0.15rem;
     text-align: center;
-    white-space: nowrap;
+    overflow: hidden;
+    border: 1px solid var(--t3g-border);
+}
+
+/* The Hole/Par/Score label column and the Out/In subtotal column both
+   need to stay readable ("Score", "34") -- wider than a single-digit
+   hole column -- so they get explicit shares and the 9 hole columns
+   split whatever's left evenly between them (table-layout: fixed's
+   normal behavior for cells with no explicit width). */
+.t3g-feed-detail-table th:first-child,
+.t3g-feed-detail-table td:first-child {
+    width: 19%;
+    text-align: left;
+    padding-left: 0.35rem;
+}
+
+.t3g-feed-detail-table th:last-child,
+.t3g-feed-detail-table td:last-child {
+    width: 11%;
+}
+
+/* Hole and Par sit in a <thead> (see _feed_hole_table's docstring),
+   Score alone in the <tbody> below -- the tint on the head half reads
+   as "the fixed part of the card" versus the played-in score row. */
+.t3g-feed-detail-table thead th,
+.t3g-feed-detail-table thead td {
+    background: var(--t3g-surface-raised);
 }
 
 .t3g-feed-detail-table thead th {
     color: var(--t3g-muted);
     font-weight: 700;
+}
+
+.t3g-feed-detail-table tbody td {
+    background: var(--t3g-surface);
 }
 
 .t3g-feed-detail-row-label {
@@ -962,7 +1009,47 @@
 .t3g-feed-detail-total-cell {
     font-weight: 800;
     color: var(--t3g-ink);
-    border-left: 1px solid var(--t3g-border);
+    border-left: 2px solid var(--t3g-border-strong);
+}
+
+/* Per-hole score shorthand -- see _score_mark's docstring in home.py
+   for the eagle/birdie/par/bogey/double-bogey-plus -> shape mapping.
+   Fixed square footprint so every cell in the Score row lines up
+   whether or not that hole's score got a shape at all. */
+.t3g-score-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.35rem;
+    height: 1.35rem;
+    max-width: 100%;
+    line-height: 1;
+    font-weight: 700;
+    color: var(--t3g-ink);
+}
+
+.t3g-score-mark--birdie {
+    border-radius: 999px;
+    border: 1.5px solid var(--t3g-success-text);
+    color: var(--t3g-success-text);
+}
+
+.t3g-score-mark--eagle {
+    border-radius: 999px;
+    background: var(--t3g-success-text);
+    color: var(--t3g-bg);
+}
+
+.t3g-score-mark--bogey {
+    border-radius: 2px;
+    border: 1.5px solid var(--t3g-warning-text);
+    color: var(--t3g-warning-text);
+}
+
+.t3g-score-mark--double-bogey-plus {
+    border-radius: 2px;
+    background: var(--t3g-danger-text);
+    color: var(--t3g-bg);
 }
 
 .t3g-feed-handicap-badge {
@@ -988,14 +1075,169 @@
     margin-top: 0.75rem;
 }
 
+.t3g-feed-photo-carousel {
+    position: relative;
+}
+
+.t3g-feed-photo-carousel:has(.t3g-feed-photo-gallery:empty) {
+    display: none;
+}
+
 .t3g-feed-photo-gallery {
     display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
+    flex-direction: row;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+}
+
+.t3g-feed-photo-gallery::-webkit-scrollbar {
+    display: none;
 }
 
 .t3g-feed-photo-gallery:empty {
     display: none;
+}
+
+/* Scoped to the carousel track specifically -- .t3g-feed-post-image is
+   shared with single, non-swiped images elsewhere (manual/tournament
+   posts, club.py's own Feed tab), which should keep their plain
+   block/max-height look from club.css untouched. */
+.t3g-feed-photo-gallery .t3g-feed-post-image {
+    flex: 0 0 100%;
+    width: 100%;
+    max-height: none;
+    aspect-ratio: 4 / 3;
+    object-fit: cover;
+    scroll-snap-align: center;
+}
+
+/* The auto-generated stats slide (see _feed_stats_slide in home.py)
+   is the same size/swipe-unit as a real photo in the track -- same
+   aspect ratio so the carousel doesn't jump heights swiping between
+   the two kinds of slide. */
+.t3g-feed-stats-slide {
+    flex: 0 0 100%;
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    scroll-snap-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--t3g-surface);
+    padding: 1rem;
+    box-sizing: border-box;
+}
+
+/* No outer border -- the grid just floats on the slide's own
+   background. The four tiles' shared edge is a dashed "+" instead of
+   the old solid gap-trick line: each tile draws its own dashed
+   right/bottom border where it touches a neighbor, and nothing on the
+   two outer edges, so the plus shape forms without doubling any line
+   up or needing a border on the grid container itself. */
+.t3g-stat-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    width: 100%;
+    max-width: 320px;
+}
+
+.t3g-stat-tile {
+    background: var(--t3g-bg);
+    padding: 0.9rem 0.6rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.25rem;
+    text-align: center;
+}
+
+.t3g-stat-tile:nth-child(1) {
+    border-right: 1px dashed var(--t3g-border-strong);
+    border-bottom: 1px dashed var(--t3g-border-strong);
+}
+
+.t3g-stat-tile:nth-child(2) {
+    border-bottom: 1px dashed var(--t3g-border-strong);
+}
+
+.t3g-stat-tile:nth-child(3) {
+    border-right: 1px dashed var(--t3g-border-strong);
+}
+
+.t3g-stat-label {
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--t3g-muted);
+}
+
+.t3g-stat-value-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.15rem;
+}
+
+.t3g-stat-value {
+    font-size: 1.6rem;
+    font-weight: 800;
+    color: var(--t3g-ink);
+    line-height: 1;
+}
+
+.t3g-stat-superscript {
+    font-size: 0.68rem;
+    font-weight: 700;
+    color: var(--t3g-accent);
+    vertical-align: super;
+    line-height: 1;
+    margin-top: 0.1rem;
+}
+
+.t3g-stat-subvalue {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--t3g-muted);
+}
+
+.t3g-feed-photo-counter {
+    position: absolute;
+    top: 0.6rem;
+    right: 0.6rem;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    font-size: 0.72rem;
+    font-weight: 700;
+    display: none;
+    pointer-events: none;
+}
+
+.t3g-feed-photo-dots {
+    position: absolute;
+    bottom: 0.6rem;
+    left: 50%;
+    transform: translateX(-50%);
+    display: none;
+    align-items: center;
+    gap: 0.35rem;
+    pointer-events: none;
+}
+
+.t3g-feed-photo-dot {
+    width: 0.4rem;
+    height: 0.4rem;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.45);
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
+}
+
+.t3g-feed-photo-dot--active {
+    background: #fff;
 }
 
 @media (max-width: 640px) {
@@ -1004,6 +1246,37 @@
     }
 
     .t3g-feed-detail-table {
-        font-size: 0.7rem;
+        font-size: 0.68rem;
+    }
+
+    .t3g-feed-detail-table th,
+    .t3g-feed-detail-table td {
+        padding: 0.25rem 0.1rem;
+    }
+
+    .t3g-score-mark {
+        width: 1.1rem;
+        height: 1.1rem;
+    }
+}
+
+/* Narrow phones (see live_round.css/scoring_history.css for the same
+   breakpoint elsewhere in this app) -- the 11-column fixed layout is
+   already guaranteed to fit at any width, but the score marks and
+   padding get one more notch smaller here purely so the numbers inside
+   them stay legible instead of getting visually cramped. */
+@media (max-width: 375px) {
+    .t3g-feed-detail-table {
+        font-size: 0.62rem;
+    }
+
+    .t3g-feed-detail-table th,
+    .t3g-feed-detail-table td {
+        padding: 0.2rem 0.05rem;
+    }
+
+    .t3g-score-mark {
+        width: 0.95rem;
+        height: 0.95rem;
     }
 }
