@@ -2,43 +2,35 @@
 // (see _feed_round_post_card's photo_gallery in frontend/src/pages/
 // home.py). The scroll/swipe itself is plain CSS (scroll-snap on
 // .t3g-feed-photo-gallery -- see home.css), so this file's only job is
-// the "1/6" counter badge and the dot row underneath it, since neither
-// "which photo is centered right now" nor "how many photos exist after
-// an upload" is something Dash's server-rendered children can react to
-// on their own -- the upload callback only ever appends more <img>
-// children to the track, it never touches the counter/dots.
+// the dot row underneath the carousel, since "which slide is centered
+// right now" (and "how many slides exist after an upload") isn't
+// something Dash's server-rendered children can react to on their own
+// -- the upload callback only ever appends more <img> children to the
+// track, it never touches the dots.
 //
 // No build step, no dependency -- this app has no other JS yet, so
 // kept deliberately small and vanilla rather than pulling in a
 // carousel library for one feature.
 (function () {
-    function updateActive(track, counter, dots) {
+    function updateActive(track, dots) {
         // Every direct child is one swipeable slide -- not just <img>
-        // tags, since the auto-generated stats slide (see
-        // _feed_stats_slide in home.py) is a plain <div> that swipes
+        // tags, since the scorecard and stats slides (see
+        // _feed_round_post_card in home.py) are plain <div>s that swipe
         // alongside real photos in the same track.
         var count = track.children.length;
-        if (!count) {
+        if (!count || !dots) {
             return;
         }
         var index = Math.round(track.scrollLeft / track.clientWidth);
         index = Math.max(0, Math.min(count - 1, index));
-        if (counter) {
-            counter.textContent = (index + 1) + "/" + count;
-        }
-        if (dots) {
-            Array.prototype.forEach.call(dots.children, function (dot, i) {
-                dot.classList.toggle("t3g-feed-photo-dot--active", i === index);
-            });
-        }
+        Array.prototype.forEach.call(dots.children, function (dot, i) {
+            dot.classList.toggle("t3g-feed-photo-dot--active", i === index);
+        });
     }
 
-    function render(track, counter, dots) {
+    function render(track, dots) {
         var count = track.children.length;
 
-        if (counter) {
-            counter.style.display = count > 1 ? "block" : "none";
-        }
         if (dots) {
             dots.style.display = count > 1 ? "flex" : "none";
             if (dots.childElementCount !== count) {
@@ -50,7 +42,7 @@
                 }
             }
         }
-        updateActive(track, counter, dots);
+        updateActive(track, dots);
     }
 
     function initCarousel(track) {
@@ -63,14 +55,13 @@
         }
         track.dataset.t3gCarouselBound = "1";
 
-        var counter = wrapper.querySelector(".t3g-feed-photo-counter");
         var dots = wrapper.querySelector(".t3g-feed-photo-dots");
 
         track.addEventListener(
             "scroll",
             function () {
                 window.requestAnimationFrame(function () {
-                    updateActive(track, counter, dots);
+                    updateActive(track, dots);
                 });
             },
             { passive: true }
@@ -79,12 +70,12 @@
         // Catches both the very first paint (photos already on the
         // round) and every later upload (handle_feed_photo_upload
         // appending new <img> children server-side via Dash) -- both
-        // need the counter/dot count to be recomputed the same way.
+        // need the dot count to be recomputed the same way.
         new MutationObserver(function () {
-            render(track, counter, dots);
+            render(track, dots);
         }).observe(track, { childList: true });
 
-        render(track, counter, dots);
+        render(track, dots);
     }
 
     function scan() {

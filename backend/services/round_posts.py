@@ -202,6 +202,11 @@ def _group_scorecard_summary(round_data: dict, player_ids: list[str]) -> dict:
             "name": _player_display_name(player),
             "total_strokes": total_strokes,
             "thru": thru,
+            # Lets the feed header name whoever started the round rather
+            # than every player -- see home.py's _feed_primary_player_
+            # display, which picks this player as the "X and N others"
+            # headline instead of listing every name.
+            "is_owner": bool(player.get("is_owner")),
         })
     return {
         "round_id": round_data.get("id"),

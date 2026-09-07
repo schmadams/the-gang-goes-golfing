@@ -331,6 +331,26 @@ def _feed_stats_slide(detail):
     return html.Div(html.Div(tiles, className="t3g-stat-grid"), className="t3g-feed-stats-slide")
 
 
+def _feed_primary_player_display(players):
+    """"{name} played a round" for a solo round, or "{primary} and N
+    others played a round" for a multiplayer one -- replaces listing
+    every player's name in full (see is_owner on each summary player,
+    set in _group_scorecard_summary in round_posts.py). The primary
+    player is whoever started the round (falls back to the first player
+    in the list on the off chance no one's flagged as owner, which
+    shouldn't normally happen). Same wording for every viewer regardless
+    of which of the round's players happen to be their friends -- not
+    personalized per viewer, since that would need a friends-list lookup
+    on every feed load just to decide whose name to show."""
+    if not players:
+        return "A round was played"
+    primary = next((p for p in players if p.get("is_owner")), players[0])
+    if len(players) == 1:
+        return f"{primary['name']} played a round"
+    others = len(players) - 1
+    return f"{primary['name']} and {others} other{'s' if others != 1 else ''} played a round"
+
+
 def _feed_photo_composer(round_id, can_add_photo):
     """The only place a photo can still be attached to a feed post -- see
     club.py's _feed_composer for why manual posts lost their own upload
@@ -363,18 +383,26 @@ def _feed_photo_composer(round_id, can_add_photo):
 def _feed_round_post_card(post, player_id):
     """A completed round's post -- see create_round_post's docstring in
     backend/services/round_posts.py for exactly when this gets created.
-    Solo rounds have no group/detail toggle at all (there's only one
-    player, so there's nothing to page between); a multiplayer round you
-    played in gets prev/next arrows between the group scorecard and your
-    own detail, and a multiplayer round you're only seeing because a
-    friend played it (or it matched a shared club) shows just the group
-    view, since there's no personal detail of yours to show."""
+    The name/course/date header always stays fixed above the carousel;
+    everything else about the round -- the scorecard, the stats, any
+    photos -- is now one swipeable carousel below it (see
+    _feed_stats_slide and home.css) rather than the scorecard sitting
+    permanently visible with photos in a separate strip underneath.
+    Slide 1 is always the scorecard (the solo hole-by-hole table, or for
+    a multiplayer round, the same group-scorecard/personal-detail toggle
+    this always had -- the prev/next arrows still work exactly as
+    before, just inside the carousel's first slide instead of above it).
+    Slide 2 is the stats card, when this viewer has a detail payload to
+    build one from (own round, or a multiplayer round they played in) --
+    skipped for a friend's round they didn't play in, since there's no
+    personal detail of theirs to summarize. Any real photos follow
+    after that."""
     round_id = post["round_id"]
     scorecard = post.get("scorecard") or {}
     course_bits = [b for b in [scorecard.get("club_name"), scorecard.get("course_name")] if b]
     course_text = " – ".join(course_bits)
     timestamp_text = _format_feed_timestamp(post.get("created_at"))
-    player_names = ", ".join(p["name"] for p in scorecard.get("players", []))
+    round_header_text = _feed_primary_player_display(scorecard.get("players", []))
     player_ids = (post.get("metadata") or {}).get("player_ids", [])
     can_add_photo = player_id in player_ids
 
@@ -404,16 +432,16 @@ def _feed_round_post_card(post, player_id):
             else None
         )
 
+    # Slide 1, always -- a completed round always has at least a group
+    # scorecard, so this alone guarantees the stats slide right after it
+    # is never the first/only thing in the carousel, without needing a
+    # separate placeholder slide for the zero-photo case.
+    scorecard_slide = html.Div(
+        className="t3g-feed-scorecard-slide",
+        children=[c for c in [toggle_controls, body] if c is not None],
+    )
+
     photos = post.get("photos") or []
-    # The auto-generated stats slide (see _feed_stats_slide) comes after
-    # any real photos, as one more thing to swipe to rather than the
-    # first thing shown -- a round with no photos yet still only has the
-    # stats slide to show (there's nothing to put in front of it), but
-    # one with real photos shows those first, exactly like paging past a
-    # cover photo to the stats. Only built at all when this viewer has a
-    # detail payload to build it from -- a friend's round they didn't
-    # play in has neither solo_detail nor viewer_detail, so it correctly
-    # falls back to just whatever real photos exist (or none at all).
     detail_for_stats = post.get("solo_detail") or post.get("viewer_detail")
     stats_slide = [_feed_stats_slide(detail_for_stats)] if detail_for_stats else []
 
@@ -423,25 +451,18 @@ def _feed_round_post_card(post, player_id):
     # the outer carousel shell around it. The counter badge and dots are
     # empty placeholders on the Python/Dash side; assets/
     # round_photo_carousel.js fills and updates them from the track's
-    # actual scroll position and slide count client-side (counting every
-    # direct child, not just <img> tags, so the stats slide counts as
-    # one too), since neither "which slide is centered right now" nor
-    # "how many slides are there after an upload" is state Dash needs to
-    # know about on the server. Note the upload callback appends new
-    # photos to whatever's already in this list -- if a photo gets added
-    # after the stats slide is already showing, it'll land after the
-    # stats slide too, not before it; not worth the extra callback
-    # complexity of re-sorting on every upload just to keep the stats
-    # slide pinned last.
+    # actual scroll position client-side (counting every direct child,
+    # not just <img> tags, so the scorecard/stats slides count too),
+    # since "which slide is centered right now" isn't state Dash needs
+    # to know about on the server.
     photo_gallery = html.Div(
         className="t3g-feed-photo-carousel",
         children=[
             html.Div(
                 id={"type": "feed-photo-list", "round_id": round_id},
                 className="t3g-feed-photo-gallery",
-                children=[html.Img(src=url, className="t3g-feed-post-image") for url in photos] + stats_slide,
+                children=[scorecard_slide] + stats_slide + [html.Img(src=url, className="t3g-feed-post-image") for url in photos],
             ),
-            html.Div(className="t3g-feed-photo-counter"),
             html.Div(className="t3g-feed-photo-dots"),
         ],
     )
@@ -456,7 +477,7 @@ def _feed_round_post_card(post, player_id):
                     html.Div(
                         className="t3g-feed-post-header-text",
                         children=[
-                            html.Span(f"{player_names} played a round", className="t3g-feed-post-author"),
+                            html.Span(round_header_text, className="t3g-feed-post-author"),
                             html.Div(
                                 className="t3g-feed-post-timestamp-row",
                                 children=[
@@ -468,8 +489,6 @@ def _feed_round_post_card(post, player_id):
                     ),
                 ],
             ),
-            toggle_controls,
-            body,
             photo_gallery,
             dcc.Store(id={"type": "feed-round-post-store", "round_id": round_id}, data=post),
             dcc.Store(id={"type": "feed-round-view", "round_id": round_id}, data="group"),
