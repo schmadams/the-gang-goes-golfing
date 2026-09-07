@@ -543,6 +543,108 @@
     flex-shrink: 0;
 }
 
+/* Entrants panel (tournament.py) -- a real table: Player / Handicap /
+   Comp. Hcp / Action columns with actual <th> headers, fixed
+   percentage-width columns (so the table always spans the panel's
+   full width instead of leaving a blank gap wherever content
+   happens to fall short -- table-layout: auto was doing exactly
+   that, packing Handicap/Comp. Hcp tight against Player and leaving
+   dead space before the Action column), every column's text
+   centered (header and body alike), and a hairline divider between
+   columns so four columns of numbers/text actually read as columns
+   rather than a loose row of values. Headers reuse
+   .t3g-club-directory-table's uppercase/muted convention, kept to a
+   single line (white-space: nowrap) so a wrapped header can't throw
+   off row height or column alignment. Body rows keep the shaded-tile
+   look via a background on each td (border-collapse: separate +
+   border-spacing is what makes the per-row rounded corners below
+   possible -- a single continuous border-collapsed table can't round
+   individual rows). Sizing overall is a notch smaller than the rest
+   of the panel's text -- this is a dense data table, not prose. */
+.t3g-entrant-table {
+    width: 100%;
+    table-layout: fixed;
+    border-collapse: separate;
+    border-spacing: 0 0.4rem;
+    margin-top: -0.4rem;
+}
+
+.t3g-entrant-table th,
+.t3g-entrant-table td {
+    text-align: center;
+}
+
+.t3g-entrant-table th {
+    color: var(--t3g-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    font-size: 0.62rem;
+    font-weight: 700;
+    white-space: nowrap;
+    padding: 0 0.5rem 0.3rem;
+}
+
+.t3g-entrant-table td {
+    background: var(--t3g-surface-raised);
+    padding: 0.5rem 0.5rem;
+    color: var(--t3g-ink);
+    font-size: 0.82rem;
+}
+
+/* The divider itself -- every column except the last, on both header
+   and body cells, so it reads as one continuous line broken only by
+   the row gap (border-spacing above), not a mismatched set of
+   fragments. */
+.t3g-entrant-table th:not(:last-child),
+.t3g-entrant-table td:not(:last-child) {
+    border-right: 1px solid var(--t3g-border);
+}
+
+.t3g-entrant-table td:first-child {
+    border-top-left-radius: var(--t3g-radius-md);
+    border-bottom-left-radius: var(--t3g-radius-md);
+}
+
+.t3g-entrant-table td:last-child {
+    border-top-right-radius: var(--t3g-radius-md);
+    border-bottom-right-radius: var(--t3g-radius-md);
+}
+
+/* Percentages sum to 100% -- required for table-layout: fixed to
+   actually distribute the full row width across all four columns
+   instead of falling back to each column's intrinsic content size. */
+.t3g-entrant-name-cell {
+    font-weight: 600;
+    width: 32%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.t3g-entrant-hcp-cell {
+    color: var(--t3g-muted);
+    width: 22%;
+}
+
+.t3g-entrant-actions-cell {
+    width: 24%;
+}
+
+.t3g-entrant-actions {
+    display: flex;
+    gap: 0.4rem;
+    justify-content: center;
+}
+
+/* Smaller than the standard .t3g-panel-action-button -- sitting inside
+   a table row this dense, the usual size reads oversized (same
+   reasoning as .t3g-directory-friend-button above). */
+.t3g-entrant-action-button {
+    padding: 0.3rem 0.7rem;
+    font-size: 0.68rem;
+}
+
+
 /* Tee Times panel -- one .t3g-modal-section-style shaded block per round
    (same gray/rounded treatment the create/edit modals use), a
    first-tee-time input + Generate button for admins, and the generated

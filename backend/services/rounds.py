@@ -277,7 +277,7 @@ def _hydrate_round(round_row: dict) -> dict:
         rp_response = (
             supabase
             .table("round_players")
-            .select("*, players(id, first_name, surname, nickname)")
+            .select("*, players(id, first_name, surname, nickname, profile_picture_url)")
             .eq("round_id", round_id)
             .order("invited_at")
             .execute()
@@ -343,6 +343,11 @@ def _hydrate_round(round_row: dict) -> dict:
             "first_name": player_info.get("first_name"),
             "surname": player_info.get("surname"),
             "nickname": player_info.get("nickname"),
+            # Same field name the leaderboard/directory avatars already
+            # use (see tournaments.py's _PLAYER_EMBED) -- added so a
+            # round's own feed post (round_posts.py) can show the real
+            # profile picture instead of a generic flag icon.
+            "photo_url": player_info.get("profile_picture_url"),
             # None for a solo round (never needed sign-off) or a
             # multiplayer round this player hasn't signed off on yet --
             # see add_round_signoff.sql / sign_off_round.

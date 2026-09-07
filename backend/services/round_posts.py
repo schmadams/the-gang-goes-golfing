@@ -207,6 +207,12 @@ def _group_scorecard_summary(round_data: dict, player_ids: list[str]) -> dict:
             # display, which picks this player as the "X and N others"
             # headline instead of listing every name.
             "is_owner": bool(player.get("is_owner")),
+            # Same primary player's real profile picture for the post's
+            # avatar (see home.py's _feed_avatar) instead of a generic
+            # flag icon -- get_round's own player hydration is what
+            # actually fetches this (see profile_picture_url on the
+            # players(...) embed in rounds.py's _hydrate_round).
+            "photo_url": player.get("photo_url"),
         })
     return {
         "round_id": round_data.get("id"),

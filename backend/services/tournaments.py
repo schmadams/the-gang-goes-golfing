@@ -3,6 +3,7 @@ from backend.database import supabase
 from backend.models.tournament import (
     VALID_ENTRY_MODES,
     VALID_GROUPING_METHODS,
+    VALID_HANDICAP_ALLOWANCES,
     VALID_TOURNAMENT_FORMATS,
     TournamentCreate,
     TournamentUpdate,
@@ -33,6 +34,10 @@ class InvalidEntryModeError(Exception):
 
 class InvalidGroupingMethodError(Exception):
     """Raised when grouping_method isn't one of VALID_GROUPING_METHODS."""
+
+
+class InvalidHandicapAllowanceError(Exception):
+    """Raised when handicap_allowance isn't one of VALID_HANDICAP_ALLOWANCES."""
 
 
 class NoRoundsError(Exception):
@@ -154,6 +159,10 @@ def create_tournament(payload: TournamentCreate) -> dict:
         raise InvalidGroupingMethodError(
             f"Grouping method must be one of: {', '.join(sorted(VALID_GROUPING_METHODS))}."
         )
+    if payload.handicap_allowance not in VALID_HANDICAP_ALLOWANCES:
+        raise InvalidHandicapAllowanceError(
+            f"Handicap allowance must be one of: {', '.join(str(v) for v in sorted(VALID_HANDICAP_ALLOWANCES))}."
+        )
     if not payload.rounds:
         raise NoRoundsError("A tournament needs at least one round.")
 
@@ -169,6 +178,7 @@ def create_tournament(payload: TournamentCreate) -> dict:
             "min_handicap": payload.min_handicap,
             "max_handicap": payload.max_handicap,
             "grouping_method": payload.grouping_method,
+            "handicap_allowance": payload.handicap_allowance,
         })
         .execute()
     )
@@ -220,6 +230,10 @@ def update_tournament(tournament_id: str, payload: TournamentUpdate) -> dict:
         raise InvalidGroupingMethodError(
             f"Grouping method must be one of: {', '.join(sorted(VALID_GROUPING_METHODS))}."
         )
+    if payload.handicap_allowance not in VALID_HANDICAP_ALLOWANCES:
+        raise InvalidHandicapAllowanceError(
+            f"Handicap allowance must be one of: {', '.join(str(v) for v in sorted(VALID_HANDICAP_ALLOWANCES))}."
+        )
     if not payload.rounds:
         raise NoRoundsError("A tournament needs at least one round.")
 
@@ -233,6 +247,7 @@ def update_tournament(tournament_id: str, payload: TournamentUpdate) -> dict:
             "min_handicap": payload.min_handicap,
             "max_handicap": payload.max_handicap,
             "grouping_method": payload.grouping_method,
+            "handicap_allowance": payload.handicap_allowance,
         })
         .eq("id", tournament_id)
         .execute()
@@ -480,12 +495,29 @@ def get_tournament_leaderboard(tournament_id: str, round_id: str) -> dict:
     a missed round isn't retroactively penalized beyond what they actually
     shot); the round grid itself is only this one selected round's holes.
     """
+    # handicap_allowance (50/75/100, default 100) scales every player's
+    # handicap before it's used anywhere below -- the standard golf
+    # competition "handicap limit" rule, applied once here rather than
+    # threaded through _compute_leaderboard_line, so prior-round totals
+    # and this round's line both reflect the same scaled figure. Pulled
+    # in via the same embed pattern _PLAYER_EMBED uses elsewhere in this
+    # file (tournament_rounds.tournament_id -> tournaments.id is a real
+    # FK) rather than a second .execute() round trip -- one extra
+    # network call per leaderboard poll isn't worth it when this page
+    # already polls the endpoint on an interval.
     round_response = (
-        supabase.table("tournament_rounds").select("*").eq("id", round_id).maybe_single().execute()
+        supabase
+        .table("tournament_rounds")
+        .select("*, tournaments(handicap_allowance)")
+        .eq("id", round_id)
+        .maybe_single()
+        .execute()
     )
     tournament_round = round_response.data if round_response is not None else None
     if not tournament_round or tournament_round["tournament_id"] != tournament_id:
         raise TournamentRoundNotFoundError("Round not found for this tournament.")
+
+    handicap_allowance = (tournament_round.pop("tournaments", None) or {}).get("handicap_allowance") or 100
 
     entrants_by_tournament = _fetch_entrants_by_tournament([tournament_id])
     entrants = [e for e in entrants_by_tournament.get(tournament_id, []) if e["status"] == "confirmed"]
@@ -515,6 +547,12 @@ def get_tournament_leaderboard(tournament_id: str, round_id: str) -> dict:
         source = get_effective_handicap_source(entrant["player_id"], entrant.get("handicap_source"))
         handicap_row = get_current_player_handicap(entrant["player_id"], source=source)
         handicap_by_player[entrant["player_id"]] = handicap_row["handicap"] if handicap_row else None
+
+    if handicap_allowance != 100:
+        handicap_by_player = {
+            player_id: (handicap * handicap_allowance / 100 if handicap is not None else None)
+            for player_id, handicap in handicap_by_player.items()
+        }
 
     # Prior totals -- sum each earlier round's own line (its own course/
     # tee, so its own holes_meta and its own scores) per format, per

@@ -56,6 +56,11 @@ _TOURNAMENT_GROUPING_METHOD_OPTIONS = [
     {"label": "By handicap", "value": "handicap"},
     {"label": "Manual", "value": "manual"},
 ]
+_TOURNAMENT_HANDICAP_ALLOWANCE_OPTIONS = [
+    {"label": "50%", "value": 50},
+    {"label": "75%", "value": 75},
+    {"label": "100%", "value": 100},
+]
 _GROUP_SIZE_OPTIONS = [{"label": f"{n} per group", "value": n} for n in range(2, 7)]
 _DEFAULT_GROUP_SIZE = 4
 
@@ -92,6 +97,70 @@ def _entrant_label(entrant):
         or f"{entrant.get('first_name', '')} {entrant.get('surname', '')}".strip()
         or "Unknown player"
     )
+
+
+def _entrant_handicap_values(entrant, handicap_allowance):
+    """(full, competition) handicap for one entrant, each rounded to 1
+    decimal -- entrant["handicap_at_entry"] can come back with long
+    floating-point tails (e.g. -5.500000000000001) that aren't
+    meaningful past the first decimal place golf handicaps are normally
+    quoted to. "full" is the player's handicap as captured at entry
+    time, unaffected by the tournament's allowance; "competition" is
+    that figure scaled by handicap_allowance (50/75/100) -- the actual
+    strokes this player gets in this comp, equal to "full" whenever
+    the allowance is 100%. Either can be None if handicap_at_entry
+    itself is None (never recorded for this entrant).
+    """
+    full = entrant.get("handicap_at_entry")
+    if full is None:
+        return None, None
+    full_rounded = round(full, 1)
+    allowance = handicap_allowance if handicap_allowance is not None else 100
+    competition = round(full * allowance / 100, 1)
+    return full_rounded, competition
+
+
+def _entrant_table(entrants, handicap_allowance, action_cell):
+    """A real <table> for the Entrants panel -- Player / Handicap /
+    Competition Hcp / Action columns, used by both the pending-
+    applications list and the confirmed-entrants list below.
+
+    action_cell(entrant) -> the Dash component for that row's last
+    column (a Remove button for confirmed entrants, an Approve/Reject
+    pair for pending ones, or None to leave it empty for a non-admin
+    viewer).
+    """
+    # "Comp. Hcp" (not "Competition Hcp") -- the longer label wraps
+    # onto two lines at this table's width, which throws off the
+    # header row's height and, with it, how well the columns below
+    # line up against their labels.
+    header = html.Thead(
+        html.Tr(
+            [
+                html.Th("Player", className="t3g-entrant-name-cell"),
+                html.Th("Handicap", className="t3g-entrant-hcp-cell"),
+                html.Th("Comp. Hcp", className="t3g-entrant-hcp-cell"),
+                html.Th("", className="t3g-entrant-actions-cell"),
+            ]
+        )
+    )
+    body_rows = []
+    for e in entrants:
+        full, competition = _entrant_handicap_values(e, handicap_allowance)
+        body_rows.append(
+            html.Tr(
+                children=[
+                    html.Td(_entrant_label(e), className="t3g-entrant-name-cell"),
+                    html.Td(full if full is not None else "—", className="t3g-entrant-hcp-cell"),
+                    html.Td(
+                        competition if competition is not None else "—",
+                        className="t3g-entrant-hcp-cell",
+                    ),
+                    html.Td(action_cell(e), className="t3g-entrant-actions-cell"),
+                ],
+            )
+        )
+    return html.Table(className="t3g-entrant-table", children=[header, html.Tbody(body_rows)])
 
 
 def _roster_player_label(player):
@@ -557,6 +626,13 @@ def _tournament_info_panel(tournament, is_admin):
             f"to {max_hcp if max_hcp is not None else '-'}"
         )
 
+    # Always shown (not conditional like range_text above) -- every
+    # tournament has a real value here once the column defaults to 100,
+    # so there's no "not set" state worth hiding the way an empty
+    # min/max range is.
+    handicap_allowance = tournament.get("handicap_allowance", 100)
+    allowance_text = f"Handicap allowance: {handicap_allowance}%"
+
     title_children = [html.Span(tournament.get("name", "Tournament"), className="t3g-tournament-card-title")]
     if tournament.get("status") == "in_progress":
         title_children.append(live_badge())
@@ -589,6 +665,7 @@ def _tournament_info_panel(tournament, is_admin):
                     ),
                     html.P(entry_description, className="t3g-empty-state mt-2 mb-1"),
                     html.P(range_text, className="t3g-empty-state mb-2") if range_text else None,
+                    html.P(allowance_text, className="t3g-empty-state mb-2"),
                     html.Ul(round_items, className="t3g-tournament-round-list"),
                 ],
             ),
@@ -627,6 +704,7 @@ def _entry_toggle_meta(tournament, my_entry):
 def _entrants_panel(tournament, entrants, my_entry, is_admin, player_id):
     pending = [e for e in entrants if e["status"] == "pending"]
     confirmed = [e for e in entrants if e["status"] == "confirmed"]
+    handicap_allowance = tournament.get("handicap_allowance", 100)
 
     toggle_label, toggle_action, toggle_class, status_message = _entry_toggle_meta(tournament, my_entry)
 
@@ -694,84 +772,54 @@ def _entrants_panel(tournament, entrants, my_entry, is_admin, player_id):
             ),
         )
 
+    def _pending_action_cell(e):
+        return html.Div(
+            [
+                html.Button(
+                    "Approve",
+                    id={"type": "tournament-entrant-approve", "player_id": e["player_id"]},
+                    className="t3g-panel-action-button t3g-entrant-action-button",
+                    n_clicks=0,
+                ),
+                html.Button(
+                    "Reject",
+                    id={"type": "tournament-entrant-reject", "player_id": e["player_id"]},
+                    className="t3g-panel-action-button t3g-panel-action-button--secondary t3g-entrant-action-button",
+                    n_clicks=0,
+                ),
+            ],
+            className="t3g-entrant-actions",
+        )
+
     admin_pending_section = None
     if is_admin and tournament.get("entry_mode") == "approval" and pending:
         admin_pending_section = html.Div(
             className="mb-3",
             children=[
                 html.Div("Pending Applications", className="t3g-modal-label t3g-tournament-rounds-label"),
-                html.Div(
-                    [
-                        html.Div(
-                            className="t3g-friend-request-row",
-                            children=[
-                                html.Span(
-                                    _entrant_label(e)
-                                    + (
-                                        f" (hcp {e['handicap_at_entry']})"
-                                        if e.get("handicap_at_entry") is not None
-                                        else ""
-                                    ),
-                                    className="t3g-friend-request-name",
-                                ),
-                                html.Div(
-                                    [
-                                        html.Button(
-                                            "Approve",
-                                            id={"type": "tournament-entrant-approve", "player_id": e["player_id"]},
-                                            className="t3g-panel-action-button",
-                                            n_clicks=0,
-                                        ),
-                                        html.Button(
-                                            "Reject",
-                                            id={"type": "tournament-entrant-reject", "player_id": e["player_id"]},
-                                            className="t3g-panel-action-button t3g-panel-action-button--secondary",
-                                            n_clicks=0,
-                                        ),
-                                    ],
-                                    className="t3g-friend-request-actions",
-                                ),
-                            ],
-                        )
-                        for e in pending
-                    ],
-                    className="t3g-friend-request-list",
-                ),
+                _entrant_table(pending, handicap_allowance, _pending_action_cell),
                 html.Div(id="tournament-admin-action-error", className="text-danger mt-2"),
             ],
         )
 
-    # Same row/list classes as the pending-applications section above --
+    # Same table builder as the pending-applications section above --
     # Remove sits inline on each row (admin-only) instead of going through
     # a separate "Remove Player" modal + player-picker dropdown, so it's a
     # single click straight from the row you're looking at.
+    def _confirmed_action_cell(e):
+        if not is_admin:
+            return None
+        return html.Button(
+            "Remove",
+            id={"type": "tournament-entrant-remove", "player_id": e["player_id"]},
+            className="t3g-panel-action-button t3g-panel-action-button--secondary t3g-entrant-action-button",
+            n_clicks=0,
+        )
+
     if confirmed:
-        confirmed_items = [
-            html.Div(
-                className="t3g-friend-request-row",
-                children=[
-                    html.Span(
-                        _entrant_label(e)
-                        + (f" — hcp {e['handicap_at_entry']}" if e.get("handicap_at_entry") is not None else ""),
-                        className="t3g-friend-request-name",
-                    ),
-                    html.Div(
-                        html.Button(
-                            "Remove",
-                            id={"type": "tournament-entrant-remove", "player_id": e["player_id"]},
-                            className="t3g-panel-action-button t3g-panel-action-button--secondary",
-                            n_clicks=0,
-                        ),
-                        className="t3g-friend-request-actions",
-                    )
-                    if is_admin
-                    else None,
-                ],
-            )
-            for e in confirmed
-        ]
+        confirmed_items = _entrant_table(confirmed, handicap_allowance, _confirmed_action_cell)
     else:
-        confirmed_items = [html.P("No confirmed entrants yet.", className="t3g-empty-state")]
+        confirmed_items = html.P("No confirmed entrants yet.", className="t3g-empty-state")
 
     return html.Div(
         className="t3g-panel",
@@ -787,7 +835,7 @@ def _entrants_panel(tournament, entrants, my_entry, is_admin, player_id):
                     admin_pending_section,
                     html.Div("Confirmed", className="t3g-modal-label t3g-tournament-rounds-label mt-2 mb-1"),
                     html.Div(id="tournament-remove-entrant-error", className="text-danger mb-2"),
-                    html.Div(confirmed_items, className="t3g-friend-request-list"),
+                    confirmed_items,
                 ],
             ),
         ],
@@ -1707,6 +1755,20 @@ def _tournament_edit_modal(tournament):
                                 id="tournament-edit-grouping-method-input",
                                 options=_TOURNAMENT_GROUPING_METHOD_OPTIONS,
                                 value=tournament.get("grouping_method", "random"),
+                                className="t3g-tournament-entry-mode",
+                            ),
+                        ],
+                    ),
+                    html.Div(
+                        className="t3g-modal-section",
+                        children=[
+                            html.Label(
+                                "Handicap allowance", className="t3g-modal-label t3g-tournament-rounds-label"
+                            ),
+                            dcc.RadioItems(
+                                id="tournament-edit-handicap-allowance-input",
+                                options=_TOURNAMENT_HANDICAP_ALLOWANCE_OPTIONS,
+                                value=tournament.get("handicap_allowance", 100),
                                 className="t3g-tournament-entry-mode",
                             ),
                         ],
@@ -2796,6 +2858,7 @@ def adjust_tournament_edit_max_handicap(plus_clicks, minus_clicks, current):
     Output("tournament-edit-format-input", "value"),
     Output("tournament-edit-entry-mode-input", "value"),
     Output("tournament-edit-grouping-method-input", "value"),
+    Output("tournament-edit-handicap-allowance-input", "value"),
     Output("tournament-edit-min-handicap-store", "data", allow_duplicate=True),
     Output("tournament-edit-min-handicap-display", "children", allow_duplicate=True),
     Output("tournament-edit-max-handicap-store", "data", allow_duplicate=True),
@@ -2807,6 +2870,7 @@ def adjust_tournament_edit_max_handicap(plus_clicks, minus_clicks, current):
     State("tournament-edit-format-input", "value"),
     State("tournament-edit-entry-mode-input", "value"),
     State("tournament-edit-grouping-method-input", "value"),
+    State("tournament-edit-handicap-allowance-input", "value"),
     State("tournament-edit-min-handicap-store", "data"),
     State("tournament-edit-max-handicap-store", "data"),
     State({"type": "tournament-edit-round-date", "index": ALL}, "date"),
@@ -2820,7 +2884,7 @@ def adjust_tournament_edit_max_handicap(plus_clicks, minus_clicks, current):
 )
 def handle_tournament_edit_modal(
     open_clicks, cancel_clicks, submit_clicks,
-    name, format_value, entry_mode, grouping_method, min_handicap, max_handicap,
+    name, format_value, entry_mode, grouping_method, handicap_allowance, min_handicap, max_handicap,
     round_dates, round_courses, round_tees, round_group_sizes,
     tournament_id, current_pathname, original_tournament,
 ):
@@ -2832,7 +2896,7 @@ def handle_tournament_edit_modal(
     same "fresh modal every time it's opened" approach the create modal
     uses, just resetting to the saved tournament instead of to empty."""
     triggered_id = dash.ctx.triggered_id
-    no_update_rest = (dash.no_update,) * 9
+    no_update_rest = (dash.no_update,) * 10
 
     if triggered_id == "tournament-edit-button":
         original_tournament = original_tournament or {}
@@ -2846,6 +2910,7 @@ def handle_tournament_edit_modal(
             original_tournament.get("format"),
             original_tournament.get("entry_mode", "self"),
             original_tournament.get("grouping_method", "random"),
+            original_tournament.get("handicap_allowance", 100),
             original_min, str(original_min) if original_min is not None else "–",
             original_max, str(original_max) if original_max is not None else "–",
         )
@@ -2888,6 +2953,7 @@ def handle_tournament_edit_modal(
                 "format": format_value,
                 "entry_mode": entry_mode or "self",
                 "grouping_method": grouping_method or "random",
+                "handicap_allowance": handicap_allowance or 100,
                 "min_handicap": min_handicap,
                 "max_handicap": max_handicap,
                 "rounds": rounds_payload,

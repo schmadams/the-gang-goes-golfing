@@ -497,6 +497,13 @@ _TOURNAMENT_GROUPING_METHOD_OPTIONS = [
     {"label": "By handicap", "value": "handicap"},
     {"label": "Manual", "value": "manual"},
 ]
+# The standard golf-competition "handicap limit" -- how much of a
+# player's full handicap counts for scoring in this tournament.
+_TOURNAMENT_HANDICAP_ALLOWANCE_OPTIONS = [
+    {"label": "50%", "value": 50},
+    {"label": "75%", "value": 75},
+    {"label": "100%", "value": 100},
+]
 # Group size lives per round (a comp can run 3-balls one week, 4-balls the
 # next), so it's a small dropdown on each round row rather than a
 # tournament-wide setting like grouping method.
@@ -1177,6 +1184,20 @@ def _tournament_modal():
                     html.Div(
                         className="t3g-modal-section",
                         children=[
+                            html.Label(
+                                "Handicap allowance", className="t3g-modal-label t3g-tournament-rounds-label"
+                            ),
+                            dcc.RadioItems(
+                                id="tournament-handicap-allowance-input",
+                                options=_TOURNAMENT_HANDICAP_ALLOWANCE_OPTIONS,
+                                value=100,
+                                className="t3g-tournament-entry-mode",
+                            ),
+                        ],
+                    ),
+                    html.Div(
+                        className="t3g-modal-section",
+                        children=[
                             html.Label("Rounds", className="t3g-modal-label t3g-tournament-rounds-label"),
                             html.Div(
                                 id="tournament-rounds-container",
@@ -1808,6 +1829,7 @@ def adjust_tournament_max_handicap(plus_clicks, minus_clicks, current):
     Output("tournament-format-input", "value"),
     Output("tournament-entry-mode-input", "value"),
     Output("tournament-grouping-method-input", "value"),
+    Output("tournament-handicap-allowance-input", "value"),
     Output("tournament-min-handicap-store", "data", allow_duplicate=True),
     Output("tournament-min-handicap-display", "children", allow_duplicate=True),
     Output("tournament-max-handicap-store", "data", allow_duplicate=True),
@@ -1819,6 +1841,7 @@ def adjust_tournament_max_handicap(plus_clicks, minus_clicks, current):
     State("tournament-format-input", "value"),
     State("tournament-entry-mode-input", "value"),
     State("tournament-grouping-method-input", "value"),
+    State("tournament-handicap-allowance-input", "value"),
     State("tournament-min-handicap-store", "data"),
     State("tournament-max-handicap-store", "data"),
     State({"type": "tournament-round-date", "index": ALL}, "date"),
@@ -1831,12 +1854,12 @@ def adjust_tournament_max_handicap(plus_clicks, minus_clicks, current):
 )
 def handle_tournament_modal(
     open_clicks, cancel_clicks, submit_clicks,
-    name, format_value, entry_mode, grouping_method, min_handicap, max_handicap,
+    name, format_value, entry_mode, grouping_method, handicap_allowance, min_handicap, max_handicap,
     round_dates, round_courses, round_tees, round_group_sizes,
     club_id, current_pathname,
 ):
     triggered_id = dash.ctx.triggered_id
-    no_update_rest = (dash.no_update,) * 9
+    no_update_rest = (dash.no_update,) * 10
 
     if triggered_id == "tournament-create-button":
         # Fresh modal every time it's opened -- one blank round row, no
@@ -1844,7 +1867,7 @@ def handle_tournament_modal(
         # previous cancelled attempt.
         return (
             True, "", dash.no_update, [_tournament_round_row(0)],
-            None, None, "self", "random", None, "–", None, "–",
+            None, None, "self", "random", 100, None, "–", None, "–",
         )
 
     if triggered_id == "tournament-cancel":
@@ -1886,6 +1909,7 @@ def handle_tournament_modal(
                 "format": format_value,
                 "entry_mode": entry_mode or "self",
                 "grouping_method": grouping_method or "random",
+                "handicap_allowance": handicap_allowance or 100,
                 "min_handicap": min_handicap,
                 "max_handicap": max_handicap,
                 "rounds": rounds_payload,

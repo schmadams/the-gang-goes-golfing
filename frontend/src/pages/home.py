@@ -331,23 +331,32 @@ def _feed_stats_slide(detail):
     return html.Div(html.Div(tiles, className="t3g-stat-grid"), className="t3g-feed-stats-slide")
 
 
-def _feed_primary_player_display(players):
+def _feed_primary_player(players):
+    """Whoever started the round -- falls back to the first player in
+    the list on the off chance no one's flagged as owner (see is_owner
+    on each summary player, set in _group_scorecard_summary in
+    round_posts.py), which shouldn't normally happen. Shared by the
+    post header's real avatar (see _feed_avatar) and its "X and N
+    others played a round" text (see _feed_primary_player_display) --
+    both should point at the same player."""
+    if not players:
+        return None
+    return next((p for p in players if p.get("is_owner")), players[0])
+
+
+def _feed_primary_player_display(primary, player_count):
     """"{name} played a round" for a solo round, or "{primary} and N
     others played a round" for a multiplayer one -- replaces listing
-    every player's name in full (see is_owner on each summary player,
-    set in _group_scorecard_summary in round_posts.py). The primary
-    player is whoever started the round (falls back to the first player
-    in the list on the off chance no one's flagged as owner, which
-    shouldn't normally happen). Same wording for every viewer regardless
-    of which of the round's players happen to be their friends -- not
-    personalized per viewer, since that would need a friends-list lookup
-    on every feed load just to decide whose name to show."""
-    if not players:
+    every player's name in full. Same wording for every viewer
+    regardless of which of the round's players happen to be their
+    friends -- not personalized per viewer, since that would need a
+    friends-list lookup on every feed load just to decide whose name to
+    show."""
+    if not primary:
         return "A round was played"
-    primary = next((p for p in players if p.get("is_owner")), players[0])
-    if len(players) == 1:
+    if player_count <= 1:
         return f"{primary['name']} played a round"
-    others = len(players) - 1
+    others = player_count - 1
     return f"{primary['name']} and {others} other{'s' if others != 1 else ''} played a round"
 
 
@@ -402,7 +411,9 @@ def _feed_round_post_card(post, player_id):
     course_bits = [b for b in [scorecard.get("club_name"), scorecard.get("course_name")] if b]
     course_text = " – ".join(course_bits)
     timestamp_text = _format_feed_timestamp(post.get("created_at"))
-    round_header_text = _feed_primary_player_display(scorecard.get("players", []))
+    round_players = scorecard.get("players", [])
+    round_primary_player = _feed_primary_player(round_players)
+    round_header_text = _feed_primary_player_display(round_primary_player, len(round_players))
     player_ids = (post.get("metadata") or {}).get("player_ids", [])
     can_add_photo = player_id in player_ids
 
@@ -473,7 +484,10 @@ def _feed_round_post_card(post, player_id):
             html.Div(
                 className="t3g-feed-post-header",
                 children=[
-                    html.Span("⛳", className="t3g-feed-post-icon"),
+                    _feed_avatar(
+                        round_primary_player["name"] if round_primary_player else "",
+                        round_primary_player.get("photo_url") if round_primary_player else None,
+                    ),
                     html.Div(
                         className="t3g-feed-post-header-text",
                         children=[

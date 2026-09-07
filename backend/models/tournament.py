@@ -17,6 +17,11 @@ VALID_ENTRY_MODES = {"self", "approval"}
 # right number of empty slots (sized from group_size) for the admin to
 # place entrants into themselves via assign_tee_time_players.
 VALID_GROUPING_METHODS = {"random", "handicap", "manual"}
+# The standard golf-competition "handicap limit" allowance -- how much
+# of a player's full handicap counts for scoring in this tournament.
+# Distinct from min_handicap/max_handicap above, which gate entry
+# eligibility rather than scoring.
+VALID_HANDICAP_ALLOWANCES = {50, 75, 100}
 
 
 class TournamentRoundCreate(BaseModel):
@@ -39,6 +44,7 @@ class TournamentCreate(BaseModel):
     min_handicap: float | None = None
     max_handicap: float | None = None
     grouping_method: str = "random"
+    handicap_allowance: int = 100
 
 
 class TournamentUpdate(BaseModel):
@@ -50,6 +56,7 @@ class TournamentUpdate(BaseModel):
     min_handicap: float | None = None
     max_handicap: float | None = None
     grouping_method: str = "random"
+    handicap_allowance: int = 100
 
 
 class TeeTimeGenerateRequest(BaseModel):
@@ -123,6 +130,7 @@ class TournamentResponse(BaseModel):
     min_handicap: float | None = None
     max_handicap: float | None = None
     grouping_method: str = "random"
+    handicap_allowance: int = 100
     created_by: UUID
     created_at: datetime
     rounds: list[TournamentRoundResponse] = []
