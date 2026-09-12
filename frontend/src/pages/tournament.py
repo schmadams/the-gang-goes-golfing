@@ -104,14 +104,21 @@ def _entrant_handicap_values(entrant, handicap_allowance):
     decimal -- entrant["handicap_at_entry"] can come back with long
     floating-point tails (e.g. -5.500000000000001) that aren't
     meaningful past the first decimal place golf handicaps are normally
-    quoted to. "full" is the player's handicap as captured at entry
-    time, unaffected by the tournament's allowance; "competition" is
-    that figure scaled by handicap_allowance (50/75/100) -- the actual
-    strokes this player gets in this comp, equal to "full" whenever
-    the allowance is 100%. Either can be None if handicap_at_entry
-    itself is None (never recorded for this entrant).
+    quoted to. "full" is entrant["handicap_override"] if the admin has
+    set one, else the player's handicap as captured at entry time
+    (handicap_at_entry) -- either way it's unaffected by the
+    tournament's allowance on its own. "competition" is that figure
+    scaled by handicap_allowance (50/75/100) -- the actual strokes this
+    player gets in this comp, equal to "full" whenever the allowance is
+    100%, and computed the same way regardless of whether "full" came
+    from an override or the entry-time snapshot (see the migration
+    comment on tournament_entrants.handicap_override -- an override
+    replaces the input to this same allowance math, not the Comp. Hcp
+    output of it). Either return value can be None if there's neither
+    an override nor a recorded handicap_at_entry for this entrant.
     """
-    full = entrant.get("handicap_at_entry")
+    override = entrant.get("handicap_override")
+    full = override if override is not None else entrant.get("handicap_at_entry")
     if full is None:
         return None, None
     full_rounded = round(full, 1)
@@ -120,7 +127,7 @@ def _entrant_handicap_values(entrant, handicap_allowance):
     return full_rounded, competition
 
 
-def _entrant_table(entrants, handicap_allowance, action_cell):
+def _entrant_table(entrants, handicap_allowance, action_cell, editable_handicap=False):
     """A real <table> for the Entrants panel -- Player / Handicap /
     Competition Hcp / Action columns, used by both the pending-
     applications list and the confirmed-entrants list below.
@@ -129,6 +136,27 @@ def _entrant_table(entrants, handicap_allowance, action_cell):
     column (a Remove button for confirmed entrants, an Approve/Reject
     pair for pending ones, or None to leave it empty for a non-admin
     viewer).
+
+    editable_handicap -- confirmed-entrants table only (pending
+    applicants aren't scored yet, so there's nothing to override): swaps
+    the Handicap cell for an inline number input so the admin can set
+    entrant["handicap_override"], a replacement for this player's full
+    handicap. The Comp. Hcp cell next to it stays plain text either way
+    -- it's always full * this tournament's allowance %, computed by
+    _entrant_handicap_values above from whichever "full" is currently in
+    effect, so overriding the Handicap cell updates Comp. Hcp
+    automatically without the admin needing to do that math themselves.
+    debounce=True (not the default "fire on every keystroke") means the
+    save only actually happens on Enter or on blur -- type a new value
+    and click elsewhere and that's the save, no separate button. The
+    input's placeholder is always the entry-time handicap
+    (handicap_at_entry), so clearing the field back to empty and
+    clicking away is how an admin removes an override and returns this
+    player to their normal live-looked-up handicap. min/max mirror this
+    same file's own handicap-range stepper bounds above
+    (_MIN_HANDICAP_FLOOR/_MAX_HANDICAP_INDEX) -- real server-side
+    enforcement happens in set_entrant_handicap_override; these are just
+    the browser's own number-input affordance for the same range.
     """
     # "Comp. Hcp" (not "Competition Hcp") -- the longer label wraps
     # onto two lines at this table's width, which throws off the
@@ -147,15 +175,37 @@ def _entrant_table(entrants, handicap_allowance, action_cell):
     body_rows = []
     for e in entrants:
         full, competition = _entrant_handicap_values(e, handicap_allowance)
+        override = e.get("handicap_override")
+        if editable_handicap:
+            entry_handicap = e.get("handicap_at_entry")
+            hcp_cell = html.Div(
+                className=(
+                    "t3g-entrant-hcp-edit t3g-entrant-hcp-edit--overridden"
+                    if override is not None
+                    else "t3g-entrant-hcp-edit"
+                ),
+                children=[
+                    dbc.Input(
+                        id={"type": "tournament-entrant-handicap-override-input", "player_id": e["player_id"]},
+                        type="number",
+                        step=0.1,
+                        min=_MIN_HANDICAP_FLOOR,
+                        max=_MAX_HANDICAP_INDEX,
+                        debounce=True,
+                        value=override,
+                        placeholder=str(round(entry_handicap, 1)) if entry_handicap is not None else "—",
+                        className="t3g-entrant-hcp-input",
+                    ),
+                ],
+            )
+        else:
+            hcp_cell = full if full is not None else "—"
         body_rows.append(
             html.Tr(
                 children=[
                     html.Td(_entrant_label(e), className="t3g-entrant-name-cell"),
-                    html.Td(full if full is not None else "—", className="t3g-entrant-hcp-cell"),
-                    html.Td(
-                        competition if competition is not None else "—",
-                        className="t3g-entrant-hcp-cell",
-                    ),
+                    html.Td(hcp_cell, className="t3g-entrant-hcp-cell"),
+                    html.Td(competition if competition is not None else "—", className="t3g-entrant-hcp-cell"),
                     html.Td(action_cell(e), className="t3g-entrant-actions-cell"),
                 ],
             )
@@ -197,6 +247,28 @@ def _format_tee_time(tee_time_str):
     period = "AM" if hour < 12 else "PM"
     display_hour = hour % 12 or 12
     return f"{display_hour}:{minute:02d} {period}"
+
+
+def _build_recap_group_rows(groups, group_size):
+    """[header row] + [one data row per group] for the read-only tee time
+    recap -- shared by the initial page render (_tee_times_panel below)
+    and the two edit callbacks (handle_update_tee_time,
+    handle_save_tee_time_assignments), which rebuild this same recap in
+    place from the fresh `groups` list their own PATCH response already
+    hands back, rather than reloading the page to get it. group_size is
+    passed in (not read off each group) since a group's own "players"
+    list is only however many slots are actually filled -- it says
+    nothing about how many *columns* the recap needs when some slots are
+    still empty."""
+    recap_header = _recap_row(
+        ["Tee Time"] + [f"Player {chr(65 + i)}" for i in range(group_size)], header=True
+    )
+    recap_data_rows = []
+    for g in groups:
+        slot_labels = [_entrant_label(p) for p in g.get("players", [])][:group_size]
+        slot_labels += ["—"] * (group_size - len(slot_labels))
+        recap_data_rows.append(_recap_row([_format_tee_time(g.get("tee_time"))] + slot_labels))
+    return [recap_header] + recap_data_rows
 
 
 def _recap_row(cells, header=False):
@@ -345,17 +417,9 @@ def _tee_times_panel(tournament, is_admin, player_id):
         )
         my_group_section = _my_group_action(tournament, r, my_group, player_id) if my_group else None
 
+        recap_group_size = r.get("group_size") or _DEFAULT_GROUP_SIZE
         if groups:
-            recap_group_size = r.get("group_size") or _DEFAULT_GROUP_SIZE
-            recap_header = _recap_row(
-                ["Tee Time"] + [f"Player {chr(65 + i)}" for i in range(recap_group_size)], header=True
-            )
-            recap_data_rows = []
-            for g in groups:
-                slot_labels = [_entrant_label(p) for p in g.get("players", [])][:recap_group_size]
-                slot_labels += ["—"] * (recap_group_size - len(slot_labels))
-                recap_data_rows.append(_recap_row([_format_tee_time(g.get("tee_time"))] + slot_labels))
-            group_rows = [recap_header] + recap_data_rows
+            group_rows = _build_recap_group_rows(groups, recap_group_size)
         else:
             empty_text = (
                 "No tee time slots created yet." if is_manual else "No tee times generated yet."
@@ -408,19 +472,20 @@ def _tee_times_panel(tournament, is_admin, player_id):
             # narrow phone, letting player columns squeeze all the way to
             # 0 is what caused labels/dropdown text to overlap and clip
             # (e.g. "Player B"'s label bleeding into "Player A"'s column).
-            # minmax(88px, 1fr) means a column never goes below a legible
-            # width; the row can end up wider than the viewport instead,
-            # which is what .t3g-teetime-assign-table-scroll (wrapped
-            # around this table below) is for -- same horizontal-scroll
-            # pattern the read-only recap table already uses for the same
-            # reason (see .t3g-teetime-group-list-scroll in club.css). The
-            # Tee Time column itself is also narrower now (140px vs the
-            # old 210px) since a compact time input + Save button doesn't
-            # need that much room.
+            # minmax(76px, 1fr) means a column never goes below a legible
+            # width while still letting the grid shrink to fit whatever
+            # container it's in (see .t3g-teetime-assign-table-scroll in
+            # club.css, which no longer forces this row to its natural
+            # max-content width) -- .t3g-teetime-assign-table-scroll's
+            # overflow-x:auto is still there as a fallback for a round
+            # with an unusually large group_size, but for the normal
+            # 2-4 player case this now fits without scrolling. The Tee
+            # Time column is narrower still (96px, was 140px) now that
+            # it's just a bare time input with no Save button next to it.
             grid_style = (
-                {"gridTemplateColumns": f"140px repeat({group_size}, minmax(88px, 1fr))"}
+                {"gridTemplateColumns": f"96px repeat({group_size}, minmax(76px, 1fr))"}
                 if is_manual
-                else {"gridTemplateColumns": "140px 1fr"}
+                else {"gridTemplateColumns": "96px 1fr"}
             )
 
             header_children = [html.Span("Tee Time", className="t3g-teetime-assign-col-label")]
@@ -440,10 +505,14 @@ def _tee_times_panel(tournament, is_admin, player_id):
 
             slot_rows = []
             for g in groups:
-                # Editable time + Save button, same one-off-override
-                # endpoint (update_tee_time_slot) regardless of grouping
-                # method -- this doesn't touch who's in the group, only when
-                # they tee off.
+                # Editable time, same one-off-override endpoint
+                # (update_tee_time_slot) regardless of grouping method --
+                # this doesn't touch who's in the group, only when they
+                # tee off. debounce=True (no separate Save button, same
+                # convention as the Entrants panel's handicap override
+                # input): the browser only sends the new value back on
+                # Enter or on blur, not on every keystroke, and that's
+                # the save -- see handle_update_tee_time.
                 time_cell = html.Div(
                     className="t3g-teetime-edit",
                     children=[
@@ -455,17 +524,8 @@ def _tee_times_panel(tournament, is_admin, player_id):
                             },
                             type="time",
                             value=(g.get("tee_time") or "")[:5] or None,
+                            debounce=True,
                             className="t3g-teetime-time-input t3g-teetime-time-input--inline",
-                        ),
-                        html.Button(
-                            "Save",
-                            id={
-                                "type": "tournament-teetime-update-save",
-                                "round_id": round_id,
-                                "tee_time_id": g["id"],
-                            },
-                            className="t3g-teetime-save-button",
-                            n_clicks=0,
                         ),
                     ],
                 )
@@ -475,6 +535,14 @@ def _tee_times_panel(tournament, is_admin, player_id):
                     slot_player_ids = [p["player_id"] for p in g.get("players", [])][:group_size]
                     slot_player_ids += [None] * (group_size - len(slot_player_ids))
                     row_children.extend(
+                        # clearable=True's built-in "x" (styled into a
+                        # small pill-corner control -- see
+                        # .t3g-teetime-assign-dropdown .dash-dropdown-*
+                        # in club.css) is the only remove affordance here
+                        # now; a separate standalone Remove button was
+                        # tried and looked like exactly what it was --
+                        # two redundant controls stacked on top of each
+                        # other for the one job of clearing a slot.
                         dcc.Dropdown(
                             id={
                                 "type": "tournament-teetime-assign",
@@ -520,6 +588,18 @@ def _tee_times_panel(tournament, is_admin, player_id):
                     )
                     if is_manual
                     else None,
+                    # Unlike entrant_options above, needed regardless of
+                    # grouping method -- handle_update_tee_time and
+                    # handle_save_tee_time_assignments both rebuild the
+                    # recap below from a group_size-shaped header
+                    # (_build_recap_group_rows), and neither callback has
+                    # any other way to know how many Player columns that
+                    # header needs (a group's own "players" list is only
+                    # however many slots happen to be filled right now).
+                    dcc.Store(
+                        id={"type": "tournament-teetime-group-size", "round_id": round_id},
+                        data=group_size,
+                    ),
                     html.Div(
                         "Assign Players" if is_manual else "Manage Tee Times",
                         className="t3g-modal-label t3g-tournament-rounds-label mt-2 mb-1",
@@ -528,14 +608,6 @@ def _tee_times_panel(tournament, is_admin, player_id):
                         html.Div([header_row] + slot_rows, className="t3g-teetime-assign-table"),
                         className="t3g-teetime-assign-table-scroll",
                     ),
-                    html.Button(
-                        "Save Assignments",
-                        id={"type": "tournament-teetime-save-assignments", "round_id": round_id},
-                        className="t3g-panel-action-button mt-2",
-                        n_clicks=0,
-                    )
-                    if is_manual
-                    else None,
                 ],
             )
 
@@ -579,7 +651,16 @@ def _tee_times_panel(tournament, is_admin, player_id):
                     # scroll / .t3g-teetime-recap-row / .t3g-teetime-recap-
                     # cell in club.css.
                     html.Div(
-                        html.Div(group_rows, className="t3g-teetime-group-list"),
+                        html.Div(
+                            group_rows,
+                            className="t3g-teetime-group-list",
+                            # Target of handle_update_tee_time's and
+                            # handle_save_tee_time_assignments's own
+                            # Output below -- both rebuild this recap
+                            # in place from their PATCH response's fresh
+                            # groups list instead of reloading the page.
+                            id={"type": "tournament-teetime-recap", "round_id": round_id},
+                        ),
                         className="t3g-teetime-group-list-scroll",
                     ),
                 ],
@@ -817,7 +898,9 @@ def _entrants_panel(tournament, entrants, my_entry, is_admin, player_id):
         )
 
     if confirmed:
-        confirmed_items = _entrant_table(confirmed, handicap_allowance, _confirmed_action_cell)
+        confirmed_items = _entrant_table(
+            confirmed, handicap_allowance, _confirmed_action_cell, editable_handicap=is_admin
+        )
     else:
         confirmed_items = html.P("No confirmed entrants yet.", className="t3g-empty-state")
 
@@ -2318,6 +2401,65 @@ def handle_remove_entrant(remove_clicks, tournament_id, current_pathname):
 
 
 @callback(
+    Output("tournament-remove-entrant-error", "children", allow_duplicate=True),
+    Output("tournament-remove-entrant-redirect", "href", allow_duplicate=True),
+    Input({"type": "tournament-entrant-handicap-override-input", "player_id": ALL}, "value"),
+    State("tournament-id-store", "data"),
+    State("_pages_location", "pathname"),
+    prevent_initial_call=True,
+)
+def handle_set_entrant_handicap_override(values, tournament_id, current_pathname):
+    # debounce=True on the input (set in _entrant_table) means Dash only
+    # fires this on Enter or on blur, not on every keystroke -- so unlike
+    # the n_clicks-based callbacks elsewhere on this page (approve/
+    # reject/remove), there's no separate Save click to guard against a
+    # phantom re-fire; ctx.triggered_id being unset (e.g. the redirect-
+    # refresh's fresh page load, which prevent_initial_call already
+    # covers) is the only case to bail out on. Reuses the existing
+    # remove-entrant error/redirect pair (allow_duplicate=True) rather
+    # than adding a third set of near-identical hidden components just
+    # for this one action -- they're never shown/triggered at the same
+    # time as an actual remove.
+    triggered_id = dash.ctx.triggered_id
+    if not triggered_id:
+        raise PreventUpdate
+
+    target_player_id = triggered_id["player_id"]
+    new_value = dash.ctx.triggered[0]["value"]
+
+    # Client-side range check mirrors the input's own min/max attrs
+    # (belt-and-suspenders -- some browsers let you type past a number
+    # input's min/max and only flag it on form submission, which this
+    # page never does) and gives an immediate, readable message instead
+    # of waiting on a round trip just to learn the same thing the
+    # backend would also reject. The backend (set_entrant_handicap_override)
+    # re-checks the same range regardless -- this is a UX shortcut, not
+    # the actual enforcement.
+    if new_value is not None and not (_MIN_HANDICAP_FLOOR <= new_value <= _MAX_HANDICAP_INDEX):
+        return (
+            f"Handicap override must be between {_MIN_HANDICAP_FLOOR} and {_MAX_HANDICAP_INDEX}.",
+            dash.no_update,
+        )
+
+    admin_id = session.get("player_id")
+    response = requests.patch(
+        f"{API_BASE_URL}/tournaments/{tournament_id}/entrants/{target_player_id}/handicap-override",
+        params={"admin_id": admin_id},
+        json={"handicap_override": new_value},
+    )
+    if response.status_code == 200:
+        return "", f"{current_pathname}?_r={time.time()}"
+
+    try:
+        detail = response.json().get("detail", "Couldn't update that handicap.")
+        if not isinstance(detail, str):
+            detail = "Couldn't update that handicap."
+    except ValueError:
+        detail = "Couldn't update that handicap."
+    return detail, dash.no_update
+
+
+@callback(
     Output({"type": "tournament-teetime-error", "round_id": MATCH}, "children"),
     Output({"type": "tournament-teetime-redirect", "round_id": MATCH}, "href"),
     Input({"type": "tournament-teetime-generate", "round_id": MATCH}, "n_clicks"),
@@ -2383,31 +2525,33 @@ def filter_tee_time_assign_options(values, ids, entrant_options):
 
 
 @callback(
+    Output({"type": "tournament-teetime-recap", "round_id": MATCH}, "children"),
     Output({"type": "tournament-teetime-error", "round_id": MATCH}, "children", allow_duplicate=True),
-    Output({"type": "tournament-teetime-redirect", "round_id": MATCH}, "href", allow_duplicate=True),
-    Input({"type": "tournament-teetime-save-assignments", "round_id": MATCH}, "n_clicks"),
-    State({"type": "tournament-teetime-assign", "round_id": MATCH, "tee_time_id": ALL, "slot": ALL}, "value"),
+    Input({"type": "tournament-teetime-assign", "round_id": MATCH, "tee_time_id": ALL, "slot": ALL}, "value"),
     State({"type": "tournament-teetime-assign", "round_id": MATCH, "tee_time_id": ALL, "slot": ALL}, "id"),
+    State({"type": "tournament-teetime-group-size", "round_id": MATCH}, "data"),
     State("tournament-id-store", "data"),
-    State("_pages_location", "pathname"),
     prevent_initial_call=True,
 )
-def handle_save_tee_time_assignments(n_clicks, values, ids, tournament_id, current_pathname):
-    # Same MATCH-on-round_id / ALL-on-the-rest shape as club.py's/this
-    # file's other per-round MATCH callbacks -- see handle_generate_tee_
-    # times's comment on why both Outputs need the same MATCH key. Reading
+def handle_save_tee_time_assignments(values, ids, group_size, tournament_id):
+    # No more Save Assignments button -- picking a player into (or
+    # clearing them out of) any one dropdown saves immediately, sending
+    # the round's whole current set of dropdown values every time (same
+    # payload shape the old button click used to send once, just fired
+    # automatically per change instead of on an explicit click). Reading
     # the "id" prop alongside "value" is what ties each dropdown back to
     # its tee_time_id (the "slot"/column position is purely a display
     # detail -- what actually gets saved is just "this player is in this
     # group", not which column they sat in).
-    if not n_clicks:
-        return dash.no_update, dash.no_update
+    triggered_id = dash.ctx.triggered_id
+    if not triggered_id:
+        raise PreventUpdate
 
-    round_id = dash.ctx.triggered_id["round_id"]
+    round_id = triggered_id["round_id"]
 
     selected_player_ids = [v for v in values if v]
     if len(selected_player_ids) != len(set(selected_player_ids)):
-        return "The same player is selected in more than one slot.", dash.no_update
+        return dash.no_update, "The same player is selected in more than one slot."
 
     assignments = {value: id_dict["tee_time_id"] for id_dict, value in zip(ids, values) if value}
 
@@ -2417,7 +2561,13 @@ def handle_save_tee_time_assignments(n_clicks, values, ids, tournament_id, curre
         json={"admin_id": admin_id, "assignments": assignments},
     )
     if response.status_code == 200:
-        return "", f"{current_pathname}?_r={time.time()}"
+        # assign_tee_time_players (the PATCH handler) hands back this
+        # same round's fresh group list -- rebuilding the recap from it
+        # directly means no separate fetch and no page reload, just an
+        # in-place update of the one section that could actually be
+        # stale (the management table's own dropdowns/inputs already
+        # show whatever the admin just picked/typed).
+        return _build_recap_group_rows(response.json(), group_size), ""
 
     try:
         detail = response.json().get("detail", "Couldn't save those assignments.")
@@ -2425,41 +2575,36 @@ def handle_save_tee_time_assignments(n_clicks, values, ids, tournament_id, curre
             detail = "Couldn't save those assignments."
     except ValueError:
         detail = "Couldn't save those assignments."
-    return detail, dash.no_update
+    return dash.no_update, detail
 
 
 @callback(
+    Output({"type": "tournament-teetime-recap", "round_id": MATCH}, "children", allow_duplicate=True),
     Output({"type": "tournament-teetime-error", "round_id": MATCH}, "children", allow_duplicate=True),
-    Output({"type": "tournament-teetime-redirect", "round_id": MATCH}, "href", allow_duplicate=True),
-    Input({"type": "tournament-teetime-update-save", "round_id": MATCH, "tee_time_id": ALL}, "n_clicks"),
-    State({"type": "tournament-teetime-update-input", "round_id": MATCH, "tee_time_id": ALL}, "value"),
-    State({"type": "tournament-teetime-update-input", "round_id": MATCH, "tee_time_id": ALL}, "id"),
+    Input({"type": "tournament-teetime-update-input", "round_id": MATCH, "tee_time_id": ALL}, "value"),
+    State({"type": "tournament-teetime-group-size", "round_id": MATCH}, "data"),
     State("tournament-id-store", "data"),
-    State("_pages_location", "pathname"),
     prevent_initial_call=True,
 )
-def handle_update_tee_time(save_clicks, values, ids, tournament_id, current_pathname):
-    # Same ALL-with-phantom-trigger-guard shape as handle_entrant_response/
-    # handle_remove_entrant -- there's one Save button per tee time slot in
-    # the round, all sharing this one callback (round_id is the MATCH key,
-    # tee_time_id is ALL), so a fresh Save button appearing elsewhere on the
-    # page (e.g. after Generate rebuilds the whole slot list) can re-fire
-    # this with no real click behind it.
+def handle_update_tee_time(values, group_size, tournament_id):
+    # debounce=True on the input (set in _tee_times_panel) means this
+    # only fires on Enter or on blur, not on every keystroke -- same
+    # convention as the Entrants panel's handicap override input, and
+    # same reasoning for why there's no separate phantom-trigger guard
+    # here the way the old Save-button version needed: a fresh input
+    # appearing after Generate rebuilds the slot list can't itself cause
+    # a "value" change, only prevent_initial_call's own first-load skip
+    # matters here.
     triggered_id = dash.ctx.triggered_id
-    if not triggered_id or not any(save_clicks or []):
-        return dash.no_update, dash.no_update
+    if not triggered_id:
+        raise PreventUpdate
 
     target_tee_time_id = triggered_id["tee_time_id"]
     round_id = triggered_id["round_id"]
-
-    new_time = None
-    for id_dict, value in zip(ids, values):
-        if id_dict["tee_time_id"] == target_tee_time_id:
-            new_time = value
-            break
+    new_time = dash.ctx.triggered[0]["value"]
 
     if not new_time:
-        return "Enter a tee time first.", dash.no_update
+        return dash.no_update, "Enter a tee time first."
 
     admin_id = session.get("player_id")
     response = requests.patch(
@@ -2467,7 +2612,10 @@ def handle_update_tee_time(save_clicks, values, ids, tournament_id, current_path
         json={"admin_id": admin_id, "tee_time": new_time},
     )
     if response.status_code == 200:
-        return "", f"{current_pathname}?_r={time.time()}"
+        # update_tee_time_slot hands back this round's fresh group list,
+        # same as assign_tee_time_players above -- rebuild the recap from
+        # it in place rather than reloading the page.
+        return _build_recap_group_rows(response.json(), group_size), ""
 
     try:
         detail = response.json().get("detail", "Couldn't update that tee time.")
@@ -2475,7 +2623,7 @@ def handle_update_tee_time(save_clicks, values, ids, tournament_id, current_path
             detail = "Couldn't update that tee time."
     except ValueError:
         detail = "Couldn't update that tee time."
-    return detail, dash.no_update
+    return dash.no_update, detail
 
 
 @callback(

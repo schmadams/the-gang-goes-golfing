@@ -7,11 +7,13 @@ from backend.models.tournament import (
     TeeTimeUpdateRequest,
     TournamentCreate,
     TournamentEntrantCreate,
+    TournamentEntrantHandicapOverrideUpdate,
     TournamentUpdate,
 )
 from backend.services.tournament_entrants import (
     AlreadyEnteredError,
     HandicapOutOfRangeError,
+    InvalidHandicapOverrideError,
     NotClubAdminError as EntrantNotClubAdminError,
     TournamentNotFoundError as EntrantTournamentNotFoundError,
     admin_add_entrant,
@@ -20,6 +22,7 @@ from backend.services.tournament_entrants import (
     enter_tournament,
     list_entrants_for_tournament,
     reject_entrant,
+    set_entrant_handicap_override,
     withdraw_entrant,
 )
 from backend.services.tournament_tee_times import (
@@ -230,6 +233,23 @@ def admin_remove_entrant_route(tournament_id: str, player_id: str, admin_id: str
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
     except EntrantNotClubAdminError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Entrant not found")
+    return updated
+
+
+@router.patch("/{tournament_id}/entrants/{player_id}/handicap-override")
+def set_entrant_handicap_override_route(
+    tournament_id: str, player_id: str, admin_id: str, payload: TournamentEntrantHandicapOverrideUpdate
+):
+    try:
+        updated = set_entrant_handicap_override(tournament_id, player_id, admin_id, payload.handicap_override)
+    except EntrantTournamentNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    except EntrantNotClubAdminError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
+    except InvalidHandicapOverrideError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
     if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Entrant not found")
     return updated

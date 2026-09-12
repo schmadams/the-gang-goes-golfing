@@ -644,6 +644,37 @@
     font-size: 0.68rem;
 }
 
+/* Admin-only inline override for the Handicap cell (confirmed entrants
+   only) -- a compact number input in place of the plain figure. The
+   Comp. Hcp cell right next to it stays read-only and just reflects
+   whatever this resolves to, scaled by the tournament's allowance %
+   (see _entrant_handicap_values in tournament.py). No Save button: the
+   input has debounce=True (see tournament.py), so typing a new value
+   and clicking away is the save -- this wrapper just centers it in the
+   cell. The input's placeholder (set in tournament.py) is always the
+   entry-time handicap, so an empty-looking input is never actually
+   ambiguous about what number is in play. */
+.t3g-entrant-hcp-edit {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.t3g-entrant-hcp-input {
+    width: 3.4rem;
+    padding: 0.25rem 0.35rem;
+    font-size: 0.78rem;
+    text-align: center;
+}
+
+/* A thin accent-colored ring around the input is the only "this has been
+   overridden" cue -- no separate badge/label needed since the admin is
+   already looking straight at the number that's actually in effect. */
+.t3g-entrant-hcp-edit--overridden .t3g-entrant-hcp-input {
+    border-color: var(--t3g-accent);
+    box-shadow: 0 0 0 1px var(--t3g-accent);
+}
+
 
 /* Tee Times panel -- one .t3g-modal-section-style shaded block per round
    (same gray/rounded treatment the create/edit modals use), a
@@ -768,26 +799,13 @@
     min-width: 0;
 }
 
+/* No Save button anymore -- debounce=True on the input (tournament.py)
+   means Enter/blur is the save, so this is just the bare time input
+   sized to its own compact grid column. */
 .t3g-teetime-time-input--inline {
     padding: 0.3rem 0.5rem;
     font-size: 0.8rem;
-    width: auto;
-}
-
-.t3g-teetime-save-button {
-    border: none;
-    border-radius: var(--t3g-radius-md);
-    background: var(--t3g-surface-raised);
-    color: var(--t3g-ink);
-    font-size: 0.78rem;
-    font-weight: 700;
-    padding: 0.3rem 0.7rem;
-    cursor: pointer;
-    white-space: nowrap;
-}
-
-.t3g-teetime-save-button:hover {
-    background: var(--t3g-surface-raised);
+    width: 100%;
 }
 
 /* Manual-grouping assignment table -- one row per tee time slot, one
@@ -838,22 +856,78 @@
     min-width: 0;
 }
 
-/* Wraps .t3g-teetime-assign-table -- the grid's column widths are now
-   fixed-minimum (see grid_style in tournament.py: minmax(88px, 1fr), not
-   minmax(0, 1fr)), so a round with several player columns can end up
-   wider than a phone screen instead of squeezing every column down to
-   nothing. This scrolls sideways for whatever doesn't fit, same pattern
+/* Restyled into a compact pill -- a separate standalone Remove button
+   was tried here first and just looked like two redundant controls
+   stacked on the same job (the screenshot: a name wrapped inside the
+   dropdown, its own built-in "x" right there, AND a second boxy ×
+   button underneath). Pulled that back out; the dropdown's own
+   clearable="x" (.dash-dropdown-clear below) is the only remove
+   affordance now, just made small enough to actually read as "a small
+   x on a pill" rather than sit lost in a big square control.
+   border-radius:999px rounds both the outer .dash-dropdown (the
+   element that actually paints the border/background per theme.css's
+   global dropdown fix) and the inner .dash-dropdown-trigger (the
+   clickable button inside it), since either one could be the box that
+   visually reads as "square" if left un-rounded. */
+.t3g-teetime-assign-dropdown.dash-dropdown,
+.t3g-teetime-assign-dropdown .dash-dropdown-trigger {
+    border-radius: 999px;
+}
+
+/* Full names, not single letters -- Dash's own default
+   .dash-dropdown-value ships overflow:hidden + text-overflow:ellipsis +
+   white-space:nowrap, and at this column's width (minmax(76px, 1fr)
+   above) that left room for barely one character before truncating, not
+   even a visible "...". Wrapping onto a second line instead, at a
+   smaller font size, is what actually lets a name like "Sam Adams" read
+   in full in a column this narrow. height:auto (not the default
+   height:100%, which pinned the trigger to one line's worth of height)
+   lets the trigger grow to fit a wrapped two-line value instead of
+   clipping it -- .t3g-teetime-assign-table-row's own align-items:center
+   then centers that taller control in its grid row same as it already
+   does for a single-line one. font-size is set here (not just on
+   .dash-dropdown-value) so the "x" and chevron -- both sized in em,
+   see .dash-dropdown-clear/.dash-dropdown-trigger-icon below -- shrink
+   to match, instead of staying at whatever the page's base font-size
+   happens to be. */
+.t3g-teetime-assign-dropdown .dash-dropdown-trigger {
+    height: auto;
+    min-height: 30px;
+    padding: 0.25rem 0.55rem;
+    font-size: 0.7rem;
+}
+
+.t3g-teetime-assign-dropdown .dash-dropdown-value {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    line-height: 1.2;
+}
+
+/* The clear "x" itself -- 0.85em (smaller than the trigger's own
+   0.7rem base, so it reads as a small accent mark next to the name,
+   not another same-sized piece of text competing with it) and a bit of
+   left margin so it doesn't sit flush against the last letter of a
+   wrapped name. */
+.t3g-teetime-assign-dropdown .dash-dropdown-clear {
+    width: 0.85em;
+    height: 0.85em;
+    margin-left: 0.3rem;
+}
+
+/* Wraps .t3g-teetime-assign-table. The row's grid columns (grid_style in
+   tournament.py: a 96px Tee Time column + minmax(76px, 1fr) per player)
+   are free to shrink within whatever width this wrapper actually has --
+   unlike before, nothing here forces the row to its full max-content
+   width, so a normal 2-4 player round fits without scrolling at all.
+   overflow-x:auto stays as a fallback only, for a round with an
+   unusually large group_size where even each column's 76px floor adds
+   up to more than the available width -- same pattern
    .t3g-teetime-group-list-scroll already uses for the read-only recap
-   table below this one. No-op on desktop/tablet, where there's normally
-   enough width that scrolling never actually kicks in. */
+   table below this one. */
 .t3g-teetime-assign-table-scroll {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
-}
-
-.t3g-teetime-assign-table-scroll .t3g-teetime-assign-table-row {
-    width: max-content;
-    min-width: 100%;
 }
 
 /* Non-manual grouping methods (random/handicap) get this in place of the
@@ -965,10 +1039,12 @@
        the full story on why ".Select-*" (this block's original
        selectors) never matched anything: this app's Dash version
        renders dcc.Dropdown as ".dash-dropdown*", not the old
-       react-select v1 markup. min-height lives on the inner
-       ".dash-dropdown-trigger", not the outer ".dash-dropdown" itself. */
+       react-select v1 markup. min-height stays roomy enough here (not
+       shrunk further than the base rule above) for a wrapped two-line
+       name to still fit without clipping at this smaller mobile font. */
     .t3g-teetime-assign-dropdown .dash-dropdown-trigger {
-        min-height: 30px;
+        min-height: 32px;
+        padding: 0.25rem 0.35rem;
     }
 
     .t3g-teetime-assign-dropdown .dash-dropdown-value,
@@ -988,11 +1064,6 @@
     .t3g-teetime-time-input--inline {
         padding: 0.25rem 0.35rem;
         font-size: 0.72rem;
-    }
-
-    .t3g-teetime-save-button {
-        font-size: 0.68rem;
-        padding: 0.25rem 0.5rem;
     }
 
     .t3g-liveround-group {

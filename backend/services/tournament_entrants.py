@@ -3,6 +3,13 @@ from datetime import datetime, timezone
 
 from backend.database import supabase
 from backend.services.handicaps import get_current_player_handicap, get_effective_handicap_source
+from backend.services.whs import MAX_HANDICAP_INDEX
+
+# Same -10.0 floor the manual-handicap steppers in my_account.py/club.py
+# use (a T3G business convention for how far a "plus" handicap can go,
+# not itself a WHS rule the way MAX_HANDICAP_INDEX/54.0 is) -- reused here
+# so an override can't be set to something no real handicap could ever be.
+_MIN_HANDICAP_OVERRIDE = -10.0
 
 _PLAYER_EMBED = "players(id, first_name, surname, nickname)"
 
@@ -20,6 +27,13 @@ class AlreadyEnteredError(Exception):
     """Raised if the player already has a pending or confirmed entry for
     this tournament -- a past withdrawal/rejection doesn't block
     re-entering (see enter_tournament)."""
+
+
+class InvalidHandicapOverrideError(Exception):
+    """Raised when an admin's handicap_override falls outside
+    [_MIN_HANDICAP_OVERRIDE, MAX_HANDICAP_INDEX] -- a plain sanity check,
+    not a claim that every value in that wide a range is realistic for
+    any given player."""
 
 
 class HandicapOutOfRangeError(Exception):
@@ -257,3 +271,37 @@ def admin_remove_entrant(tournament_id: str, player_id: str, admin_id: str) -> d
         raise NotClubAdminError("Only this club's admin can remove entrants.")
 
     return withdraw_entrant(tournament_id, player_id)
+
+
+def set_entrant_handicap_override(
+    tournament_id: str, player_id: str, admin_id: str, handicap_override: float | None
+) -> dict | None:
+    """Admin sets (or, passing None, clears) a replacement for this
+    entrant's full handicap -- see the migration comment on
+    tournament_entrants.handicap_override. This stands in for the live
+    handicap lookup only; the tournament's allowance % still applies on
+    top of it when scoring (get_tournament_leaderboard), same as it does
+    for every other entrant's handicap. Same admin-check shape as
+    admin_remove_entrant/admin_add_entrant above."""
+    tournament = _get_tournament(tournament_id)
+    if not tournament:
+        raise TournamentNotFoundError("Tournament not found.")
+
+    club = _get_club(tournament["club_id"])
+    if not club or str(club.get("club_admin")) != admin_id:
+        raise NotClubAdminError("Only this club's admin can override an entrant's handicap.")
+
+    if handicap_override is not None and not (_MIN_HANDICAP_OVERRIDE <= handicap_override <= MAX_HANDICAP_INDEX):
+        raise InvalidHandicapOverrideError(
+            f"Handicap override must be between {_MIN_HANDICAP_OVERRIDE:.0f} and {MAX_HANDICAP_INDEX:.0f}."
+        )
+
+    response = (
+        supabase
+        .table("tournament_entrants")
+        .update({"handicap_override": handicap_override})
+        .eq("tournament_id", tournament_id)
+        .eq("player_id", player_id)
+        .execute()
+    )
+    return response.data[0] if response.data else None

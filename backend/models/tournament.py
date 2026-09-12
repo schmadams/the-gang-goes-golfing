@@ -93,6 +93,17 @@ class TournamentRoundResponse(BaseModel):
     tee_name: str | None = None
 
 
+class TournamentEntrantHandicapOverrideUpdate(BaseModel):
+    # A replacement for this entrant's full handicap (not their Comp.
+    # Hcp) -- the tournament's allowance % still applies on top when
+    # scoring, same as every entrant's handicap normally would. None
+    # clears an existing override, reverting this entrant to the normal
+    # live-lookup handicap -- same "omitted/None means fall back to the
+    # default behavior" convention as TournamentEntrantCreate.handicap_source
+    # below.
+    handicap_override: float | None = None
+
+
 class TournamentEntrantCreate(BaseModel):
     player_id: UUID
     # 't3g' or 'manual', or omitted -- which handicap this player wants
@@ -113,6 +124,11 @@ class TournamentEntrantResponse(BaseModel):
     status: str
     handicap_at_entry: float | None = None
     handicap_source: str | None = None
+    # Admin-set override for this entrant's full handicap, if any -- the
+    # tournament's own handicap_allowance % still applies on top to get
+    # their Comp. Hcp, same as every other entrant. See the migration
+    # comment on tournament_entrants.handicap_override.
+    handicap_override: float | None = None
     created_at: datetime
     responded_at: datetime | None = None
     first_name: str | None = None
@@ -134,4 +150,4 @@ class TournamentResponse(BaseModel):
     created_by: UUID
     created_at: datetime
     rounds: list[TournamentRoundResponse] = []
-    entrants: list[TournamentEntrantResponse] = []
+    entrants: list[TournamentEntrantResponse] = []  

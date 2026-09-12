@@ -535,6 +535,17 @@ def get_tournament_leaderboard(tournament_id: str, round_id: str) -> dict:
 
     handicap_by_player: dict[str, float | None] = {}
     for entrant in entrants:
+        # Admin override (see the migration comment on
+        # tournament_entrants.handicap_override) takes the place of the
+        # live lookup below, nothing more -- it's treated exactly like
+        # the player's own full handicap would be, so it still goes
+        # through this same tournament's allowance-percentage scaling
+        # just below, same as every other entrant's. An admin fixing a
+        # wrong handicap shouldn't also have to redo the allowance math
+        # in their head to land on the right Comp. Hcp.
+        if entrant.get("handicap_override") is not None:
+            handicap_by_player[entrant["player_id"]] = entrant["handicap_override"]
+            continue
         # BUG FIX: this used to call get_current_player_handicap with no
         # source, so a player's live leaderboard Net/Stableford could
         # silently flip between using their T3G-calculated handicap and a
