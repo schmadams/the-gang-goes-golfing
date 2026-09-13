@@ -39,24 +39,45 @@ class TournamentCreate(BaseModel):
     admin_id: UUID  # must match clubs.club_admin -- enforced in the service layer
     name: str
     format: str
-    rounds: list[TournamentRoundCreate]
+    # Empty is only valid when linked_tournament_id is set below -- a
+    # *shadow* tournament owns no rounds of its own (its linked
+    # tournament's rounds are what it actually plays), so create_tournament
+    # only enforces "at least one round" when this isn't a shadow. See
+    # linked_tournament_id's own comment.
+    rounds: list[TournamentRoundCreate] = []
     entry_mode: str = "self"  # "self" (join directly) or "approval" (admin reviews each application)
     min_handicap: float | None = None
     max_handicap: float | None = None
     grouping_method: str = "random"
     handicap_allowance: int = 100
+    # Set this to make the new tournament a *shadow* of an existing one --
+    # e.g. a Pairs Better Ball event run over the same field and rounds as
+    # an already-set-up individual Stableford event. A shadow tournament
+    # has no entrants/rounds/tee-times of its own; every read and write
+    # for those transparently resolves to the linked tournament instead
+    # (see backend/services/tournaments.py's _resolve_source_tournament_id).
+    # None (the default) is a normal, fully independent tournament. Must
+    # name a tournament in the same club that isn't itself a shadow and
+    # doesn't already have a shadow of its own -- see create_tournament's
+    # validation.
+    linked_tournament_id: UUID | None = None
 
 
 class TournamentUpdate(BaseModel):
     admin_id: UUID  # must match clubs.club_admin -- enforced in the service layer
     name: str
     format: str
-    rounds: list[TournamentRoundCreate]
+    rounds: list[TournamentRoundCreate] = []
     entry_mode: str = "self"
     min_handicap: float | None = None
     max_handicap: float | None = None
     grouping_method: str = "random"
     handicap_allowance: int = 100
+    # Same meaning as TournamentCreate.linked_tournament_id -- editable
+    # after creation too (link a tournament to another later, or clear
+    # this back to None to unlink and make it independent again). See
+    # update_tournament's validation for what's allowed to change here.
+    linked_tournament_id: UUID | None = None
 
 
 class TeeTimeGenerateRequest(BaseModel):
@@ -150,4 +171,34 @@ class TournamentResponse(BaseModel):
     created_by: UUID
     created_at: datetime
     rounds: list[TournamentRoundResponse] = []
-    entrants: list[TournamentEntrantResponse] = []  
+    entrants: list[TournamentEntrantResponse] = []
+    # This tournament's own outgoing link, if it's a shadow of another
+    # (see TournamentCreate.linked_tournament_id) -- name included
+    # alongside the id so the page can render "Linked to: <name>" without
+    # a second fetch.
+    linked_tournament_id: UUID | None = None
+    linked_tournament_name: str | None = None
+    # The reverse direction -- some *other* tournament that's a shadow of
+    # this one, if any, so the source tournament's own page can link
+    # across to its pairs (or whatever) companion too. At most one in
+    # practice (see create_tournament's validation), but this is metadata
+    # only; nothing about data resolution depends on it.
+    linked_from_tournament_id: UUID | None = None
+    linked_from_tournament_name: str | None = None
+
+
+class TournamentPairsSetRequest(BaseModel):
+    admin_id: UUID  # must match clubs.club_admin -- enforced in the service layer
+    # Full replacement of every pair for this tournament, same "resubmit
+    # the whole set" convention as TeeTimeAssignmentRequest.assignments --
+    # each inner 2-item list is one pair's [player_id_a, player_id_b].
+    pairs: list[list[UUID]]
+
+
+class TournamentPairResponse(BaseModel):
+    id: UUID
+    tournament_id: UUID
+    player_id_a: UUID
+    player_id_b: UUID
+    player_a_name: str | None = None
+    player_b_name: str | None = None

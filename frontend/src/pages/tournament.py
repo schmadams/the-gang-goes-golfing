@@ -1,5 +1,6 @@
 # target path: frontend/src/pages/tournament.py (full replacement)
 import time
+import uuid
 
 import dash
 import dash_bootstrap_components as dbc
@@ -1762,9 +1763,31 @@ def _handicap_stepper(id_prefix, label, initial_value=None):
     )
 
 
-def _tournament_edit_modal(tournament):
+def _link_target_options(tournaments, own_id=None):
+    """Same eligibility rules as club.py's identical helper (duplicated
+    rather than shared -- see this file's own comment on why format
+    labels are duplicated too) -- other tournaments in this club that
+    aren't themselves a shadow of something else and don't already have
+    a shadow of their own, except that a tournament whose *current*
+    shadow is the one being edited (own_id) stays selectable, so
+    re-saving an unchanged existing link doesn't lock you out of it."""
+    options = []
+    for t in (tournaments or []):
+        if str(t["id"]) == str(own_id):
+            continue
+        if t.get("linked_tournament_id"):
+            continue
+        linked_from = t.get("linked_from_tournament_id")
+        if linked_from and str(linked_from) != str(own_id):
+            continue
+        options.append({"label": f"{t['name']} ({t.get('format', '')})", "value": t["id"]})
+    return options
+
+
+def _tournament_edit_modal(tournament, club_tournaments=None):
     rounds = tournament.get("rounds", [])
     round_rows = [_edit_round_row(i, r) for i, r in enumerate(rounds)] or [_edit_round_row(0)]
+    is_linked = bool(tournament.get("linked_tournament_id"))
 
     return dbc.Modal(
         id="tournament-edit-modal",
@@ -1793,7 +1816,34 @@ def _tournament_edit_modal(tournament):
                         ],
                     ),
                     html.Div(
+                        className="t3g-modal-section",
+                        children=[
+                            html.Label(
+                                "Link to another tournament (optional)", className="t3g-modal-label"
+                            ),
+                            dcc.Dropdown(
+                                id="tournament-edit-link-input",
+                                options=_link_target_options(club_tournaments, tournament.get("id")),
+                                value=tournament.get("linked_tournament_id"),
+                                placeholder="Not linked -- runs independently",
+                            ),
+                            html.P(
+                                "Linking shares the entrant list, tee times, live rounds, and player "
+                                "handicaps (including any manual overrides) with the tournament you pick. "
+                                "Who can enter, the handicap range, and tee time grouping below are "
+                                "inherited from that tournament too, so they're hidden here once linked -- "
+                                "only Format and Handicap allowance stay this tournament's own. A linked "
+                                "tournament plays whatever rounds the tournament it's linked to has, not "
+                                "its own -- only a tournament with no rounds or entrants of its own yet can "
+                                "be linked.",
+                                className="t3g-modal-hint",
+                            ),
+                        ],
+                    ),
+                    html.Div(
+                        id="tournament-edit-entry-section",
                         className="t3g-modal-section-row",
+                        style={"display": "none"} if is_linked else {},
                         children=[
                             html.Div(
                                 className="t3g-modal-section",
@@ -1829,7 +1879,9 @@ def _tournament_edit_modal(tournament):
                         ],
                     ),
                     html.Div(
+                        id="tournament-edit-grouping-section",
                         className="t3g-modal-section",
+                        style={"display": "none"} if is_linked else {},
                         children=[
                             html.Label(
                                 "Tee time grouping", className="t3g-modal-label t3g-tournament-rounds-label"
@@ -1857,7 +1909,9 @@ def _tournament_edit_modal(tournament):
                         ],
                     ),
                     html.Div(
+                        id="tournament-edit-rounds-section",
                         className="t3g-modal-section",
+                        style={"display": "none"} if is_linked else {},
                         children=[
                             html.Label("Rounds", className="t3g-modal-label t3g-tournament-rounds-label"),
                             html.Div(id="tournament-edit-rounds-container", children=round_rows),
@@ -1891,11 +1945,11 @@ _TAB_BUTTON_ACTIVE = "t3g-tournament-tab t3g-tournament-tab--active"
 # liveround, in this fixed order -- should be shown/active on first load.
 # Anything unrecognized (including no ?tab= at all) falls back to "info",
 # same as before this existed.
-_TOURNAMENT_TAB_KEYS = ("info", "startsheet", "leaderboard", "liveround")
+_TOURNAMENT_TAB_KEYS = ("info", "startsheet", "leaderboard", "pairs", "liveround")
 
 
 def _tab_visibility(active_tab):
-    """(styles, classes) for all four tab panels/buttons at page-load time,
+    """(styles, classes) for all five tab panels/buttons at page-load time,
     picked from a plain ?tab= query value instead of always defaulting to
     Tournament Info -- lets a link from elsewhere (the Live Round page's
     subnav) open straight onto the right tab. switch_tournament_tab still
@@ -1905,22 +1959,29 @@ def _tab_visibility(active_tab):
     shown = {}
     key = active_tab if active_tab in _TOURNAMENT_TAB_KEYS else "info"
     index = _TOURNAMENT_TAB_KEYS.index(key)
+    count = len(_TOURNAMENT_TAB_KEYS)
 
-    styles = tuple(shown if i == index else hidden for i in range(4))
-    classes = tuple(_TAB_BUTTON_ACTIVE if i == index else _TAB_BUTTON_BASE for i in range(4))
+    styles = tuple(shown if i == index else hidden for i in range(count))
+    classes = tuple(_TAB_BUTTON_ACTIVE if i == index else _TAB_BUTTON_BASE for i in range(count))
     return styles, classes
 
 
-def _tournament_subnav(slug, tab_classes):
-    """Page-level subnav: Info/Start Sheet/Leaderboard/Live Round are
-    client-side tabs (all four panel groups are always in the DOM, toggled
-    by switch_tournament_tab below), Return to Club is a real navigation
-    link -- same always-render-every-panel-toggle-with-style approach the
-    entry button uses, so the tab buttons' ids are stable across renders.
-    tab_classes (from _tab_visibility) is what makes the *initial* active
-    tab match whatever ?tab= value got here, rather than always opening on
-    Tournament Info."""
-    info_class, startsheet_class, leaderboard_class, liveround_class = tab_classes
+def _tournament_subnav(slug, tab_classes, show_pairs_tab):
+    """Page-level subnav: Info/Start Sheet/Leaderboard/Pairings/Live Round
+    are client-side tabs (all five panel groups are always in the DOM,
+    toggled by switch_tournament_tab below), Return to Club is a real
+    navigation link -- same always-render-every-panel-toggle-with-style
+    approach the entry button uses, so the tab buttons' ids are stable
+    across renders. tab_classes (from _tab_visibility) is what makes the
+    *initial* active tab match whatever ?tab= value got here, rather than
+    always opening on Tournament Info.
+
+    The Pairings button itself is always rendered (switch_tournament_tab's
+    Output list needs it to exist unconditionally, same "always in the
+    DOM" reasoning as every other tab) but hidden via inline style when
+    show_pairs_tab is False -- pairings only mean anything for a 2bbb/4bbb
+    tournament, see _pairings_panel."""
+    info_class, startsheet_class, leaderboard_class, pairs_class, liveround_class = tab_classes
     return html.Div(
         className="t3g-tournament-subnav",
         children=html.Div(
@@ -1946,6 +2007,13 @@ def _tournament_subnav(slug, tab_classes):
                             id="tournament-tab-leaderboard-button",
                             className=leaderboard_class,
                             n_clicks=0,
+                        ),
+                        html.Button(
+                            "Pairings",
+                            id="tournament-tab-pairs-button",
+                            className=pairs_class,
+                            n_clicks=0,
+                            style={} if show_pairs_tab else {"display": "none"},
                         ),
                         html.Button(
                             "Live Round",
@@ -2103,6 +2171,26 @@ def layout(slug=None, tournament_id=None, tab=None, **kwargs):
     if tournament_resp.status_code != 200:
         return _not_found_page()
     tournament = tournament_resp.json()
+    is_pairs_format = tournament.get("format") in ("2bbb", "4bbb")
+
+    # Every other tournament in this club -- needed to build the Edit
+    # modal's "Link to another tournament" dropdown options (see
+    # _link_target_options). Small club-scoped list, same one
+    # _tournaments_panel on club.py already fetches, just needed here too
+    # since this is a different page.
+    club_tournaments_resp = requests.get(f"{API_BASE_URL}/tournaments/club/{club['id']}")
+    club_tournaments = club_tournaments_resp.json() if club_tournaments_resp.status_code == 200 else []
+
+    # pairings_draft seeds tournament-pairings-draft-store: one complete
+    # bubble per already-saved pair, plus one trailing empty spare --
+    # see _pairings_panel/handle_tournament_pairings_board for how it's
+    # used and kept in that shape from here on.
+    pairings_draft = []
+    if is_pairs_format:
+        pairs_resp = requests.get(f"{API_BASE_URL}/tournaments/{tournament_id}/pairs")
+        saved_pairs = pairs_resp.json() if pairs_resp.status_code == 200 else []
+        pairings_draft = [_new_bubble([p["player_id_a"], p["player_id_b"]]) for p in saved_pairs]
+    pairings_draft.append(_new_bubble())
 
     # This is exactly where a "clubs" category notification's own url
     # points (tee times published -- see backend/services/
@@ -2130,13 +2218,23 @@ def layout(slug=None, tournament_id=None, tab=None, **kwargs):
             if row["player_id"] not in entered_ids
         ]
 
-    (info_style, startsheet_style, leaderboard_style, liveround_style), tab_classes = _tab_visibility(tab)
+    (
+        (info_style, startsheet_style, leaderboard_style, pairs_style, liveround_style), tab_classes
+    ) = _tab_visibility(tab)
+
+    info_leaderboard_content = (
+        _pairs_leaderboard_panel(tournament, compact=True) if is_pairs_format
+        else _tournament_info_leaderboard_panel(tournament)
+    )
+    leaderboard_content = (
+        _pairs_leaderboard_panel(tournament) if is_pairs_format else _leaderboard_panel(tournament)
+    )
 
     return html.Div(
         className="t3g-page t3g-club-page",
         children=[
             dcc.Store(id="tournament-id-store", data=tournament_id),
-            _tournament_subnav(slug, tab_classes),
+            _tournament_subnav(slug, tab_classes, is_pairs_format),
             html.Div(
                 id="tournament-tab-panel-info",
                 style=info_style,
@@ -2145,7 +2243,7 @@ def layout(slug=None, tournament_id=None, tab=None, **kwargs):
                         className="t3g-panel-grid",
                         children=[
                             _tournament_info_panel(tournament, is_admin),
-                            _tournament_info_leaderboard_panel(tournament),
+                            info_leaderboard_content,
                         ],
                     ),
                     _entrants_panel(tournament, entrants, my_entry, is_admin, player_id),
@@ -2159,7 +2257,12 @@ def layout(slug=None, tournament_id=None, tab=None, **kwargs):
             html.Div(
                 id="tournament-tab-panel-leaderboard",
                 style=leaderboard_style,
-                children=_leaderboard_panel(tournament),
+                children=leaderboard_content,
+            ),
+            html.Div(
+                id="tournament-tab-panel-pairs",
+                style=pairs_style,
+                children=_pairings_panel(tournament, pairings_draft, is_admin),
             ),
             html.Div(
                 id="tournament-tab-panel-liveround",
@@ -2169,7 +2272,7 @@ def layout(slug=None, tournament_id=None, tab=None, **kwargs):
             dcc.Store(id="tournament-entry-action-store", data=_entry_toggle_meta(tournament, my_entry)[1]),
             _add_player_modal(add_options),
             dcc.Store(id="tournament-edit-original-store", data=tournament),
-            _tournament_edit_modal(tournament),
+            _tournament_edit_modal(tournament, club_tournaments),
             dcc.Location(id="tournament-entry-redirect", refresh=True),
             dcc.Location(id="tournament-admin-action-redirect", refresh=True),
             dcc.Location(id="tournament-add-player-redirect", refresh=True),
@@ -2179,37 +2282,56 @@ def layout(slug=None, tournament_id=None, tab=None, **kwargs):
     )
 
 
+_TOURNAMENT_TAB_BUTTON_IDS = {
+    "info": "tournament-tab-info-button",
+    "startsheet": "tournament-tab-startsheet-button",
+    "leaderboard": "tournament-tab-leaderboard-button",
+    "pairs": "tournament-tab-pairs-button",
+    "liveround": "tournament-tab-liveround-button",
+}
+
+
 @callback(
     Output("tournament-tab-panel-info", "style"),
     Output("tournament-tab-panel-startsheet", "style"),
     Output("tournament-tab-panel-leaderboard", "style"),
+    Output("tournament-tab-panel-pairs", "style"),
     Output("tournament-tab-panel-liveround", "style"),
     Output("tournament-tab-info-button", "className"),
     Output("tournament-tab-startsheet-button", "className"),
     Output("tournament-tab-leaderboard-button", "className"),
+    Output("tournament-tab-pairs-button", "className"),
     Output("tournament-tab-liveround-button", "className"),
     Input("tournament-tab-info-button", "n_clicks"),
     Input("tournament-tab-startsheet-button", "n_clicks"),
     Input("tournament-tab-leaderboard-button", "n_clicks"),
+    Input("tournament-tab-pairs-button", "n_clicks"),
     Input("tournament-tab-liveround-button", "n_clicks"),
     prevent_initial_call=True,
 )
-def switch_tournament_tab(info_clicks, startsheet_clicks, leaderboard_clicks, liveround_clicks):
-    # Four tabs now -- same always-in-the-DOM, toggle-by-style approach,
+def switch_tournament_tab(info_clicks, startsheet_clicks, leaderboard_clicks, pairs_clicks, liveround_clicks):
+    # Five tabs now -- same always-in-the-DOM, toggle-by-style approach,
     # just picking which one panel gets shown (and which one button gets
     # the active class) based on whichever tab was actually clicked, with
-    # everything else hidden/inactive.
+    # everything else hidden/inactive. Driven off _TOURNAMENT_TAB_KEYS/
+    # _TOURNAMENT_TAB_BUTTON_IDS instead of a hardcoded if/elif chain per
+    # tab (the shape the four-tab version used) so adding a tab is a
+    # one-line addition to those two mappings, not another branch here.
     hidden = {"display": "none"}
     shown = {}
     triggered_id = dash.ctx.triggered_id
 
-    if triggered_id == "tournament-tab-startsheet-button":
-        return hidden, shown, hidden, hidden, _TAB_BUTTON_BASE, _TAB_BUTTON_ACTIVE, _TAB_BUTTON_BASE, _TAB_BUTTON_BASE
-    if triggered_id == "tournament-tab-leaderboard-button":
-        return hidden, hidden, shown, hidden, _TAB_BUTTON_BASE, _TAB_BUTTON_BASE, _TAB_BUTTON_ACTIVE, _TAB_BUTTON_BASE
-    if triggered_id == "tournament-tab-liveround-button":
-        return hidden, hidden, hidden, shown, _TAB_BUTTON_BASE, _TAB_BUTTON_BASE, _TAB_BUTTON_BASE, _TAB_BUTTON_ACTIVE
-    return shown, hidden, hidden, hidden, _TAB_BUTTON_ACTIVE, _TAB_BUTTON_BASE, _TAB_BUTTON_BASE, _TAB_BUTTON_BASE
+    triggered_key = "info"
+    for key, button_id in _TOURNAMENT_TAB_BUTTON_IDS.items():
+        if triggered_id == button_id:
+            triggered_key = key
+            break
+
+    index = _TOURNAMENT_TAB_KEYS.index(triggered_key)
+    count = len(_TOURNAMENT_TAB_KEYS)
+    styles = tuple(shown if i == index else hidden for i in range(count))
+    classes = tuple(_TAB_BUTTON_ACTIVE if i == index else _TAB_BUTTON_BASE for i in range(count))
+    return (*styles, *classes)
 
 
 @callback(
@@ -3011,6 +3133,7 @@ def adjust_tournament_edit_max_handicap(plus_clicks, minus_clicks, current):
     Output("tournament-edit-min-handicap-display", "children", allow_duplicate=True),
     Output("tournament-edit-max-handicap-store", "data", allow_duplicate=True),
     Output("tournament-edit-max-handicap-display", "children", allow_duplicate=True),
+    Output("tournament-edit-link-input", "value"),
     Input("tournament-edit-button", "n_clicks"),
     Input("tournament-edit-cancel", "n_clicks"),
     Input("tournament-edit-submit", "n_clicks"),
@@ -3025,6 +3148,7 @@ def adjust_tournament_edit_max_handicap(plus_clicks, minus_clicks, current):
     State({"type": "tournament-edit-round-course", "index": ALL}, "value"),
     State({"type": "tournament-edit-round-tee", "index": ALL}, "value"),
     State({"type": "tournament-edit-round-group-size", "index": ALL}, "value"),
+    State("tournament-edit-link-input", "value"),
     State("tournament-id-store", "data"),
     State("_pages_location", "pathname"),
     State("tournament-edit-original-store", "data"),
@@ -3034,6 +3158,7 @@ def handle_tournament_edit_modal(
     open_clicks, cancel_clicks, submit_clicks,
     name, format_value, entry_mode, grouping_method, handicap_allowance, min_handicap, max_handicap,
     round_dates, round_courses, round_tees, round_group_sizes,
+    linked_tournament_id,
     tournament_id, current_pathname, original_tournament,
 ):
     """Same shape as club.py's handle_tournament_modal, PATCHing instead of
@@ -3044,7 +3169,7 @@ def handle_tournament_edit_modal(
     same "fresh modal every time it's opened" approach the create modal
     uses, just resetting to the saved tournament instead of to empty."""
     triggered_id = dash.ctx.triggered_id
-    no_update_rest = (dash.no_update,) * 10
+    no_update_rest = (dash.no_update,) * 11
 
     if triggered_id == "tournament-edit-button":
         original_tournament = original_tournament or {}
@@ -3061,6 +3186,7 @@ def handle_tournament_edit_modal(
             original_tournament.get("handicap_allowance", 100),
             original_min, str(original_min) if original_min is not None else "–",
             original_max, str(original_max) if original_max is not None else "–",
+            original_tournament.get("linked_tournament_id"),
         )
 
     if triggered_id == "tournament-edit-cancel":
@@ -3074,23 +3200,28 @@ def handle_tournament_edit_modal(
         if min_handicap is not None and max_handicap is not None and min_handicap > max_handicap:
             return (True, "Min handicap can't be greater than max.", dash.no_update) + no_update_rest
 
+        # A tournament linked to another plays that tournament's rounds --
+        # same reasoning as club.py's handle_tournament_modal -- so its
+        # own Rounds section is skipped entirely rather than requiring at
+        # least one round.
         rounds_payload = []
-        for round_date, course_id, tee_id, group_size in zip(
-            round_dates, round_courses, round_tees, round_group_sizes
-        ):
-            if not round_date or not course_id or not tee_id:
-                return (
-                    True, "Fill in the date, course, and tees for every round.", dash.no_update,
-                ) + no_update_rest
-            rounds_payload.append({
-                "round_date": round_date,
-                "course_id": course_id,
-                "tee_id": tee_id,
-                "group_size": group_size or _DEFAULT_GROUP_SIZE,
-            })
+        if not linked_tournament_id:
+            for round_date, course_id, tee_id, group_size in zip(
+                round_dates, round_courses, round_tees, round_group_sizes
+            ):
+                if not round_date or not course_id or not tee_id:
+                    return (
+                        True, "Fill in the date, course, and tees for every round.", dash.no_update,
+                    ) + no_update_rest
+                rounds_payload.append({
+                    "round_date": round_date,
+                    "course_id": course_id,
+                    "tee_id": tee_id,
+                    "group_size": group_size or _DEFAULT_GROUP_SIZE,
+                })
 
-        if not rounds_payload:
-            return (True, "Add at least one round.", dash.no_update) + no_update_rest
+            if not rounds_payload:
+                return (True, "Add at least one round.", dash.no_update) + no_update_rest
 
         admin_id = session.get("player_id")
         response = requests.patch(
@@ -3105,6 +3236,7 @@ def handle_tournament_edit_modal(
                 "min_handicap": min_handicap,
                 "max_handicap": max_handicap,
                 "rounds": rounds_payload,
+                "linked_tournament_id": linked_tournament_id,
             },
         )
 
@@ -3120,3 +3252,684 @@ def handle_tournament_edit_modal(
         return (True, detail, dash.no_update) + no_update_rest
 
     return (dash.no_update, dash.no_update, dash.no_update) + no_update_rest
+
+def _new_bubble(player_ids=None):
+    """A fresh, empty-or-partial team bubble for the client-side draft --
+    bubble_id only ever needs to be unique *within this browser tab's own
+    render*, never sent to the backend (set_tournament_pairs only ever
+    sees completed [player_id_a, player_id_b] pairs, see
+    handle_tournament_pairings_board), so a random client-side id is all
+    it needs to be."""
+    return {"bubble_id": uuid.uuid4().hex, "player_ids": list(player_ids or [])}
+
+
+def _pairing_pill(entrant, paired, interactive):
+    """One player pill -- clickable to add (from the Available column) or
+    remove (from inside a bubble) when interactive (admin only); a plain
+    inert span otherwise, same read-only-for-non-admins treatment
+    _entrants_panel gives its own action controls. The pop-in keyframe
+    (see club.css's t3g-pairings-pop-in) plays automatically the moment
+    this mounts -- and since the whole board is rebuilt from scratch on
+    every add/remove (see handle_tournament_pairings_board), every pill
+    effectively replays it on every move, which is about as close to the
+    requested fly-across-the-board motion as a server-rendered callback
+    gets without hand-written clientside JS tracking on-screen positions
+    across the swap."""
+    label = _entrant_label(entrant)
+    classes = "t3g-pairings-pill t3g-pairings-pill--paired" if paired else "t3g-pairings-pill"
+    if not interactive:
+        return html.Span(label, className=f"{classes} t3g-pairings-pill--static")
+    id_type = "tournament-pairings-paired-pill" if paired else "tournament-pairings-available-pill"
+    return html.Button(
+        label,
+        id={"type": id_type, "player_id": entrant["player_id"]},
+        className=classes,
+        n_clicks=0,
+    )
+
+
+def _pairings_board(draft, confirmed_entrants, selected_bubble_id, is_admin):
+    """Renders both columns -- left: every confirmed entrant not currently
+    sitting in any bubble ("Available Players"); right: one bubble per
+    entry in draft, each either empty, half-full (one player, still
+    open), or full (two players, no longer selectable -- "auto
+    unhighlights" per the requested behavior, since is_full alone is what
+    gates whether its header even gets a click id below). Shared between
+    the panel's initial server-rendered content and handle_tournament_
+    pairings_board's rebuilt-in-place response, same "server builds the
+    same markup either way" approach _build_recap_group_rows uses for the
+    Start Sheet recap."""
+    entrants_by_id = {e["player_id"]: e for e in confirmed_entrants}
+    paired_ids = {pid for bubble in draft for pid in bubble["player_ids"]}
+
+    available_pills = [
+        _pairing_pill(entrant, paired=False, interactive=is_admin)
+        for pid, entrant in entrants_by_id.items()
+        if pid not in paired_ids
+    ]
+    if not entrants_by_id:
+        available_content = html.P("No confirmed entrants yet.", className="t3g-empty-state")
+    elif not available_pills:
+        available_content = html.P("Everyone's paired up.", className="t3g-empty-state")
+    else:
+        available_content = available_pills
+
+    bubbles = []
+    for index, bubble in enumerate(draft):
+        player_ids = bubble["player_ids"]
+        is_full = len(player_ids) >= 2
+        is_selected = bubble["bubble_id"] == selected_bubble_id
+        classes = ["t3g-pairings-bubble"]
+        if is_full:
+            classes.append("t3g-pairings-bubble--full")
+        if is_selected:
+            classes.append("t3g-pairings-bubble--selected")
+
+        if is_full:
+            hint = "Full"
+        elif is_selected:
+            hint = "Tap a player to add"
+        else:
+            hint = "Tap to select"
+
+        header_content = [
+            html.Span(f"Team {index + 1}", className="t3g-pairings-bubble-title"),
+            html.Span(hint, className="t3g-pairings-bubble-hint"),
+        ]
+        can_select = is_admin and not is_full
+        if can_select:
+            # id/n_clicks (Dash's own click-tracking props) can't be
+            # passed as None on a component that doesn't take them --
+            # this branch and the plain one below build two genuinely
+            # different html.Div calls rather than one call with
+            # conditionally-None kwargs.
+            header = html.Div(
+                header_content,
+                id={"type": "tournament-pairings-bubble", "bubble_id": bubble["bubble_id"]},
+                className="t3g-pairings-bubble-header",
+                n_clicks=0,
+            )
+        else:
+            header = html.Div(header_content, className="t3g-pairings-bubble-header")
+
+        slots = [
+            _pairing_pill(entrants_by_id[pid], paired=True, interactive=is_admin)
+            for pid in player_ids
+            if pid in entrants_by_id
+        ]
+        slots += [html.Div("+", className="t3g-pairings-bubble-slot-empty") for _ in range(2 - len(player_ids))]
+
+        bubbles.append(
+            html.Div(
+                className=" ".join(classes),
+                children=[header, html.Div(slots, className="t3g-pairings-bubble-slots")],
+            )
+        )
+
+    return html.Div(
+        className="t3g-pairings-board",
+        children=[
+            html.Div(
+                className="t3g-pairings-column",
+                children=[
+                    html.Div("Available Players", className="t3g-pairings-column-title"),
+                    html.Div(available_content, className="t3g-pairings-available-list"),
+                ],
+            ),
+            html.Div(
+                className="t3g-pairings-column",
+                children=[
+                    html.Div("Teams", className="t3g-pairings-column-title"),
+                    html.Div(bubbles, className="t3g-pairings-bubble-grid"),
+                ],
+            ),
+        ],
+    )
+
+
+def _pairings_panel(tournament, draft, is_admin):
+    """New tab (see _tournament_subnav/_TOURNAMENT_TAB_KEYS) for setting
+    up who's partnered with who in a pairs-format (2bbb/4bbb) tournament
+    -- separate from the Leaderboard tab, which is where the pairs'
+    actual standings live once pairings exist (see _pairs_leaderboard_
+    panel). Only meaningful for a pairs-format tournament; anything else
+    (including a linked individual-stableford tournament whose own ?tab=
+    happens to be pairs) just gets a short explanation instead.
+
+    draft is built once in layout() from the tournament's saved pairs
+    (one complete two-player bubble per saved pair) plus one trailing
+    empty spare bubble, then lives entirely in tournament-pairings-draft-
+    store from here on -- handle_tournament_pairings_board is the only
+    thing that ever mutates it, saving to the backend the moment a bubble
+    reaches two players (or stops having two, on a removal), never on a
+    half-filled bubble. confirmed_entrants (both the picker's pool and
+    who counts as "Available") comes from tournament["entrants"], which
+    by the time this is called already reflects the *shared* roster for a
+    linked tournament (see get_tournament's resolution through
+    linked_tournament_id), not some roster of this tournament's own that
+    a linked tournament would never have."""
+    is_pairs_format = tournament.get("format") in ("2bbb", "4bbb")
+    if not is_pairs_format:
+        return html.Div(
+            className="t3g-panel",
+            children=[
+                build_panel_navbar("Pairings"),
+                html.Div(
+                    html.P(
+                        "Pairings are only used for pairs-format tournaments (2BBB/4BBB Better Ball).",
+                        className="t3g-empty-state",
+                    ),
+                    className="t3g-panel-body",
+                ),
+            ],
+        )
+
+    confirmed = [e for e in tournament.get("entrants", []) if e.get("status") == "confirmed"]
+
+    return html.Div(
+        className="t3g-panel",
+        children=[
+            build_panel_navbar("Pairings"),
+            html.Div(
+                className="t3g-panel-body",
+                children=[
+                    html.P(
+                        "Tap a team to select it, then tap players to add them in. Tap a player already on a "
+                        "team to send them back to Available.",
+                        className="t3g-pairings-instructions",
+                    ) if is_admin else None,
+                    html.Div(id="tournament-pairings-error", className="text-danger mb-2"),
+                    html.Div(
+                        id="tournament-pairings-board-container",
+                        children=_pairings_board(draft, confirmed, None, is_admin),
+                    ),
+                    dcc.Store(id="tournament-pairings-draft-store", data=draft),
+                    dcc.Store(id="tournament-pairings-selected-bubble-store", data=None),
+                    dcc.Store(id="tournament-pairings-confirmed-store", data=confirmed),
+                    dcc.Store(id="tournament-pairings-admin-store", data=is_admin),
+                ],
+            ),
+        ],
+    )
+
+
+def _pairs_leaderboard_table(data, clickable=True):
+    """Pos/Pair/Thru/Pts -- the pairs counterpart to _leaderboard_simple_
+    table, but simpler still: a pair only ever has the one number (its
+    combined better-ball Stableford total), so there's no Gross/Nett
+    columns or format toggle to accommodate.
+
+    clickable=True (the Leaderboard tab's own full table) gives each row
+    an id (tournament-pairs-leaderboard-row) so toggle_tournament_pairs_
+    leaderboard_scorecard can open that pair's scorecard -- same pattern
+    _leaderboard_table uses for individual rows. clickable=False (the
+    compact panel embedded in the Tournament Info tab) leaves rows inert,
+    same reasoning _leaderboard_simple_table's own clickable=False gives:
+    that panel has no scorecard modal of its own, and it may not be
+    sitting on the same round as the Leaderboard tab."""
+    if not data:
+        return html.P("Loading…", className="t3g-empty-state")
+
+    pairs = data.get("pairs", [])
+    if not pairs:
+        return html.P("No pairings set yet -- add pairs on the Pairings tab.", className="t3g-empty-state")
+
+    def _row(index, pair):
+        cells = [
+            html.Td(str(index + 1), className="t3g-leaderboard-pos"),
+            html.Td(pair.get("name") or "Unknown pair"),
+            html.Td(str(pair.get("thru", 0)), className="text-center"),
+            html.Td(str(pair.get("total_stableford", 0)), className="text-center fw-bold"),
+        ]
+        if clickable:
+            return html.Tr(
+                cells,
+                id={"type": "tournament-pairs-leaderboard-row", "pair_id": pair["pair_id"]},
+                n_clicks=0,
+                className="t3g-leaderboard-row",
+            )
+        return html.Tr(cells)
+
+    rows = [_row(index, pair) for index, pair in enumerate(pairs)]
+    return html.Table(
+        className="t3g-leaderboard-table t3g-pairs-leaderboard-table",
+        children=[
+            html.Thead(html.Tr([html.Th("Pos"), html.Th("Pair"), html.Th("Thru"), html.Th("Pts")])),
+            html.Tbody(rows),
+        ],
+    )
+
+
+def _pairs_leaderboard_scorecard_modal():
+    """Opened by clicking a pair's row in the full pairs Leaderboard tab
+    (see toggle_tournament_pairs_leaderboard_scorecard) -- same shell as
+    _leaderboard_scorecard_modal, just its own ids so both modals can
+    exist in the DOM without clashing (only one is ever rendered per
+    page, since a tournament is either individual or pairs format, but
+    keeping the id families separate avoids any ambiguity)."""
+    return dbc.Modal(
+        id="tournament-pairs-leaderboard-scorecard-modal",
+        is_open=False,
+        size="xl",
+        children=[
+            dbc.ModalHeader(dbc.ModalTitle(id="tournament-pairs-leaderboard-scorecard-modal-title")),
+            dbc.ModalBody(id="tournament-pairs-leaderboard-scorecard-modal-body"),
+            dbc.ModalFooter(dbc.Button("Close", id="tournament-pairs-leaderboard-scorecard-close", color="secondary")),
+        ],
+    )
+
+
+def _pairs_leaderboard_scorecard(pair, holes):
+    """Par row plus one Score row per partner -- each partner's row only
+    shows strokes on the holes where *their* per-hole Stableford point is
+    what the pair's better-ball score actually used (holes_score on each
+    entry in pair["players"] is already masked to None on every other
+    hole by get_tournament_pairs_leaderboard, so this just renders
+    exactly what it's given, same "-" convention as
+    _leaderboard_player_scorecard's blank cells)."""
+    pars = [h.get("par") for h in holes]
+    hole_numbers = [h["hole_number"] for h in holes]
+
+    def _row(label, values, bold=False):
+        cells = [html.Td(label, className="t3g-leaderboard-scorecard-label")]
+        for i, v in enumerate(values):
+            divider = " t3g-leaderboard-divider" if hole_numbers[i] == 10 else ""
+            cells.append(html.Td(str(v) if v is not None else "-", className=divider.strip()))
+        return html.Tr(cells, className="t3g-leaderboard-scorecard-score-row" if bold else None)
+
+    header_cells = [html.Th("Hole")]
+    for hole_number in hole_numbers:
+        divider = " t3g-leaderboard-divider" if hole_number == 10 else ""
+        header_cells.append(html.Th(str(hole_number), className=divider.strip()))
+
+    body_rows = [_row("Par", pars)]
+    for player in pair.get("players", []):
+        scores = player.get("holes_score") or [None] * 18
+        body_rows.append(_row(player.get("name") or "Unknown", scores, bold=True))
+
+    out_par = sum(p for p in pars[:9] if p is not None)
+    in_par = sum(p for p in pars[9:] if p is not None)
+
+    summary = html.Div(
+        className="t3g-leaderboard-scorecard-summary",
+        children=[
+            html.Span(f"OUT  (par {out_par})"),
+            html.Span(f"IN  (par {in_par})"),
+            html.Span(
+                f"TOTAL  {pair.get('total_stableford', 0)} pts  (par {out_par + in_par})",
+                className="t3g-leaderboard-scorecard-total",
+            ),
+        ],
+    )
+
+    return html.Div(
+        [
+            html.Div(
+                html.Table(
+                    [html.Thead(html.Tr(header_cells)), html.Tbody(body_rows)],
+                    className="t3g-leaderboard-table t3g-leaderboard-scorecard-table",
+                ),
+                className="t3g-leaderboard-wrap",
+            ),
+            summary,
+        ]
+    )
+
+
+def _pairs_leaderboard_panel(tournament, compact=False):
+    """Better-ball pairs standings -- the 2bbb/4bbb counterpart to
+    _leaderboard_panel (compact=False, the full Leaderboard tab) and
+    _tournament_info_leaderboard_panel (compact=True, the Tournament Info
+    tab's half-width slot), rendered instead of those two when the
+    tournament's format is a pairs one (see layout()). Deliberately
+    simpler than either: pairs only have the one number, so there's no
+    Gross/Nett/Detailed toggle to offer, and (unlike the individual
+    board's "Overall" tab) no cross-round cumulative total yet -- each
+    round tab shows just that round's own pairs standings. id_prefix
+    keeps this panel's ids distinct from the compact instance's, since
+    both can be in the DOM at once (Info tab + Leaderboard tab), same
+    reasoning as tournament-leaderboard-* vs tournament-info-leaderboard-*
+    already being two separate id families for the individual board."""
+    rounds = sorted(tournament.get("rounds", []), key=lambda r: r["round_number"])
+    if not rounds:
+        return html.Div(
+            className="t3g-panel",
+            children=[
+                build_panel_navbar("Leaderboard"),
+                html.Div(html.P("No rounds set up yet.", className="t3g-empty-state"), className="t3g-panel-body"),
+            ],
+        )
+
+    default_round = _default_leaderboard_round(tournament)
+    default_round_id = default_round["id"] if default_round else rounds[0]["id"]
+    id_prefix = "tournament-info-pairs-leaderboard" if compact else "tournament-pairs-leaderboard"
+
+    controls = []
+    if not compact and len(rounds) > 1:
+        round_keys = [r["id"] for r in rounds]
+        round_classes = _leaderboard_round_classes(round_keys, default_round_id)
+        controls.append(
+            html.Div(
+                className="t3g-leaderboard-format-tabs t3g-leaderboard-round-tabs",
+                children=[
+                    html.Button(
+                        f"Round {r['round_number']}",
+                        id={"type": f"{id_prefix}-round-button", "round_id": r["id"]},
+                        className=round_classes[r["id"]],
+                        n_clicks=0,
+                    )
+                    for r in rounds
+                ],
+            )
+        )
+
+    if compact:
+        table_loading = dcc.Loading(
+            html.Div(id=f"{id_prefix}-table-container"),
+            custom_spinner=golf_swing_spinner(),
+            parent_className="t3g-leaderboard-compact",
+        )
+    else:
+        table_loading = dcc.Loading(
+            html.Div(id=f"{id_prefix}-table-container"),
+            custom_spinner=golf_swing_spinner(),
+        )
+
+    body_children = []
+    if controls:
+        body_children.append(html.Div(className="t3g-leaderboard-controls", children=controls))
+    body_children.extend([
+        html.Div(id=f"{id_prefix}-error", className="text-danger mb-2"),
+        table_loading,
+        dcc.Store(id=f"{id_prefix}-store"),
+        dcc.Store(id=f"{id_prefix}-round-store", data=default_round_id),
+        dcc.Interval(id=f"{id_prefix}-refresh-interval", interval=_LEADERBOARD_REFRESH_INTERVAL_MS, n_intervals=0),
+    ])
+    if not compact:
+        body_children.append(_pairs_leaderboard_scorecard_modal())
+
+    return html.Div(
+        className="t3g-panel",
+        children=[
+            build_panel_navbar("Leaderboard"),
+            html.Div(className="t3g-panel-body", children=body_children),
+        ],
+    )
+
+
+@callback(
+    Output("tournament-pairings-board-container", "children"),
+    Output("tournament-pairings-draft-store", "data"),
+    Output("tournament-pairings-selected-bubble-store", "data"),
+    Output("tournament-pairings-error", "children", allow_duplicate=True),
+    Input({"type": "tournament-pairings-bubble", "bubble_id": ALL}, "n_clicks"),
+    Input({"type": "tournament-pairings-available-pill", "player_id": ALL}, "n_clicks"),
+    Input({"type": "tournament-pairings-paired-pill", "player_id": ALL}, "n_clicks"),
+    State("tournament-pairings-draft-store", "data"),
+    State("tournament-pairings-selected-bubble-store", "data"),
+    State("tournament-pairings-confirmed-store", "data"),
+    State("tournament-pairings-admin-store", "data"),
+    prevent_initial_call=True,
+)
+def handle_tournament_pairings_board(
+    bubble_clicks, available_clicks, paired_clicks,
+    draft, selected_bubble_id, confirmed, is_admin,
+):
+    """One callback drives the whole board -- every bubble's header
+    (select) and every player pill (add from Available, or remove from
+    inside a bubble) share it, same "every control in an ALL-pattern
+    group triggers the same handler, dash.ctx.triggered_id tells them
+    apart" approach as every other pattern-matching button row on this
+    page (e.g. handle_save_tee_time_assignments).
+
+    draft (tournament-pairings-draft-store) is a list of {"bubble_id",
+    "player_ids": [0-2 player ids]} -- the client-side working state for
+    every team, complete or not. Only complete (two-player) bubbles are
+    ever sent to the backend (set_tournament_pairs, a full "resubmit the
+    whole set" replace, same convention assign_tee_time_players uses); a
+    half-filled bubble lives only in this store until it's either
+    completed or abandoned. Every branch below ends by re-normalizing
+    draft to keep exactly one fully-empty "spare" bubble at the end at
+    all times (see the comment just above that step) -- there's always
+    somewhere to tap-tap-build the next team without a separate "Add
+    Team" action, per the requested flow.
+    """
+    if not is_admin:
+        raise PreventUpdate
+    triggered_id = dash.ctx.triggered_id
+    if not triggered_id:
+        raise PreventUpdate
+
+    # Deep-enough copy -- each bubble's own player_ids list gets a fresh
+    # copy too, so mutating it below never touches whatever the store had
+    # (Dash doesn't care either way, but this keeps the "only touch this
+    # bubble" reasoning below honest).
+    draft = [{"bubble_id": b["bubble_id"], "player_ids": list(b["player_ids"])} for b in (draft or [])]
+
+    def find_bubble(bubble_id):
+        return next((b for b in draft if b["bubble_id"] == bubble_id), None)
+
+    trig_type = triggered_id.get("type")
+    changed_membership = False
+    error = ""
+
+    if trig_type == "tournament-pairings-bubble":
+        if not any(bubble_clicks or []):
+            raise PreventUpdate
+        bubble = find_bubble(triggered_id["bubble_id"])
+        if bubble and len(bubble["player_ids"]) < 2:
+            selected_bubble_id = bubble["bubble_id"]
+
+    elif trig_type == "tournament-pairings-available-pill":
+        if not any(available_clicks or []):
+            raise PreventUpdate
+        bubble = find_bubble(selected_bubble_id) if selected_bubble_id else None
+        if not bubble:
+            error = "Tap a team first, then tap a player to add them."
+        elif len(bubble["player_ids"]) >= 2:
+            error = "That team's already full."
+        else:
+            bubble["player_ids"].append(triggered_id["player_id"])
+            changed_membership = True
+            if len(bubble["player_ids"]) >= 2:
+                # Full -- auto-unhighlight, per the requested behavior.
+                # Only way back in is removing one of its two players.
+                selected_bubble_id = None
+
+    elif trig_type == "tournament-pairings-paired-pill":
+        if not any(paired_clicks or []):
+            raise PreventUpdate
+        player_id = triggered_id["player_id"]
+        for bubble in draft:
+            if player_id in bubble["player_ids"]:
+                bubble["player_ids"].remove(player_id)
+                changed_membership = True
+                # Re-select -- it just opened a slot, and the natural next
+                # tap is to fill it with someone else. If this emptied the
+                # bubble out entirely, the id normalization step below
+                # recycles it away; the fallback right after that points
+                # selection at its replacement spare instead.
+                selected_bubble_id = bubble["bubble_id"]
+                break
+
+    # Keep exactly one trailing empty spare bubble at all times -- every
+    # bubble that still holds at least one player (complete or half-
+    # filled) survives untouched (same bubble_id, so a still-open
+    # selection stays valid), any bubble that's now fully empty gets
+    # dropped, and exactly one fresh empty one is appended. Skipped
+    # entirely on the plain bubble-select branch (changed_membership
+    # stays False there) -- normalizing unconditionally would discard and
+    # replace the very empty spare bubble that branch just selected,
+    # since a not-yet-touched empty bubble looks identical to a
+    # just-vacated one otherwise.
+    if changed_membership:
+        draft = [b for b in draft if b["player_ids"]] + [_new_bubble()]
+        if selected_bubble_id and not find_bubble(selected_bubble_id):
+            selected_bubble_id = draft[-1]["bubble_id"]
+
+    board = _pairings_board(draft, confirmed or [], selected_bubble_id, True)
+    # The board above re-renders instantly off the local draft -- the
+    # actual save to the backend (a full Supabase delete+reinsert) is a
+    # second network hop that would otherwise sit in front of every pill
+    # tap and make clicks feel laggy. It's handed off to
+    # persist_tournament_pairs below, which fires off this draft store
+    # write and runs after this response has already reached the
+    # browser, so the pill/bubble animation plays immediately and the
+    # save happens invisibly behind it. Only write the store (and so
+    # trigger a save) when membership actually changed -- a pure
+    # bubble-select shouldn't cause a network round trip at all.
+    draft_output = draft if changed_membership else dash.no_update
+    return board, draft_output, selected_bubble_id, error
+
+
+@callback(
+    Output("tournament-pairings-error", "children", allow_duplicate=True),
+    Input("tournament-pairings-draft-store", "data"),
+    State("tournament-pairings-admin-store", "data"),
+    State("tournament-id-store", "data"),
+    prevent_initial_call=True,
+)
+def persist_tournament_pairs(draft, is_admin, tournament_id):
+    """Fires after handle_tournament_pairings_board has already sent the
+    updated board to the browser (see the comment there) -- this is
+    purely the "save to backend" half, decoupled so it can't add its
+    network latency to the click-to-visual-update path."""
+    if not is_admin or not tournament_id:
+        raise PreventUpdate
+    complete_pairs = [b["player_ids"] for b in (draft or []) if len(b["player_ids"]) == 2]
+    admin_id = session.get("player_id")
+    response = requests.put(
+        f"{API_BASE_URL}/tournaments/{tournament_id}/pairs",
+        json={"admin_id": admin_id, "pairs": complete_pairs},
+    )
+    if response.status_code != 200:
+        try:
+            detail = response.json().get("detail")
+            if not isinstance(detail, str):
+                detail = None
+        except ValueError:
+            detail = None
+        return detail or "Couldn't save that pairing."
+    return ""
+
+
+@callback(
+    Output("tournament-pairs-leaderboard-store", "data"),
+    Output("tournament-pairs-leaderboard-error", "children"),
+    Input("tournament-pairs-leaderboard-round-store", "data"),
+    Input("tournament-pairs-leaderboard-refresh-interval", "n_intervals"),
+    State("tournament-id-store", "data"),
+)
+def load_tournament_pairs_leaderboard(round_id, n_intervals, tournament_id):
+    if not round_id or not tournament_id:
+        raise PreventUpdate
+    response = requests.get(
+        f"{API_BASE_URL}/tournaments/{tournament_id}/pairs-leaderboard", params={"round_id": round_id}
+    )
+    if response.status_code != 200:
+        return dash.no_update, "Couldn't load the leaderboard right now."
+    return response.json(), ""
+
+
+@callback(
+    Output("tournament-pairs-leaderboard-table-container", "children"),
+    Input("tournament-pairs-leaderboard-store", "data"),
+)
+def render_tournament_pairs_leaderboard_table(leaderboard_data):
+    if not leaderboard_data:
+        raise PreventUpdate
+    return _pairs_leaderboard_table(leaderboard_data, clickable=True)
+
+
+@callback(
+    Output("tournament-pairs-leaderboard-scorecard-modal", "is_open"),
+    Output("tournament-pairs-leaderboard-scorecard-modal-title", "children"),
+    Output("tournament-pairs-leaderboard-scorecard-modal-body", "children"),
+    Input({"type": "tournament-pairs-leaderboard-row", "pair_id": ALL}, "n_clicks"),
+    Input("tournament-pairs-leaderboard-scorecard-close", "n_clicks"),
+    State("tournament-pairs-leaderboard-store", "data"),
+    prevent_initial_call=True,
+)
+def toggle_tournament_pairs_leaderboard_scorecard(row_clicks, close_clicks, leaderboard_data):
+    # Same phantom-trigger guard and ALL-pattern sharing as toggle_
+    # tournament_leaderboard_scorecard -- the table gets rebuilt (fresh
+    # n_clicks=0 rows) on every refresh/round change, so every row shares
+    # this one callback and dash.ctx.triggered_id says which fired.
+    triggered_id = dash.ctx.triggered_id
+
+    if triggered_id == "tournament-pairs-leaderboard-scorecard-close":
+        return False, dash.no_update, dash.no_update
+
+    if not triggered_id or not any(row_clicks or []):
+        raise PreventUpdate
+
+    pair_id = triggered_id["pair_id"]
+    leaderboard_data = leaderboard_data or {}
+    pair = next((p for p in leaderboard_data.get("pairs", []) if p["pair_id"] == pair_id), None)
+    if not pair:
+        raise PreventUpdate
+
+    title = f"{pair.get('name') or 'Unknown pair'} — Round {leaderboard_data.get('round_number')}"
+    body = _pairs_leaderboard_scorecard(pair, leaderboard_data.get("holes", []))
+    return True, title, body
+
+
+@callback(
+    Output("tournament-pairs-leaderboard-round-store", "data"),
+    Output({"type": "tournament-pairs-leaderboard-round-button", "round_id": ALL}, "className"),
+    Input({"type": "tournament-pairs-leaderboard-round-button", "round_id": ALL}, "n_clicks"),
+    State({"type": "tournament-pairs-leaderboard-round-button", "round_id": ALL}, "id"),
+    prevent_initial_call=True,
+)
+def switch_tournament_pairs_leaderboard_round(clicks, ids):
+    triggered_id = dash.ctx.triggered_id
+    if not triggered_id or not any(clicks or []):
+        raise PreventUpdate
+    active_round = triggered_id["round_id"]
+    round_keys = [id_dict["round_id"] for id_dict in ids]
+    classes = _leaderboard_round_classes(round_keys, active_round)
+    return active_round, [classes[key] for key in round_keys]
+
+
+@callback(
+    Output("tournament-info-pairs-leaderboard-store", "data"),
+    Output("tournament-info-pairs-leaderboard-error", "children"),
+    Input("tournament-info-pairs-leaderboard-refresh-interval", "n_intervals"),
+    State("tournament-info-pairs-leaderboard-round-store", "data"),
+    State("tournament-id-store", "data"),
+)
+def load_tournament_info_pairs_leaderboard(n_intervals, round_id, tournament_id):
+    if not round_id or not tournament_id:
+        raise PreventUpdate
+    response = requests.get(
+        f"{API_BASE_URL}/tournaments/{tournament_id}/pairs-leaderboard", params={"round_id": round_id}
+    )
+    if response.status_code != 200:
+        return dash.no_update, "Couldn't load the leaderboard right now."
+    return response.json(), ""
+
+
+@callback(
+    Output("tournament-info-pairs-leaderboard-table-container", "children"),
+    Input("tournament-info-pairs-leaderboard-store", "data"),
+)
+def render_tournament_info_pairs_leaderboard_table(leaderboard_data):
+    if not leaderboard_data:
+        raise PreventUpdate
+    return _pairs_leaderboard_table(leaderboard_data, clickable=False)
+
+
+@callback(
+    Output("tournament-edit-rounds-section", "style"),
+    Output("tournament-edit-entry-section", "style"),
+    Output("tournament-edit-grouping-section", "style"),
+    Input("tournament-edit-link-input", "value"),
+)
+def toggle_tournament_edit_rounds_section(linked_tournament_id):
+    # Same client-side convenience as club.py's
+    # toggle_tournament_rounds_section -- backend/services/tournaments.py's
+    # _attach_link_info (entry_mode/min_handicap/max_handicap/
+    # grouping_method inheritance) and handle_tournament_edit_modal's own
+    # submit-time validation are the real enforcement.
+    style = {"display": "none"} if linked_tournament_id else {}
+    return style, style, style

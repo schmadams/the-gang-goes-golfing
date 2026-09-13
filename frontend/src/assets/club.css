@@ -1768,3 +1768,217 @@
     gap: 0.75rem;
     margin-top: 0.5rem;
 }
+/* Linked tournaments + Pairings tab (create/edit tournament link picker,
+   the new Pairings tab's pair-builder, and the pairs leaderboard table
+   that replaces the individual one for a 2bbb/4bbb tournament) -- see
+   tournaments.linked_tournament_id and tournament_pairs in the backend. */
+
+/* Small muted explainer under the "Link to another tournament" dropdown
+   in both the create (club.py) and edit (tournament.py) modals -- same
+   role .t3g-empty-state plays elsewhere (quiet, doesn't compete with the
+   actual controls above it), just left-aligned prose instead of a
+   centered placeholder message. */
+.t3g-modal-hint {
+    color: var(--t3g-muted);
+    font-size: 0.8rem;
+    line-height: 1.4;
+    margin: 0.5rem 0 0;
+}
+
+/* Pairings tab -- click-to-select-a-team, click-a-pill-to-add board.
+   Left column: every confirmed entrant not currently in a team
+   ("Available Players"). Right column: one bubble per team, 0-2 player
+   pills inside. Selecting a bubble (tapping its header) highlights it;
+   tapping an Available pill then moves that player into whichever
+   bubble is selected; tapping a pill already inside a bubble sends them
+   back to Available. See handle_tournament_pairings_board in
+   tournament.py for the click-handling state machine this drives. */
+.t3g-pairings-instructions {
+    color: var(--t3g-muted);
+    font-size: 0.85rem;
+    margin-bottom: 1rem;
+}
+
+.t3g-pairings-board {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+}
+
+@media (max-width: 700px) {
+    .t3g-pairings-board {
+        grid-template-columns: 1fr;
+    }
+}
+
+.t3g-pairings-column-title {
+    font-weight: 700;
+    color: var(--t3g-ink);
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 0.75rem;
+}
+
+.t3g-pairings-available-list {
+    display: flex;
+    flex-wrap: wrap;
+    align-content: flex-start;
+    gap: 0.5rem;
+    min-height: 3rem;
+    background: var(--t3g-surface-raised);
+    border-radius: var(--t3g-radius-lg);
+    padding: 0.85rem;
+}
+
+/* One player -- a rounded "hovering" pill (soft shadow lifts it off the
+   panel background, same lift language .t3g-tournament-item's hover uses
+   elsewhere in this file, just resting-state here rather than
+   hover-triggered) so it visibly reads as a pickable, floating token
+   rather than flat inline text. animation plays once on mount -- see
+   t3g-pairings-pop-in below and _pairing_pill's own docstring for why
+   that's the closest a server-rendered Dash callback can get to the
+   requested fly-into-place motion without hand-written clientside JS
+   tracking on-screen positions across the swap. */
+.t3g-pairings-pill {
+    display: inline-flex;
+    align-items: center;
+    border: none;
+    border-radius: 999px;
+    background: var(--t3g-surface);
+    color: var(--t3g-ink);
+    font-size: 0.85rem;
+    font-weight: 600;
+    padding: 0.45rem 0.9rem;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+    cursor: pointer;
+    animation: t3g-pairings-pop-in 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.t3g-pairings-pill:hover {
+    background: rgba(141, 198, 63, 0.16);
+}
+
+/* Inside a bubble -- a filled accent pill instead of the plain white
+   Available one, so at a glance it's obvious which pills are "in" a team
+   versus still up for grabs. */
+.t3g-pairings-pill--paired {
+    background: #8dc63f;
+    color: #0b2a12;
+}
+
+.t3g-pairings-pill--paired:hover {
+    background: #7ab32e;
+}
+
+/* Non-admin (view-only) -- same look, no hover/cursor affordance, no
+   pop-in replay on every unrelated page interaction since a non-admin's
+   board only ever re-renders from a fresh page load. */
+.t3g-pairings-pill--static {
+    cursor: default;
+    box-shadow: none;
+}
+
+.t3g-pairings-pill--static:hover {
+    background: var(--t3g-surface);
+}
+
+.t3g-pairings-pill--paired.t3g-pairings-pill--static:hover {
+    background: #8dc63f;
+}
+
+@keyframes t3g-pairings-pop-in {
+    from {
+        opacity: 0;
+        transform: scale(0.55) translateY(6px);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+.t3g-pairings-bubble-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+}
+
+/* One team -- a large, heavily-rounded "bubble" card (border-radius well
+   past the panel's usual --t3g-radius-lg so it reads as distinctly
+   rounder than every rectangular tile elsewhere on this page) holding
+   its header and two player slots. */
+.t3g-pairings-bubble {
+    background: var(--t3g-surface-raised);
+    border: 2px solid transparent;
+    border-radius: 26px;
+    padding: 0.85rem 1rem;
+    transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+/* Selected -- green ring plus a faint tinted fill, same accent color
+   the rest of the app already uses for "active"/"leader" states
+   (.t3g-leaderboard-row--leader, the round-tab active pill). */
+.t3g-pairings-bubble--selected {
+    border-color: #8dc63f;
+    background: rgba(141, 198, 63, 0.1);
+}
+
+/* Full -- quietly settled/complete, a solid (not dashed) neutral border
+   so it reads as "done" without competing with the green selected ring a
+   still-open bubble can have. */
+.t3g-pairings-bubble--full {
+    border-color: var(--t3g-border);
+}
+
+.t3g-pairings-bubble-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.5rem;
+    font-weight: 700;
+    color: var(--t3g-ink);
+    font-size: 0.9rem;
+    margin-bottom: 0.6rem;
+}
+
+/* Only bubbles that can still be selected (not full) carry a real click
+   id (see _pairings_board) -- this cursor only shows up on those. */
+.t3g-pairings-bubble-header[id] {
+    cursor: pointer;
+}
+
+.t3g-pairings-bubble-title {
+    margin-right: 0.5rem;
+}
+
+.t3g-pairings-bubble-hint {
+    color: var(--t3g-muted);
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.t3g-pairings-bubble-slots {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 2.4rem;
+}
+
+/* Open slot placeholder -- a dashed circle "+" so an incomplete bubble
+   visibly shows how many more players it still needs, same idea as the
+   Start Sheet's "—" placeholders for an ungrouped tee time slot. */
+.t3g-pairings-bubble-slot-empty {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.2rem;
+    height: 2.2rem;
+    border: 2px dashed var(--t3g-border);
+    border-radius: 999px;
+    color: var(--t3g-muted);
+    font-size: 1rem;
+    font-weight: 700;
+}

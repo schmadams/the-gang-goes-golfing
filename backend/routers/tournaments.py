@@ -8,6 +8,7 @@ from backend.models.tournament import (
     TournamentCreate,
     TournamentEntrantCreate,
     TournamentEntrantHandicapOverrideUpdate,
+    TournamentPairsSetRequest,
     TournamentUpdate,
 )
 from backend.services.tournament_entrants import (
@@ -37,11 +38,19 @@ from backend.services.tournament_tee_times import (
     list_scheduled_tee_times_for_player,
     update_tee_time_slot,
 )
+from backend.services.tournament_pairs import (
+    InvalidPairingError,
+    NotClubAdminError as PairsNotClubAdminError,
+    TournamentNotFoundError as PairsTournamentNotFoundError,
+    list_tournament_pairs,
+    set_tournament_pairs,
+)
 from backend.services.tournaments import (
     ClubNotFoundError,
     InvalidEntryModeError,
     InvalidFormatError,
     InvalidGroupingMethodError,
+    InvalidLinkError,
     NoRoundsError,
     NotClubAdminError,
     TournamentNotFoundError,
@@ -49,6 +58,7 @@ from backend.services.tournaments import (
     create_tournament,
     get_tournament,
     get_tournament_leaderboard,
+    get_tournament_pairs_leaderboard,
     list_tournaments_for_club,
     update_tournament,
 )
@@ -64,8 +74,16 @@ def create_tournament_route(payload: TournamentCreate):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
     except NotClubAdminError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
-    except (InvalidFormatError, InvalidEntryModeError, InvalidGroupingMethodError, NoRoundsError) as exc:
+    except (
+        InvalidFormatError, InvalidEntryModeError, InvalidGroupingMethodError, NoRoundsError, InvalidLinkError
+    ) as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    except TournamentNotFoundError as exc:
+        # Raised by _validate_link when linked_tournament_id doesn't
+        # match any tournament -- 404 rather than the more common 422
+        # here since it's the referenced id, not a field value, that's
+        # invalid.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 
 
 @router.get("/club/{club_id}")
@@ -103,7 +121,9 @@ def update_tournament_route(tournament_id: str, payload: TournamentUpdate):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
     except NotClubAdminError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
-    except (InvalidFormatError, InvalidEntryModeError, InvalidGroupingMethodError, NoRoundsError) as exc:
+    except (
+        InvalidFormatError, InvalidEntryModeError, InvalidGroupingMethodError, NoRoundsError, InvalidLinkError
+    ) as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
 
 
@@ -253,3 +273,31 @@ def set_entrant_handicap_override_route(
     if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Entrant not found")
     return updated
+
+@router.get("/{tournament_id}/pairs")
+def list_tournament_pairs_route(tournament_id: str):
+    return list_tournament_pairs(tournament_id)
+
+
+@router.put("/{tournament_id}/pairs")
+def set_tournament_pairs_route(tournament_id: str, payload: TournamentPairsSetRequest):
+    try:
+        return set_tournament_pairs(
+            tournament_id, str(payload.admin_id), [[str(p) for p in pair] for pair in payload.pairs]
+        )
+    except PairsTournamentNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    except PairsNotClubAdminError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
+    except InvalidPairingError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+
+
+@router.get("/{tournament_id}/pairs-leaderboard")
+def get_tournament_pairs_leaderboard_route(tournament_id: str, round_id: str):
+    # round_id required, same reasoning as get_tournament_leaderboard_route
+    # above -- the frontend always has one before calling this.
+    try:
+        return get_tournament_pairs_leaderboard(tournament_id, round_id)
+    except TournamentRoundNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))

@@ -50,6 +50,25 @@ def _get_tournament(tournament_id: str) -> dict | None:
     return response.data if response is not None else None
 
 
+def _resolve_shared_roster(tournament_id: str, tournament: dict) -> tuple[str, dict]:
+    """A tournament linked to another (tournaments.linked_tournament_id)
+    is a *shadow* -- see the migration comment on that column -- and
+    shares its entire entrant list with the tournament it's linked to
+    rather than keeping one of its own. Every function below calls this
+    right after its own initial tournament fetch/not-found check, and
+    reassigns both its tournament_id and tournament locals from the
+    result -- every line further down (entry_mode/handicap-range checks,
+    the actual tournament_entrants queries, the admin/club check) then
+    already operates on the *linked* tournament without needing its own
+    special-casing. A no-op (returns what it was given) when the
+    tournament isn't a shadow."""
+    linked_id = tournament.get("linked_tournament_id")
+    if not linked_id:
+        return tournament_id, tournament
+    linked = _get_tournament(linked_id)
+    return (linked_id, linked) if linked else (tournament_id, tournament)
+
+
 def _get_club(club_id: str) -> dict | None:
     response = supabase.table("clubs").select("*").eq("id", club_id).maybe_single().execute()
     return response.data if response is not None else None
@@ -80,6 +99,10 @@ def _in_range(handicap, min_handicap, max_handicap) -> bool:
 
 
 def list_entrants_for_tournament(tournament_id: str) -> list[dict]:
+    tournament = _get_tournament(tournament_id)
+    if tournament:
+        tournament_id, tournament = _resolve_shared_roster(tournament_id, tournament)
+
     response = (
         supabase
         .table("tournament_entrants")
@@ -106,6 +129,7 @@ def enter_tournament(tournament_id: str, player_id: str, handicap_source: str | 
     tournament = _get_tournament(tournament_id)
     if not tournament:
         raise TournamentNotFoundError("Tournament not found.")
+    tournament_id, tournament = _resolve_shared_roster(tournament_id, tournament)
 
     existing_response = (
         supabase
@@ -162,6 +186,10 @@ def enter_tournament(tournament_id: str, player_id: str, handicap_source: str | 
 
 
 def withdraw_entrant(tournament_id: str, player_id: str) -> dict | None:
+    tournament = _get_tournament(tournament_id)
+    if tournament:
+        tournament_id, tournament = _resolve_shared_roster(tournament_id, tournament)
+
     response = (
         supabase
         .table("tournament_entrants")
@@ -181,6 +209,8 @@ def _respond_to_entrant(tournament_id: str, player_id: str, admin_id: str, new_s
     club = _get_club(tournament["club_id"])
     if not club or str(club.get("club_admin")) != admin_id:
         raise NotClubAdminError("Only this club's admin can respond to tournament applications.")
+
+    tournament_id, tournament = _resolve_shared_roster(tournament_id, tournament)
 
     response = (
         supabase
@@ -213,6 +243,8 @@ def admin_add_entrant(tournament_id: str, player_id: str, admin_id: str) -> dict
     club = _get_club(tournament["club_id"])
     if not club or str(club.get("club_admin")) != admin_id:
         raise NotClubAdminError("Only this club's admin can add entrants.")
+
+    tournament_id, tournament = _resolve_shared_roster(tournament_id, tournament)
 
     existing_response = (
         supabase
@@ -270,6 +302,7 @@ def admin_remove_entrant(tournament_id: str, player_id: str, admin_id: str) -> d
     if not club or str(club.get("club_admin")) != admin_id:
         raise NotClubAdminError("Only this club's admin can remove entrants.")
 
+    tournament_id, tournament = _resolve_shared_roster(tournament_id, tournament)
     return withdraw_entrant(tournament_id, player_id)
 
 
@@ -290,6 +323,8 @@ def set_entrant_handicap_override(
     club = _get_club(tournament["club_id"])
     if not club or str(club.get("club_admin")) != admin_id:
         raise NotClubAdminError("Only this club's admin can override an entrant's handicap.")
+
+    tournament_id, tournament = _resolve_shared_roster(tournament_id, tournament)
 
     if handicap_override is not None and not (_MIN_HANDICAP_OVERRIDE <= handicap_override <= MAX_HANDICAP_INDEX):
         raise InvalidHandicapOverrideError(

@@ -1110,7 +1110,34 @@ def _handicap_stepper(id_prefix, label):
     )
 
 
-def _tournament_modal():
+def _link_target_options(tournaments, own_id=None):
+    """Other tournaments in this club eligible to link a new (or, from
+    the edit modal, existing) tournament to -- excludes itself, any
+    tournament that's already a *shadow* of something else (linking to a
+    shadow would make "which one actually owns the data" ambiguous -- see
+    backend/services/tournaments.py's _validate_link), and any tournament
+    that already has a shadow of its own (the 1:1 rule same function
+    enforces). tournaments here is list_tournaments_for_club's own
+    response shape, so linked_tournament_id/linked_from_tournament_id are
+    already on every row -- no extra fetch needed just to build this
+    list."""
+    options = []
+    for t in (tournaments or []):
+        if str(t["id"]) == str(own_id):
+            continue
+        if t.get("linked_tournament_id"):
+            continue
+        linked_from = t.get("linked_from_tournament_id")
+        # A tournament that already has a shadow is excluded -- unless
+        # that shadow is own_id itself (editing that same shadow, whose
+        # current link should stay selectable/re-savable).
+        if linked_from and str(linked_from) != str(own_id):
+            continue
+        options.append({"label": f"{t['name']} ({t.get('format', '')})", "value": t["id"]})
+    return options
+
+
+def _tournament_modal(tournaments=None):
     return dbc.Modal(
         id="tournament-modal",
         is_open=False,
@@ -1136,6 +1163,31 @@ def _tournament_modal():
                         ],
                     ),
                     html.Div(
+                        className="t3g-modal-section",
+                        children=[
+                            html.Label(
+                                "Link to another tournament (optional)", className="t3g-modal-label"
+                            ),
+                            dcc.Dropdown(
+                                id="tournament-link-input",
+                                options=_link_target_options(tournaments),
+                                placeholder="Not linked -- runs independently",
+                            ),
+                            html.P(
+                                "Linking shares the entrant list, tee times, live rounds, and player "
+                                "handicaps (including any manual overrides) with the tournament you pick -- "
+                                "e.g. a Pairs Better Ball event run over the same field as an existing "
+                                "individual comp. Who can enter, the handicap range, and tee time grouping "
+                                "below are inherited from that tournament too, so they're hidden here once "
+                                "you pick one -- only Format and Handicap allowance stay this tournament's "
+                                "own. A linked tournament doesn't set up its own rounds below either; it "
+                                "plays whatever rounds the tournament it's linked to has.",
+                                className="t3g-modal-hint",
+                            ),
+                        ],
+                    ),
+                    html.Div(
+                        id="tournament-entry-section",
                         className="t3g-modal-section-row",
                         children=[
                             html.Div(
@@ -1168,6 +1220,7 @@ def _tournament_modal():
                         ],
                     ),
                     html.Div(
+                        id="tournament-grouping-section",
                         className="t3g-modal-section",
                         children=[
                             html.Label(
@@ -1196,6 +1249,7 @@ def _tournament_modal():
                         ],
                     ),
                     html.Div(
+                        id="tournament-rounds-section",
                         className="t3g-modal-section",
                         children=[
                             html.Label("Rounds", className="t3g-modal-label t3g-tournament-rounds-label"),
@@ -1499,7 +1553,7 @@ def layout(slug=None, tab=None, **kwargs):
                 style=admin_style,
                 children=_admin_tab_panel(club, player_id, is_admin),
             ),
-            _tournament_modal(),
+            _tournament_modal(tournaments),
             dcc.Location(id="tournament-redirect", refresh=True),
             dbc.Modal(
                 id="club-invite-sent-modal",
@@ -1834,6 +1888,7 @@ def adjust_tournament_max_handicap(plus_clicks, minus_clicks, current):
     Output("tournament-min-handicap-display", "children", allow_duplicate=True),
     Output("tournament-max-handicap-store", "data", allow_duplicate=True),
     Output("tournament-max-handicap-display", "children", allow_duplicate=True),
+    Output("tournament-link-input", "value"),
     Input("tournament-create-button", "n_clicks"),
     Input("tournament-cancel", "n_clicks"),
     Input("tournament-submit", "n_clicks"),
@@ -1848,6 +1903,7 @@ def adjust_tournament_max_handicap(plus_clicks, minus_clicks, current):
     State({"type": "tournament-round-course", "index": ALL}, "value"),
     State({"type": "tournament-round-tee", "index": ALL}, "value"),
     State({"type": "tournament-round-group-size", "index": ALL}, "value"),
+    State("tournament-link-input", "value"),
     State("club-id-store", "data"),
     State("_pages_location", "pathname"),
     prevent_initial_call=True,
@@ -1856,18 +1912,19 @@ def handle_tournament_modal(
     open_clicks, cancel_clicks, submit_clicks,
     name, format_value, entry_mode, grouping_method, handicap_allowance, min_handicap, max_handicap,
     round_dates, round_courses, round_tees, round_group_sizes,
+    linked_tournament_id,
     club_id, current_pathname,
 ):
     triggered_id = dash.ctx.triggered_id
-    no_update_rest = (dash.no_update,) * 10
+    no_update_rest = (dash.no_update,) * 11
 
     if triggered_id == "tournament-create-button":
         # Fresh modal every time it's opened -- one blank round row, no
-        # leftover name/format/entry/handicap-range settings from a
+        # leftover name/format/entry/handicap-range/link settings from a
         # previous cancelled attempt.
         return (
             True, "", dash.no_update, [_tournament_round_row(0)],
-            None, None, "self", "random", 100, None, "–", None, "–",
+            None, None, "self", "random", 100, None, "–", None, "–", None,
         )
 
     if triggered_id == "tournament-cancel":
@@ -1881,23 +1938,30 @@ def handle_tournament_modal(
         if min_handicap is not None and max_handicap is not None and min_handicap > max_handicap:
             return (True, "Min handicap can't be greater than max.", dash.no_update) + no_update_rest
 
+        # A tournament linked to another plays *that* tournament's rounds
+        # -- see linked_tournament_id's own comment in the link dropdown
+        # above -- so its own Rounds section (hidden client-side by
+        # toggle_tournament_rounds_section, but still validated here
+        # rather than trusted to have stayed hidden) is skipped entirely
+        # rather than requiring at least one round.
         rounds_payload = []
-        for round_date, course_id, tee_id, group_size in zip(
-            round_dates, round_courses, round_tees, round_group_sizes
-        ):
-            if not round_date or not course_id or not tee_id:
-                return (
-                    True, "Fill in the date, course, and tees for every round.", dash.no_update,
-                ) + no_update_rest
-            rounds_payload.append({
-                "round_date": round_date,
-                "course_id": course_id,
-                "tee_id": tee_id,
-                "group_size": group_size or _DEFAULT_GROUP_SIZE,
-            })
+        if not linked_tournament_id:
+            for round_date, course_id, tee_id, group_size in zip(
+                round_dates, round_courses, round_tees, round_group_sizes
+            ):
+                if not round_date or not course_id or not tee_id:
+                    return (
+                        True, "Fill in the date, course, and tees for every round.", dash.no_update,
+                    ) + no_update_rest
+                rounds_payload.append({
+                    "round_date": round_date,
+                    "course_id": course_id,
+                    "tee_id": tee_id,
+                    "group_size": group_size or _DEFAULT_GROUP_SIZE,
+                })
 
-        if not rounds_payload:
-            return (True, "Add at least one round.", dash.no_update) + no_update_rest
+            if not rounds_payload:
+                return (True, "Add at least one round.", dash.no_update) + no_update_rest
 
         player_id = session.get("player_id")
         response = requests.post(
@@ -1913,6 +1977,7 @@ def handle_tournament_modal(
                 "min_handicap": min_handicap,
                 "max_handicap": max_handicap,
                 "rounds": rounds_payload,
+                "linked_tournament_id": linked_tournament_id,
             },
         )
 
@@ -1936,3 +2001,23 @@ def handle_tournament_modal(
         return (True, detail, dash.no_update) + no_update_rest
 
     return (dash.no_update, dash.no_update, dash.no_update) + no_update_rest
+
+@callback(
+    Output("tournament-rounds-section", "style"),
+    Output("tournament-entry-section", "style"),
+    Output("tournament-grouping-section", "style"),
+    Input("tournament-link-input", "value"),
+)
+def toggle_tournament_rounds_section(linked_tournament_id):
+    # A tournament linked to another plays that tournament's rounds, and
+    # inherits its entry mode/handicap range/tee time grouping too (see
+    # the link dropdown's own hint text above and backend/services/
+    # tournaments.py's _attach_link_info, which is what actually applies
+    # that inheritance to what gets saved/displayed) -- so all three
+    # sections are just not relevant to fill in once a link is picked.
+    # This is only the client-side convenience of not showing irrelevant
+    # sections; _attach_link_info's overlay is the real enforcement, so
+    # nothing bad happens if this callback somehow doesn't fire before
+    # submit.
+    style = {"display": "none"} if linked_tournament_id else {}
+    return style, style, style
