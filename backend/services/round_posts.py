@@ -324,33 +324,38 @@ def _detailed_player_scorecard(round_data: dict, player_id: str) -> dict | None:
     }
 
 
-def hydrate_round_post_card(row: dict, viewer_player_id: str | None = None) -> dict:
+def hydrate_round_post_card(
+    row: dict,
+    viewer_player_id: str | None = None,
+    viewer_friend_ids: set[str] | None = None,
+) -> dict:
     """Builds one feed-ready card from a round_posts row -- shared by
     both the home feed (list_home_feed_posts) and the club feed
     (club_posts.get_club_feed, for the round posts that match one of its
     shared_club_ids), so the two surfaces render the exact same round the
     exact same way rather than drifting.
 
-    Always carries the group summary and any photos, same as before this
-    feature existed. Also always carries `all_details` -- every player's
-    own hole-by-hole scorecard and stats (score to par, net, Stableford,
-    putts, fairways, GIR), one entry per player_ids, in that order. This
-    used to be gated to only the viewer's own round (`viewer_detail`) on
-    the theory that a friend watching a round they didn't play in has no
-    personal stake in anyone's detail -- but score-to-par, putts,
-    fairways and GIR aren't the *viewer's* numbers, they're the *round
-    player's* numbers (see _round_scoring_stats, which always takes that
-    player's own handicap, never the viewer's), so there's no privacy or
-    correctness reason to hide them from a friend just watching. home.py
-    cycles through this list via the scorecard slide's prev/next arrows.
-    Net/Stableford still only mean something for players who have a
-    handicap on file, same as before -- that's unaffected by who's
-    looking.
-
-    `solo_detail` and `viewer_detail` are kept alongside `all_details`
-    for the handicap-change badge, which IS still specific to the actual
-    viewer (a friend watching doesn't get shown a stranger's handicap
-    delta) -- everything else should read from all_details instead."""
+    Always carries the group summary (who played, what they shot in
+    total -- used only for the post's header text, e.g. "dom buxton and
+    1 other played a round") and any photos. Every card additionally
+    shows exactly ONE player's full hole-by-hole scorecard and stats --
+    never a "click to page through everyone" list, and never a bare
+    group summary standing in for it:
+    - A solo round only ever has one player, so there's nothing to
+      choose (`solo_detail`).
+    - A multiplayer round you played in shows your own detail
+      (`viewer_detail`) -- the handicap-change badge only ever attaches
+      here too, since it's specific to your own round.
+    - A multiplayer round you *didn't* play in -- a friend's round --
+      shows whichever player in it is actually your friend
+      (`subject_detail`), preferring the round's owner (see is_owner on
+      _group_scorecard_summary's players) when the owner is themselves
+      one of your friends, otherwise falling back to the first friend
+      player found. viewer_friend_ids only matters for this branch --
+      list_round_posts_for_club has no single "viewer" to personalize
+      for (every club member sees the same page), so it passes neither
+      viewer_player_id nor viewer_friend_ids and always gets the
+      round's owner by default."""
     from backend.services.rounds import get_round
 
     round_id = row["round_id"]
@@ -359,6 +364,7 @@ def hydrate_round_post_card(row: dict, viewer_player_id: str | None = None) -> d
     round_data = get_round(round_id)
 
     is_multiplayer = len(player_ids) > 1
+    scorecard = _group_scorecard_summary(round_data, player_ids) if round_data else None
 
     card = {
         "post_type": "scorecard",
@@ -369,32 +375,35 @@ def hydrate_round_post_card(row: dict, viewer_player_id: str | None = None) -> d
         "author_photo_url": None,
         "is_multiplayer": is_multiplayer,
         "photos": [p["image_url"] for p in _list_round_post_photos(round_id)],
-        "scorecard": _group_scorecard_summary(round_data, player_ids) if round_data else None,
-        "all_details": (
-            [
-                detail
-                for detail in (
-                    _detailed_player_scorecard(round_data, pid) for pid in player_ids
-                )
-                if detail is not None
-            ]
-            if round_data and player_ids
-            else []
-        ),
+        "scorecard": scorecard,
     }
 
-    if not is_multiplayer and round_data and player_ids:
+    if not round_data or not player_ids:
+        return card
+
+    if not is_multiplayer:
         # A solo round has no group-vs-personal distinction to protect --
         # there's only one player, so "the group scorecard" and "that
-        # player's own detail" are the same information. Posted with the
-        # full detail already attached (not viewer-gated the way a
-        # multiplayer round's is below), matching "posts immediately with
-        # the extra detailed scorecard" for the solo case.
+        # player's own detail" are the same information.
         card["solo_detail"] = _detailed_player_scorecard(round_data, player_ids[0])
-    elif viewer_player_id and viewer_player_id in player_ids and round_data:
+        return card
+
+    if viewer_player_id and viewer_player_id in player_ids:
         card["viewer_detail"] = _detailed_player_scorecard(round_data, viewer_player_id)
         card["viewer_handicap_change"] = metadata.get("handicap_changes", {}).get(viewer_player_id)
+        return card
 
+    scorecard_players = (scorecard or {}).get("players", [])
+    owner = next((p for p in scorecard_players if p.get("is_owner")), None)
+    owner_id = owner["player_id"] if owner else player_ids[0]
+
+    subject_id = owner_id
+    if viewer_friend_ids:
+        friend_player_ids = [pid for pid in player_ids if pid in viewer_friend_ids]
+        if friend_player_ids:
+            subject_id = owner_id if owner_id in friend_player_ids else friend_player_ids[0]
+
+    card["subject_detail"] = _detailed_player_scorecard(round_data, subject_id)
     return card
 
 
@@ -453,12 +462,12 @@ def list_home_feed_posts(player_id: str, limit: int = 40) -> list[dict]:
         row_player_ids = (row.get("metadata") or {}).get("player_ids", [])
         if not (set(row_player_ids) & relevant_ids):
             continue
-        # Only personalize with this viewer's own detail/handicap change
-        # when they actually played it -- a friend's round still shows
-        # the group scorecard, just without your own per-hole breakdown
-        # tacked on (you weren't there to have one).
+        # Personalize with this viewer's own detail/handicap change when
+        # they actually played it; otherwise hydrate_round_post_card picks
+        # whichever player in the round is one of these friend_ids as the
+        # single scorecard/stats this post shows (see its own docstring).
         viewer_id = player_id if player_id in row_player_ids else None
-        posts.append(hydrate_round_post_card(row, viewer_player_id=viewer_id))
+        posts.append(hydrate_round_post_card(row, viewer_player_id=viewer_id, viewer_friend_ids=friend_ids))
         seen_round_ids.add(row["round_id"])
 
     # Own home feed mixes posts from every club you're in together, unlike
