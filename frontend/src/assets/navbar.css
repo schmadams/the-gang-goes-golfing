@@ -1,26 +1,14 @@
 /* target path: frontend/src/assets/navbar.css (full replacement)
    Dash automatically finds and loads anything in an assets/ folder next to
-   app.py — no need to link this manually.
-
-   Rebuilt flat and theme-following, replacing the old permanently-dark
-   navy (#1e2a47) bar: the real sharplink.com header has no background of
-   its own at all, it just floats transparently over whatever page is
-   behind it (see theme.css's own header comment for the measured
-   values this whole app's flat redesign is built from). This bar now
-   does the same thing with var(--t3g-bg) plus a hairline border instead
-   of a fixed dark slab, so it reads as part of the same page instead of
-   a separate colored strip bolted on top -- and so its own text picks
-   up var(--t3g-ink)/var(--t3g-muted) instead of hardcoded white, which
-   is what was making light mode unreadable up here specifically. */
+   app.py — no need to link this manually. */
 
 .t3g-navbar {
-    background: var(--t3g-bg);
-    border-top: 3px solid var(--t3g-accent);
-    border-bottom: 1px solid var(--t3g-border);
+    background-color: #1e2a47;
+    border-top: 6px solid var(--t3g-accent);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
     position: sticky;
     top: 0;
     z-index: 1000;
-    transition: background 0.15s ease, border-color 0.15s ease;
 }
 
 .t3g-navbar-inner {
@@ -33,14 +21,14 @@
 }
 
 .t3g-brand {
-    font-size: 1.5rem;
-    font-weight: 500;
-    letter-spacing: -0.01em;
+    font-size: 1.6rem;
+    font-weight: 800;
+    letter-spacing: 0.03em;
     text-decoration: none;
 }
 
 .t3g-brand-part {
-    color: var(--t3g-ink);
+    color: #ffffff;
 }
 
 .t3g-brand-accent {
@@ -49,7 +37,7 @@
 
 .t3g-nav-links {
     display: flex;
-    gap: 0.35rem;
+    gap: 2.5rem;
 }
 
 /* Below the phone-width breakpoint the bottom nav (layouts/bottom_nav.py,
@@ -75,32 +63,53 @@
     #live-round-indicator {
         display: none;
     }
+
+    /* The sign-off pill has no bottom-nav equivalent (unlike the live-round
+       indicator above, which is redundant with the bottom nav's Play tab),
+       so it can't just be hidden here -- it's the only mobile cue that a
+       round is waiting on the player's approval. Its long label ("1 ROUND
+       NEEDS YOUR SIGN-OFF") was instead forcing an awkward squeeze between
+       the brand and the sign-out button. Letting both rows wrap (rather
+       than clip or overflow) means the pill drops to its own row, or wraps
+       its own text onto two lines, whichever the actual viewport needs,
+       instead of one hardcoded breakpoint guess. */
+    .t3g-navbar-inner {
+        flex-wrap: wrap;
+        row-gap: 0.5rem;
+    }
+
+    .t3g-navbar-actions {
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 0.5rem;
+    }
+
+    .t3g-signoff-indicator {
+        font-size: 0.62rem;
+        padding: 0.35rem 0.7rem 0.35rem 0.55rem;
+        gap: 0.35rem;
+        white-space: normal;
+        max-width: 240px;
+    }
+
+    .t3g-signoff-dot {
+        flex-shrink: 0;
+    }
 }
 
-/* Archivo Narrow, uppercase, tracked out -- matches the real site's own
-   nav link measurement (weight 500, 13px, 1.04px letter-spacing) rather
-   than the old bold-white Archivo label. Each link also sits in its own
-   flat, low-opacity box (var(--t3g-surface-raised)) -- the real site's
-   own nav items each sit in a subtle translucent grey chip the same way
-   (confirmed via devtools on their own secondary-button styling), rather
-   than floating as plain text like this app's first pass did. */
 .t3g-nav-link {
-    font-family: "Archivo Narrow", "Archivo", sans-serif;
-    color: var(--t3g-muted) !important;
-    font-weight: 500;
+    color: #ffffff !important;
+    font-weight: 700;
     text-transform: uppercase;
-    font-size: 0.8125rem;
-    letter-spacing: 0.065em;
+    font-size: 0.85rem;
+    letter-spacing: 0.03em;
     text-decoration: none !important;
     display: inline-block;
-    background: var(--t3g-surface-raised);
-    padding: 0.5rem 0.85rem;
-    transition: color 0.15s ease, background 0.15s ease;
+    transition: transform 0.15s ease;
 }
 
 .t3g-nav-link:hover {
-    color: var(--t3g-ink) !important;
-    background: var(--t3g-surface);
+    transform: scale(1.12);
 }
 
 .t3g-navbar-left {
@@ -115,48 +124,38 @@
     gap: 1.25rem;
 }
 
-/* Ghost button, flat -- same shape language as the real site's own
-   "CONTINUE" button (Archivo Narrow, uppercase, 0 radius, no fill),
-   rather than the old white-bordered rounded-pill treatment. */
 .t3g-signout-button {
     background: transparent;
-    border: 1px solid var(--t3g-border-strong);
-    color: var(--t3g-ink);
-    font-family: "Archivo Narrow", "Archivo", sans-serif;
-    font-weight: 500;
+    border: 1px solid rgba(255, 255, 255, 0.6);
+    color: #ffffff;
+    font-weight: 700;
     font-size: 0.75rem;
     text-transform: uppercase;
-    letter-spacing: 0.065em;
+    letter-spacing: 0.03em;
     padding: 0.45rem 1rem;
-    border-radius: var(--t3g-radius-md);
+    border-radius: 999px;
     cursor: pointer;
     transition: background 0.15s ease, border-color 0.15s ease;
 }
 
 .t3g-signout-button:hover {
-    background: var(--t3g-surface-raised);
-    border-color: var(--t3g-ink);
+    background: rgba(255, 255, 255, 0.15);
+    border-color: #ffffff;
 }
 
 .t3g-live-round-indicator {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    /* var(--t3g-danger-bg/text), not a hardcoded rgba(230,57,70,...)+
-       white pair -- this pill sits inside the navbar, which now follows
-       the page theme instead of staying permanently dark (see this
-       file's own header comment), so its own colors need to flip with
-       light/dark too rather than assuming a dark backdrop is always
-       behind it. */
-    color: var(--t3g-danger-text) !important;
+    color: #ffffff !important;
     font-weight: 700;
     font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.03em;
     text-decoration: none !important;
-    background: var(--t3g-danger-bg);
-    border: none;
-    border-radius: var(--t3g-radius-md);
+    background: rgba(230, 57, 70, 0.15);
+    border: 1px solid rgba(230, 57, 70, 0.5);
+    border-radius: 999px;
     padding: 0.4rem 0.9rem 0.4rem 0.7rem;
     transition: transform 0.15s ease;
 }

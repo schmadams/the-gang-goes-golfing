@@ -360,6 +360,32 @@ def _summary_row(label, hole_numbers, reference_holes, players, holes_by_player,
     )
 
 
+def _scorecard_player_header_cell(p):
+    """Two stacked lines (first name / surname) instead of one long "First
+    Last" string -- the single biggest thing forcing a wide Score column
+    per player, which is what pushed a normal-sized group past the
+    screen width on mobile (see .t3g-scorecard-player-line in
+    live_round.css, and the mobile shrink block right below it). A
+    nickname has no natural two-part split, so it's kept as a single
+    line instead -- nicknames tend to be short anyway."""
+    nickname = p.get("nickname")
+    first_name = p.get("first_name") or ""
+    surname = p.get("surname") or ""
+    you_suffix = " (you)" if p.get("is_viewer") else ""
+
+    if nickname:
+        lines = [html.Span(nickname + you_suffix)]
+    elif first_name or surname:
+        lines = [
+            html.Span(first_name, className="t3g-scorecard-player-line"),
+            html.Span(surname + you_suffix, className="t3g-scorecard-player-line"),
+        ]
+    else:
+        lines = [html.Span("Player" + you_suffix)]
+
+    return html.Th(lines, className="t3g-scorecard-player-col")
+
+
 def _scorecard_table(players, owner_player, is_manual, is_owner_of_round):
     """One shared scorecard table for the whole group, instead of a
     separate full scorecard stacked per player -- Hole/Yards/S.I./Par are
@@ -384,15 +410,7 @@ def _scorecard_table(players, owner_player, is_manual, is_owner_of_round):
                     html.Th("Score", colSpan=len(players), className="t3g-scorecard-score-group"),
                 ]
             ),
-            html.Tr(
-                [
-                    html.Th(
-                        _player_display_name(p) + (" (you)" if p.get("is_viewer") else ""),
-                        className="t3g-scorecard-player-col",
-                    )
-                    for p in players
-                ]
-            ),
+            html.Tr([_scorecard_player_header_cell(p) for p in players]),
         ]
     )
 
@@ -604,6 +622,15 @@ def render_live_round_body(round_data, player_id, initial_view="holebyhole"):
         dcc.Store(id="live-round-owner-id-store", data=owner_player["player_id"] if owner_player else None),
         dcc.Store(id="live-round-players-store", data=players_store_data),
         dcc.Store(id="live-round-active-hole-store"),
+        # Written by save_score right after it applies a hole update to
+        # live-round-players-store, read by persist_score (play.py) -- the
+        # actual PATCH to the backend runs off this store's change instead
+        # of inline in save_score, so the modal can close/auto-advance to
+        # the next player immediately instead of waiting on that network
+        # round trip first. See persist_score's own docstring for the full
+        # reasoning (same decoupling as tournament.py's pairings board
+        # save).
+        dcc.Store(id="live-round-pending-save-store"),
         dcc.Store(id="live-round-view-mode-store", data=effective_initial_view),
         dcc.Store(id="live-round-holeview-hole-store", data=initial_hole),
         html.Div(
@@ -742,46 +769,21 @@ def render_live_round_body(round_data, player_id, initial_view="holebyhole"):
                 dbc.ModalFooter(
                     [
                         dbc.Button("Cancel", id="live-round-score-cancel", color="secondary"),
-                        # "NR" is a third save action, tournament rounds
-                        # only -- it saves this one hole as No Return
-                        # regardless of whatever's currently sitting in the
-                        # shots/putts steppers, instead of the numeric
-                        # payload "Enter" sends. See save_score in
-                        # live_round.py, which branches on which of these
-                        # two buttons actually triggered it -- everything
-                        # downstream of that (closing the modal, Hole by
-                        # Hole auto-advance, the hole-18 switch to Full
-                        # Scorecard) is identical either way, since marking
-                        # a hole NR is "done with this hole" exactly the
-                        # same as entering a real score is.
-                        #
-                        # BUG FIX: this button used to be left OUT of the
-                        # tree entirely for a casual round (the `if
-                        # is_tournament_round else []` this replaced), not
-                        # just hidden -- but play.py's save_score callback
-                        # always declares
-                        # Input("live-round-score-nr-save", "n_clicks")
-                        # unconditionally, since one callback has to handle
-                        # both buttons for whichever hole/round is
-                        # currently open. Dash requires every id named in a
-                        # callback's Input/State/Output list to exist
-                        # somewhere in the CURRENT layout -- for a casual
-                        # round, this one never did, so the very first
-                        # score save on a casual round threw "a nonexistent
-                        # object was used in an Input of a Dash callback"
-                        # and nothing saved. Rendering the button always,
-                        # and hiding it with a style instead of omitting
-                        # it, keeps the id permanently present for the
-                        # callback graph while still keeping it invisible
-                        # (and unclickable, via pointer-events) outside a
-                        # tournament round.
-                        dbc.Button(
-                            "NR",
-                            id="live-round-score-nr-save",
-                            color="warning",
-                            outline=True,
-                            style={} if is_tournament_round else {"display": "none"},
-                        ),
+                    ]
+                    # "NR" is a third save action, tournament rounds only --
+                    # it saves this one hole as No Return regardless of
+                    # whatever's currently sitting in the shots/putts
+                    # steppers, instead of the numeric payload "Enter"
+                    # sends. See save_score in live_round.py, which
+                    # branches on which of these two buttons actually
+                    # triggered it -- everything downstream of that
+                    # (closing the modal, Hole by Hole auto-advance, the
+                    # hole-18 switch to Full Scorecard) is identical either
+                    # way, since marking a hole NR is "done with this hole"
+                    # exactly the same as entering a real score is.
+                    + ([dbc.Button("NR", id="live-round-score-nr-save", color="warning", outline=True)]
+                       if is_tournament_round else [])
+                    + [
                         dbc.Button(
                             "Enter",
                             id="live-round-score-save",

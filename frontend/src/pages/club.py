@@ -504,6 +504,17 @@ _TOURNAMENT_HANDICAP_ALLOWANCE_OPTIONS = [
     {"label": "75%", "value": 75},
     {"label": "100%", "value": 100},
 ]
+# Which per-hole metric decides the better-ball winner in a 2bbb/4bbb
+# tournament -- only meaningful for those two formats (see
+# toggle_tournament_pairs_scoring_style_section, which hides this whole
+# section for every other format), same reasoning as
+# VALID_PAIRS_SCORING_STYLES in backend/models/tournament.py.
+_TOURNAMENT_PAIRS_SCORING_STYLE_OPTIONS = [
+    {"label": "Stableford", "value": "stableford"},
+    {"label": "Nett", "value": "nett"},
+    {"label": "Gross", "value": "gross"},
+]
+_PAIRS_FORMATS = ("2bbb", "4bbb")
 # Group size lives per round (a comp can run 3-balls one week, 4-balls the
 # next), so it's a small dropdown on each round row rather than a
 # tournament-wide setting like grouping method.
@@ -1249,6 +1260,22 @@ def _tournament_modal(tournaments=None):
                         ],
                     ),
                     html.Div(
+                        id="tournament-pairs-scoring-style-section",
+                        className="t3g-modal-section",
+                        style={"display": "none"},
+                        children=[
+                            html.Label(
+                                "Pairs scoring style", className="t3g-modal-label t3g-tournament-rounds-label"
+                            ),
+                            dcc.RadioItems(
+                                id="tournament-pairs-scoring-style-input",
+                                options=_TOURNAMENT_PAIRS_SCORING_STYLE_OPTIONS,
+                                value="stableford",
+                                className="t3g-tournament-entry-mode",
+                            ),
+                        ],
+                    ),
+                    html.Div(
                         id="tournament-rounds-section",
                         className="t3g-modal-section",
                         children=[
@@ -1884,6 +1911,7 @@ def adjust_tournament_max_handicap(plus_clicks, minus_clicks, current):
     Output("tournament-entry-mode-input", "value"),
     Output("tournament-grouping-method-input", "value"),
     Output("tournament-handicap-allowance-input", "value"),
+    Output("tournament-pairs-scoring-style-input", "value"),
     Output("tournament-min-handicap-store", "data", allow_duplicate=True),
     Output("tournament-min-handicap-display", "children", allow_duplicate=True),
     Output("tournament-max-handicap-store", "data", allow_duplicate=True),
@@ -1897,6 +1925,7 @@ def adjust_tournament_max_handicap(plus_clicks, minus_clicks, current):
     State("tournament-entry-mode-input", "value"),
     State("tournament-grouping-method-input", "value"),
     State("tournament-handicap-allowance-input", "value"),
+    State("tournament-pairs-scoring-style-input", "value"),
     State("tournament-min-handicap-store", "data"),
     State("tournament-max-handicap-store", "data"),
     State({"type": "tournament-round-date", "index": ALL}, "date"),
@@ -1910,13 +1939,14 @@ def adjust_tournament_max_handicap(plus_clicks, minus_clicks, current):
 )
 def handle_tournament_modal(
     open_clicks, cancel_clicks, submit_clicks,
-    name, format_value, entry_mode, grouping_method, handicap_allowance, min_handicap, max_handicap,
+    name, format_value, entry_mode, grouping_method, handicap_allowance, pairs_scoring_style,
+    min_handicap, max_handicap,
     round_dates, round_courses, round_tees, round_group_sizes,
     linked_tournament_id,
     club_id, current_pathname,
 ):
     triggered_id = dash.ctx.triggered_id
-    no_update_rest = (dash.no_update,) * 11
+    no_update_rest = (dash.no_update,) * 12
 
     if triggered_id == "tournament-create-button":
         # Fresh modal every time it's opened -- one blank round row, no
@@ -1924,7 +1954,7 @@ def handle_tournament_modal(
         # previous cancelled attempt.
         return (
             True, "", dash.no_update, [_tournament_round_row(0)],
-            None, None, "self", "random", 100, None, "–", None, "–", None,
+            None, None, "self", "random", 100, "stableford", None, "–", None, "–", None,
         )
 
     if triggered_id == "tournament-cancel":
@@ -1974,6 +2004,7 @@ def handle_tournament_modal(
                 "entry_mode": entry_mode or "self",
                 "grouping_method": grouping_method or "random",
                 "handicap_allowance": handicap_allowance or 100,
+                "pairs_scoring_style": pairs_scoring_style or "stableford",
                 "min_handicap": min_handicap,
                 "max_handicap": max_handicap,
                 "rounds": rounds_payload,
@@ -2001,6 +2032,22 @@ def handle_tournament_modal(
         return (True, detail, dash.no_update) + no_update_rest
 
     return (dash.no_update, dash.no_update, dash.no_update) + no_update_rest
+
+
+@callback(
+    Output("tournament-pairs-scoring-style-section", "style"),
+    Input("tournament-format-input", "value"),
+)
+def toggle_tournament_pairs_scoring_style_section(format_value):
+    # Pairs scoring style only means anything for the two better-ball
+    # formats -- unlike entry/grouping/handicap-range, this isn't about
+    # link inheritance (pairs_scoring_style stays this tournament's own
+    # even when linked, same as format/handicap_allowance -- see
+    # backend/services/tournaments.py's _attach_link_info, which never
+    # overlays it), just about not showing an irrelevant control for
+    # Scratch/Stableford/Net/Texas Scramble.
+    return {} if format_value in _PAIRS_FORMATS else {"display": "none"}
+
 
 @callback(
     Output("tournament-rounds-section", "style"),

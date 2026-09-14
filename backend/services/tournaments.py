@@ -4,6 +4,7 @@ from backend.models.tournament import (
     VALID_ENTRY_MODES,
     VALID_GROUPING_METHODS,
     VALID_HANDICAP_ALLOWANCES,
+    VALID_PAIRS_SCORING_STYLES,
     VALID_TOURNAMENT_FORMATS,
     TournamentCreate,
     TournamentUpdate,
@@ -39,6 +40,10 @@ class InvalidGroupingMethodError(Exception):
 
 class InvalidHandicapAllowanceError(Exception):
     """Raised when handicap_allowance isn't one of VALID_HANDICAP_ALLOWANCES."""
+
+
+class InvalidPairsScoringStyleError(Exception):
+    """Raised when pairs_scoring_style isn't one of VALID_PAIRS_SCORING_STYLES."""
 
 
 class NoRoundsError(Exception):
@@ -295,6 +300,10 @@ def create_tournament(payload: TournamentCreate) -> dict:
         raise InvalidHandicapAllowanceError(
             f"Handicap allowance must be one of: {', '.join(str(v) for v in sorted(VALID_HANDICAP_ALLOWANCES))}."
         )
+    if payload.pairs_scoring_style not in VALID_PAIRS_SCORING_STYLES:
+        raise InvalidPairsScoringStyleError(
+            f"Pairs scoring style must be one of: {', '.join(sorted(VALID_PAIRS_SCORING_STYLES))}."
+        )
     linked_tournament_id = str(payload.linked_tournament_id) if payload.linked_tournament_id else None
     _validate_link(str(payload.club_id), None, linked_tournament_id)
     # A shadow tournament (linked_tournament_id set) plays its linked
@@ -317,6 +326,7 @@ def create_tournament(payload: TournamentCreate) -> dict:
             "max_handicap": payload.max_handicap,
             "grouping_method": payload.grouping_method,
             "handicap_allowance": payload.handicap_allowance,
+            "pairs_scoring_style": payload.pairs_scoring_style,
             "linked_tournament_id": linked_tournament_id,
         })
         .execute()
@@ -377,6 +387,10 @@ def update_tournament(tournament_id: str, payload: TournamentUpdate) -> dict:
         raise InvalidHandicapAllowanceError(
             f"Handicap allowance must be one of: {', '.join(str(v) for v in sorted(VALID_HANDICAP_ALLOWANCES))}."
         )
+    if payload.pairs_scoring_style not in VALID_PAIRS_SCORING_STYLES:
+        raise InvalidPairsScoringStyleError(
+            f"Pairs scoring style must be one of: {', '.join(sorted(VALID_PAIRS_SCORING_STYLES))}."
+        )
 
     linked_tournament_id = str(payload.linked_tournament_id) if payload.linked_tournament_id else None
     _validate_link(str(tournament["club_id"]), tournament_id, linked_tournament_id)
@@ -415,6 +429,7 @@ def update_tournament(tournament_id: str, payload: TournamentUpdate) -> dict:
             "max_handicap": payload.max_handicap,
             "grouping_method": payload.grouping_method,
             "handicap_allowance": payload.handicap_allowance,
+            "pairs_scoring_style": payload.pairs_scoring_style,
             "linked_tournament_id": linked_tournament_id,
         })
         .eq("id", tournament_id)
@@ -850,41 +865,59 @@ def get_tournament_leaderboard(tournament_id: str, round_id: str) -> dict:
         "players": players,
     }
 
-def _per_hole_stableford_points(
-    scores_by_hole: dict[int, int], holes_meta: dict[int, dict], handicap: float | None
+def _per_hole_pair_metric(
+    scores_by_hole: dict[int, int], holes_meta: dict[int, dict], handicap: float | None, style: str
 ) -> list[int | None]:
-    """Raw (non-cumulative) Stableford points for holes 1-18, None for any
+    """Raw (non-cumulative) per-hole metric for holes 1-18, None for any
     hole with no recorded strokes or no par on record -- the building
     block get_tournament_pairs_leaderboard needs for better-ball, where
-    each hole's pair score is the *higher of the two partners' points on
-    that specific hole*. Not reusable from _compute_leaderboard_line's
-    holes_stableford output above, which is a running cumulative total
-    through each hole (right for an individual leaderboard line, but
-    taking the max of two cumulative totals hole-by-hole is a different,
-    wrong number from summing the max of two per-hole points -- the
-    latter is the actual better-ball rule)."""
-    points: list[int | None] = []
+    each hole's pair score is the *better of the two partners' metric on
+    that specific hole* (higher for Stableford points, lower for nett/
+    gross strokes -- see VALID_PAIRS_SCORING_STYLES). Not reusable from
+    _compute_leaderboard_line's holes_stableford output above, which is a
+    running cumulative total through each hole (right for an individual
+    leaderboard line, but combining two cumulative totals hole-by-hole is
+    a different, wrong number from combining the two per-hole metrics --
+    the latter is the actual better-ball rule).
+
+    "gross" is simply the raw strokes played. "nett"/"stableford" both
+    need the same handicap-adjusted net strokes for the hole first --
+    they just do something different with it once they have it (nett IS
+    that net-strokes number; stableford converts it to points against
+    par)."""
+    values: list[int | None] = []
     for hole_number in range(1, 19):
         strokes = scores_by_hole.get(hole_number)
         hole = holes_meta.get(hole_number)
         par = hole.get("par") if hole else None
         if strokes is None or par is None:
-            points.append(None)
+            values.append(None)
+            continue
+        if style == "gross":
+            values.append(strokes)
             continue
         stroke_index = hole.get("stroke_index")
         hcp_strokes = _hole_handicap_strokes(handicap, stroke_index)
         net_strokes = strokes - hcp_strokes
-        points.append(_stableford_points(net_strokes, par))
-    return points
+        if style == "nett":
+            values.append(net_strokes)
+        else:
+            values.append(_stableford_points(net_strokes, par))
+    return values
 
 
 def get_tournament_pairs_leaderboard(tournament_id: str, round_id: str) -> dict:
     """Better-ball pairs leaderboard for one round of a *pairs* tournament
     (format 2bbb/4bbb) -- same live-poll shape as get_tournament_leaderboard
     above, but grouped into this tournament's own tournament_pairs instead
-    of one row per player. Each hole's pair score is the higher of the two
-    partners' individual Stableford points on that specific hole (standard
-    better-ball), summed across the round for the total.
+    of one row per player. Each hole's pair score is the better of the two
+    partners' individual per-hole metric on that specific hole (standard
+    better-ball), combined across the round for the total -- which metric
+    depends on the tournament's pairs_scoring_style (see
+    VALID_PAIRS_SCORING_STYLES and _per_hole_pair_metric): Stableford
+    points (higher wins each hole, higher total wins the pairs
+    competition -- the original, still-default behavior), nett strokes,
+    or gross strokes (lower wins each hole, lower total wins, for both).
 
     A pairs tournament linked to another (see tournaments.
     linked_tournament_id) has no entrants/rounds of its own -- this reads
@@ -903,7 +936,7 @@ def get_tournament_pairs_leaderboard(tournament_id: str, round_id: str) -> dict:
     round_response = (
         supabase
         .table("tournament_rounds")
-        .select("*, tournaments(handicap_allowance)")
+        .select("*, tournaments(handicap_allowance, pairs_scoring_style)")
         .eq("id", round_id)
         .maybe_single()
         .execute()
@@ -912,7 +945,12 @@ def get_tournament_pairs_leaderboard(tournament_id: str, round_id: str) -> dict:
     if not tournament_round or tournament_round["tournament_id"] != source_id:
         raise TournamentRoundNotFoundError("Round not found for this tournament.")
 
-    handicap_allowance = (tournament_round.pop("tournaments", None) or {}).get("handicap_allowance") or 100
+    tournament_fields = tournament_round.pop("tournaments", None) or {}
+    handicap_allowance = tournament_fields.get("handicap_allowance") or 100
+    scoring_style = tournament_fields.get("pairs_scoring_style") or "stableford"
+    if scoring_style not in VALID_PAIRS_SCORING_STYLES:
+        scoring_style = "stableford"
+    higher_wins = scoring_style == "stableford"
 
     entrants_by_tournament = _fetch_entrants_by_tournament([source_id])
     entrants = [e for e in entrants_by_tournament.get(source_id, []) if e["status"] == "confirmed"]
@@ -935,9 +973,12 @@ def get_tournament_pairs_leaderboard(tournament_id: str, round_id: str) -> dict:
     holes_meta = _course_holes_meta(tournament_round["tee_id"])
     scores_by_player, _nr_by_player = _tournament_round_scores_by_player(round_id)
 
-    points_by_player: dict[str, list[int | None]] = {
-        entrant["player_id"]: _per_hole_stableford_points(
-            scores_by_player.get(entrant["player_id"], {}), holes_meta, handicap_by_player[entrant["player_id"]]
+    metric_by_player: dict[str, list[int | None]] = {
+        entrant["player_id"]: _per_hole_pair_metric(
+            scores_by_player.get(entrant["player_id"], {}),
+            holes_meta,
+            handicap_by_player[entrant["player_id"]],
+            scoring_style,
         )
         for entrant in entrants
     }
@@ -946,37 +987,44 @@ def get_tournament_pairs_leaderboard(tournament_id: str, round_id: str) -> dict:
     for pair in list_tournament_pairs(tournament_id):
         a_id = str(pair["player_id_a"])
         b_id = str(pair["player_id_b"])
-        a_points = points_by_player.get(a_id)
-        b_points = points_by_player.get(b_id)
+        a_metric = metric_by_player.get(a_id)
+        b_metric = metric_by_player.get(b_id)
         a_strokes_by_hole = scores_by_player.get(a_id, {})
         b_strokes_by_hole = scores_by_player.get(b_id, {})
 
-        holes_stableford: list[int | None] = []
+        holes_metric: list[int | None] = []
         # Raw strokes for the scorecard modal (see
         # get_tournament_pairs_leaderboard's docstring) -- masked down to
-        # just whichever partner actually supplied the pair's better-ball
-        # point on that hole, None (renders "-") for the other. Whoever
-        # has the strictly higher per-hole point is the contributor; tied
-        # points means both genuinely earned that hole's score, so both
-        # show; a hole neither has played yet is None for both.
+        # just whichever ONE partner actually supplied the pair's
+        # better-ball score on that hole, None (renders "-") for the
+        # other. A better-ball score is always exactly one player's
+        # score, never two -- when both partners tie for the hole's best
+        # metric, only one of them can have actually been "the" score
+        # that counted, so the tie is broken arbitrarily (player A wins
+        # ties) rather than crediting the hole to both. A hole neither
+        # has played yet is None for both.
         a_holes_score: list[int | None] = []
         b_holes_score: list[int | None] = []
         running = 0
         thru = 0
         for i in range(18):
             hole_number = i + 1
-            a = a_points[i] if a_points else None
-            b = b_points[i] if b_points else None
+            a = a_metric[i] if a_metric else None
+            b = b_metric[i] if b_metric else None
             candidates = [v for v in (a, b) if v is not None]
             if not candidates:
-                holes_stableford.append(None)
+                holes_metric.append(None)
             else:
                 thru += 1
-                running += max(candidates)
-                holes_stableford.append(running)
+                running += max(candidates) if higher_wins else min(candidates)
+                holes_metric.append(running)
 
-            a_contributed = a is not None and (b is None or a >= b)
-            b_contributed = b is not None and (a is None or b >= a)
+            if higher_wins:
+                a_contributed = a is not None and (b is None or a >= b)
+                b_contributed = b is not None and (a is None or b > a)
+            else:
+                a_contributed = a is not None and (b is None or a <= b)
+                b_contributed = b is not None and (a is None or b < a)
             a_holes_score.append(a_strokes_by_hole.get(hole_number) if a_contributed else None)
             b_holes_score.append(b_strokes_by_hole.get(hole_number) if b_contributed else None)
 
@@ -986,23 +1034,26 @@ def get_tournament_pairs_leaderboard(tournament_id: str, round_id: str) -> dict:
             "player_id_b": pair["player_id_b"],
             "name": f"{pair.get('player_a_name') or 'Unknown'} & {pair.get('player_b_name') or 'Unknown'}",
             "thru": thru,
-            "holes_stableford": holes_stableford,
-            "total_stableford": running,
+            "holes_metric": holes_metric,
+            "total_metric": running,
             "players": [
                 {"player_id": pair["player_id_a"], "name": pair.get("player_a_name") or "Unknown", "holes_score": a_holes_score},
                 {"player_id": pair["player_id_b"], "name": pair.get("player_b_name") or "Unknown", "holes_score": b_holes_score},
             ],
         })
 
-    # Leader-first -- unlike get_tournament_leaderboard's players (which
-    # the frontend sorts client-side by whichever of gross/nett/stableford
-    # it's currently displaying), pairs only ever have the one number, so
-    # sorting once here is enough.
-    pairs.sort(key=lambda p: p["total_stableford"], reverse=True)
+    # Leader-first -- higher total wins for Stableford, lower total wins
+    # for nett/gross (a normal stroke-play comparison), unlike
+    # get_tournament_leaderboard's players (which the frontend sorts
+    # client-side by whichever of gross/nett/stableford it's currently
+    # displaying) -- pairs only ever show the one number their
+    # pairs_scoring_style picked, so sorting once here is enough.
+    pairs.sort(key=lambda p: p["total_metric"], reverse=higher_wins)
 
     return {
         "round_id": round_id,
         "round_number": tournament_round["round_number"],
+        "scoring_style": scoring_style,
         "holes": [
             {"hole_number": n, "par": holes_meta.get(n, {}).get("par")}
             for n in range(1, 19)

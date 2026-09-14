@@ -332,13 +332,25 @@ def hydrate_round_post_card(row: dict, viewer_player_id: str | None = None) -> d
     exact same way rather than drifting.
 
     Always carries the group summary and any photos, same as before this
-    feature existed. Only additionally carries `viewer_detail` (this
-    specific viewer's own hole-by-hole scorecard + handicap change) when
-    viewer_player_id is given and is actually one of the round's players
-    -- the club feed has no single "viewer" to personalize for (every
-    member sees the same club page), so it calls this with
-    viewer_player_id=None and gets just the group view, exactly like a
-    'scorecard' club post always has."""
+    feature existed. Also always carries `all_details` -- every player's
+    own hole-by-hole scorecard and stats (score to par, net, Stableford,
+    putts, fairways, GIR), one entry per player_ids, in that order. This
+    used to be gated to only the viewer's own round (`viewer_detail`) on
+    the theory that a friend watching a round they didn't play in has no
+    personal stake in anyone's detail -- but score-to-par, putts,
+    fairways and GIR aren't the *viewer's* numbers, they're the *round
+    player's* numbers (see _round_scoring_stats, which always takes that
+    player's own handicap, never the viewer's), so there's no privacy or
+    correctness reason to hide them from a friend just watching. home.py
+    cycles through this list via the scorecard slide's prev/next arrows.
+    Net/Stableford still only mean something for players who have a
+    handicap on file, same as before -- that's unaffected by who's
+    looking.
+
+    `solo_detail` and `viewer_detail` are kept alongside `all_details`
+    for the handicap-change badge, which IS still specific to the actual
+    viewer (a friend watching doesn't get shown a stranger's handicap
+    delta) -- everything else should read from all_details instead."""
     from backend.services.rounds import get_round
 
     round_id = row["round_id"]
@@ -358,6 +370,17 @@ def hydrate_round_post_card(row: dict, viewer_player_id: str | None = None) -> d
         "is_multiplayer": is_multiplayer,
         "photos": [p["image_url"] for p in _list_round_post_photos(round_id)],
         "scorecard": _group_scorecard_summary(round_data, player_ids) if round_data else None,
+        "all_details": (
+            [
+                detail
+                for detail in (
+                    _detailed_player_scorecard(round_data, pid) for pid in player_ids
+                )
+                if detail is not None
+            ]
+            if round_data and player_ids
+            else []
+        ),
     }
 
     if not is_multiplayer and round_data and player_ids:

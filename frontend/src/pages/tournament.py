@@ -62,6 +62,14 @@ _TOURNAMENT_HANDICAP_ALLOWANCE_OPTIONS = [
     {"label": "75%", "value": 75},
     {"label": "100%", "value": 100},
 ]
+# Same options/reasoning as club.py's copy -- see that module for why
+# these small constant lists are duplicated per-page rather than shared.
+_TOURNAMENT_PAIRS_SCORING_STYLE_OPTIONS = [
+    {"label": "Stableford", "value": "stableford"},
+    {"label": "Nett", "value": "nett"},
+    {"label": "Gross", "value": "gross"},
+]
+_PAIRS_FORMATS = ("2bbb", "4bbb")
 _GROUP_SIZE_OPTIONS = [{"label": f"{n} per group", "value": n} for n in range(2, 7)]
 _DEFAULT_GROUP_SIZE = 4
 
@@ -1155,9 +1163,41 @@ def _leaderboard_scorecard_modal():
     )
 
 
+def _leaderboard_scorecard_mark_class(strokes, par):
+    """Traditional scorecard marks around one Score cell's value --
+    birdie = circle, eagle (or better) = double circle, bogey = square,
+    double bogey (or worse) = double square -- same diff-from-par
+    thresholds components/live_scorecard.py's _score_marking_class uses
+    for the live scoring buttons, just its own class family
+    (.t3g-leaderboard-scorecard-mark, defined in club.css) since this
+    wraps plain read-only cell text here rather than an interactive
+    button -- there's no button-sized base class to inherit the shape
+    from, so this gets its own fixed-size circle container instead."""
+    if strokes is None or par is None:
+        return None
+    diff = strokes - par
+    if diff <= -2:
+        return "t3g-leaderboard-scorecard-mark--eagle"
+    if diff == -1:
+        return "t3g-leaderboard-scorecard-mark--birdie"
+    if diff == 1:
+        return "t3g-leaderboard-scorecard-mark--bogey"
+    if diff >= 2:
+        return "t3g-leaderboard-scorecard-mark--double-bogey"
+    return None
+
+
 def _leaderboard_player_scorecard(player, holes):
-    """Read-only Hole/Par/Score line for one player's selected round --
-    built straight from holes_strokes, the same raw per-hole strokes the
+    """Front nine and back nine, each its own little Hole/Par/Score table
+    stacked one above the other -- the traditional two-block paper-
+    scorecard layout, not one continuous 18-column row (which is what
+    forced a hole-10 divider and horizontal scrolling to see the back
+    nine before). Score cells get the same birdie/eagle/bogey/double-
+    bogey circle-and-square marks the live scoring buttons use (see
+    _leaderboard_scorecard_mark_class) -- this is read-only strokes-vs-
+    par same as that, not a different stat, so it reads the same way.
+
+    Built straight from holes_strokes, the same raw per-hole strokes the
     leaderboard's cumulative-to-par columns were derived from, so this
     always matches exactly what the grid is already showing rather than
     needing its own fetch.
@@ -1167,33 +1207,46 @@ def _leaderboard_player_scorecard(player, holes):
     "NR" specifically on whichever hole(s) this player marked No Return,
     instead of just the same blank "-" a hole they simply haven't reached
     yet would show -- both have strokes=None, only holes_nr tells them
-    apart."""
+    apart. An NR hole gets no birdie/bogey mark -- there's no real score
+    to compare against par."""
     strokes = player.get("holes_strokes") or [None] * 18
     nr_flags = player.get("holes_nr") or [False] * 18
     pars = [h.get("par") for h in holes]
     hole_numbers = [h["hole_number"] for h in holes]
 
-    def _row(label, values, bold=False):
-        cells = [html.Td(label, className="t3g-leaderboard-scorecard-label")]
-        for i, v in enumerate(values):
-            divider = " t3g-leaderboard-divider" if hole_numbers[i] == 10 else ""
-            cells.append(html.Td(str(v) if v is not None else "-", className=divider.strip()))
-        return html.Tr(cells, className="t3g-leaderboard-scorecard-score-row" if bold else None)
+    def _par_row(nine_pars):
+        cells = [html.Td("Par", className="t3g-leaderboard-scorecard-label")]
+        cells += [html.Td(str(p) if p is not None else "-") for p in nine_pars]
+        return html.Tr(cells)
 
-    def _score_row(label, values, nr_values):
-        cells = [html.Td(label, className="t3g-leaderboard-scorecard-label")]
-        for i, v in enumerate(values):
-            divider = " t3g-leaderboard-divider" if hole_numbers[i] == 10 else ""
-            is_nr_hole = nr_values[i] if i < len(nr_values) else False
-            text = "NR" if is_nr_hole else (str(v) if v is not None else "-")
-            cls = (divider + (" t3g-leaderboard-scorecard-nr-cell" if is_nr_hole else "")).strip()
-            cells.append(html.Td(text, className=cls))
+    def _score_row(nine_strokes, nine_nr, nine_pars):
+        cells = [html.Td("Score", className="t3g-leaderboard-scorecard-label")]
+        for v, is_nr_hole, par in zip(nine_strokes, nine_nr, nine_pars):
+            if is_nr_hole:
+                cells.append(html.Td("NR", className="t3g-leaderboard-scorecard-nr-cell"))
+                continue
+            if v is None:
+                cells.append(html.Td("-"))
+                continue
+            mark_class = _leaderboard_scorecard_mark_class(v, par)
+            span_class = "t3g-leaderboard-scorecard-mark" + (f" {mark_class}" if mark_class else "")
+            cells.append(html.Td(html.Span(str(v), className=span_class)))
         return html.Tr(cells, className="t3g-leaderboard-scorecard-score-row")
 
-    header_cells = [html.Th("Hole")]
-    for hole_number in hole_numbers:
-        divider = " t3g-leaderboard-divider" if hole_number == 10 else ""
-        header_cells.append(html.Th(str(hole_number), className=divider.strip()))
+    def _nine_table(nine_slice):
+        nine_holes = hole_numbers[nine_slice]
+        header_cells = [html.Th("Hole")] + [html.Th(str(n)) for n in nine_holes]
+        body = [
+            _par_row(pars[nine_slice]),
+            _score_row(strokes[nine_slice], nr_flags[nine_slice], pars[nine_slice]),
+        ]
+        return html.Div(
+            html.Table(
+                [html.Thead(html.Tr(header_cells)), html.Tbody(body)],
+                className="t3g-leaderboard-table t3g-leaderboard-scorecard-table",
+            ),
+            className="t3g-leaderboard-wrap",
+        )
 
     out_par = sum(p for p in pars[:9] if p is not None)
     in_par = sum(p for p in pars[9:] if p is not None)
@@ -1215,16 +1268,8 @@ def _leaderboard_player_scorecard(player, holes):
 
     return html.Div(
         [
-            html.Div(
-                html.Table(
-                    [
-                        html.Thead(html.Tr(header_cells)),
-                        html.Tbody([_row("Par", pars), _score_row("Score", strokes, nr_flags)]),
-                    ],
-                    className="t3g-leaderboard-table t3g-leaderboard-scorecard-table",
-                ),
-                className="t3g-leaderboard-wrap",
-            ),
+            _nine_table(slice(0, 9)),
+            _nine_table(slice(9, 18)),
             summary,
         ]
     )
@@ -1904,6 +1949,22 @@ def _tournament_edit_modal(tournament, club_tournaments=None):
                                 id="tournament-edit-handicap-allowance-input",
                                 options=_TOURNAMENT_HANDICAP_ALLOWANCE_OPTIONS,
                                 value=tournament.get("handicap_allowance", 100),
+                                className="t3g-tournament-entry-mode",
+                            ),
+                        ],
+                    ),
+                    html.Div(
+                        id="tournament-edit-pairs-scoring-style-section",
+                        className="t3g-modal-section",
+                        style={} if tournament.get("format") in _PAIRS_FORMATS else {"display": "none"},
+                        children=[
+                            html.Label(
+                                "Pairs scoring style", className="t3g-modal-label t3g-tournament-rounds-label"
+                            ),
+                            dcc.RadioItems(
+                                id="tournament-edit-pairs-scoring-style-input",
+                                options=_TOURNAMENT_PAIRS_SCORING_STYLE_OPTIONS,
+                                value=tournament.get("pairs_scoring_style", "stableford"),
                                 className="t3g-tournament-entry-mode",
                             ),
                         ],
@@ -3129,6 +3190,7 @@ def adjust_tournament_edit_max_handicap(plus_clicks, minus_clicks, current):
     Output("tournament-edit-entry-mode-input", "value"),
     Output("tournament-edit-grouping-method-input", "value"),
     Output("tournament-edit-handicap-allowance-input", "value"),
+    Output("tournament-edit-pairs-scoring-style-input", "value"),
     Output("tournament-edit-min-handicap-store", "data", allow_duplicate=True),
     Output("tournament-edit-min-handicap-display", "children", allow_duplicate=True),
     Output("tournament-edit-max-handicap-store", "data", allow_duplicate=True),
@@ -3142,6 +3204,7 @@ def adjust_tournament_edit_max_handicap(plus_clicks, minus_clicks, current):
     State("tournament-edit-entry-mode-input", "value"),
     State("tournament-edit-grouping-method-input", "value"),
     State("tournament-edit-handicap-allowance-input", "value"),
+    State("tournament-edit-pairs-scoring-style-input", "value"),
     State("tournament-edit-min-handicap-store", "data"),
     State("tournament-edit-max-handicap-store", "data"),
     State({"type": "tournament-edit-round-date", "index": ALL}, "date"),
@@ -3156,7 +3219,8 @@ def adjust_tournament_edit_max_handicap(plus_clicks, minus_clicks, current):
 )
 def handle_tournament_edit_modal(
     open_clicks, cancel_clicks, submit_clicks,
-    name, format_value, entry_mode, grouping_method, handicap_allowance, min_handicap, max_handicap,
+    name, format_value, entry_mode, grouping_method, handicap_allowance, pairs_scoring_style,
+    min_handicap, max_handicap,
     round_dates, round_courses, round_tees, round_group_sizes,
     linked_tournament_id,
     tournament_id, current_pathname, original_tournament,
@@ -3169,7 +3233,7 @@ def handle_tournament_edit_modal(
     same "fresh modal every time it's opened" approach the create modal
     uses, just resetting to the saved tournament instead of to empty."""
     triggered_id = dash.ctx.triggered_id
-    no_update_rest = (dash.no_update,) * 11
+    no_update_rest = (dash.no_update,) * 12
 
     if triggered_id == "tournament-edit-button":
         original_tournament = original_tournament or {}
@@ -3184,6 +3248,7 @@ def handle_tournament_edit_modal(
             original_tournament.get("entry_mode", "self"),
             original_tournament.get("grouping_method", "random"),
             original_tournament.get("handicap_allowance", 100),
+            original_tournament.get("pairs_scoring_style", "stableford"),
             original_min, str(original_min) if original_min is not None else "–",
             original_max, str(original_max) if original_max is not None else "–",
             original_tournament.get("linked_tournament_id"),
@@ -3233,6 +3298,7 @@ def handle_tournament_edit_modal(
                 "entry_mode": entry_mode or "self",
                 "grouping_method": grouping_method or "random",
                 "handicap_allowance": handicap_allowance or 100,
+                "pairs_scoring_style": pairs_scoring_style or "stableford",
                 "min_handicap": min_handicap,
                 "max_handicap": max_handicap,
                 "rounds": rounds_payload,
@@ -3453,11 +3519,20 @@ def _pairings_panel(tournament, draft, is_admin):
     )
 
 
+# Column header + summary-line unit for a pair's running total, keyed by
+# tournaments.pairs_scoring_style -- Stableford is points (higher wins),
+# Nett/Gross are raw/handicap-adjusted strokes (lower wins). Same style
+# value get_tournament_pairs_leaderboard already sorted by, so the table
+# and its labels always agree with each other.
+_PAIRS_METRIC_COLUMN_LABELS = {"stableford": "Pts", "nett": "Nett", "gross": "Gross"}
+
+
 def _pairs_leaderboard_table(data, clickable=True):
-    """Pos/Pair/Thru/Pts -- the pairs counterpart to _leaderboard_simple_
-    table, but simpler still: a pair only ever has the one number (its
-    combined better-ball Stableford total), so there's no Gross/Nett
-    columns or format toggle to accommodate.
+    """Pos/Pair/Thru/<metric> -- the pairs counterpart to _leaderboard_
+    simple_table, but simpler still: a pair only ever has the one number
+    (its combined better-ball total for whichever scoring style the
+    tournament uses), so there's no separate Gross/Nett columns or format
+    toggle to accommodate -- just a style-aware column label/value.
 
     clickable=True (the Leaderboard tab's own full table) gives each row
     an id (tournament-pairs-leaderboard-row) so toggle_tournament_pairs_
@@ -3474,12 +3549,15 @@ def _pairs_leaderboard_table(data, clickable=True):
     if not pairs:
         return html.P("No pairings set yet -- add pairs on the Pairings tab.", className="t3g-empty-state")
 
+    scoring_style = data.get("scoring_style", "stableford")
+    metric_label = _PAIRS_METRIC_COLUMN_LABELS.get(scoring_style, "Pts")
+
     def _row(index, pair):
         cells = [
             html.Td(str(index + 1), className="t3g-leaderboard-pos"),
             html.Td(pair.get("name") or "Unknown pair"),
             html.Td(str(pair.get("thru", 0)), className="text-center"),
-            html.Td(str(pair.get("total_stableford", 0)), className="text-center fw-bold"),
+            html.Td(str(pair.get("total_metric", 0)), className="text-center fw-bold"),
         ]
         if clickable:
             return html.Tr(
@@ -3494,7 +3572,7 @@ def _pairs_leaderboard_table(data, clickable=True):
     return html.Table(
         className="t3g-leaderboard-table t3g-pairs-leaderboard-table",
         children=[
-            html.Thead(html.Tr([html.Th("Pos"), html.Th("Pair"), html.Th("Thru"), html.Th("Pts")])),
+            html.Thead(html.Tr([html.Th("Pos"), html.Th("Pair"), html.Th("Thru"), html.Th(metric_label)])),
             html.Tbody(rows),
         ],
     )
@@ -3519,14 +3597,15 @@ def _pairs_leaderboard_scorecard_modal():
     )
 
 
-def _pairs_leaderboard_scorecard(pair, holes):
+def _pairs_leaderboard_scorecard(pair, holes, scoring_style="stableford"):
     """Par row plus one Score row per partner -- each partner's row only
-    shows strokes on the holes where *their* per-hole Stableford point is
-    what the pair's better-ball score actually used (holes_score on each
-    entry in pair["players"] is already masked to None on every other
-    hole by get_tournament_pairs_leaderboard, so this just renders
-    exactly what it's given, same "-" convention as
-    _leaderboard_player_scorecard's blank cells)."""
+    shows strokes on the holes where *their* per-hole metric is what the
+    pair's better-ball score actually used (holes_score on each entry in
+    pair["players"] is already masked to None on every other hole by
+    get_tournament_pairs_leaderboard, so this just renders exactly what
+    it's given, same "-" convention as _leaderboard_player_scorecard's
+    blank cells). scoring_style only affects the TOTAL summary line's
+    label/unit below -- the per-partner rows are always raw strokes."""
     pars = [h.get("par") for h in holes]
     hole_numbers = [h["hole_number"] for h in holes]
 
@@ -3550,15 +3629,21 @@ def _pairs_leaderboard_scorecard(pair, holes):
     out_par = sum(p for p in pars[:9] if p is not None)
     in_par = sum(p for p in pars[9:] if p is not None)
 
+    # Stableford's total reads as points ("38 pts"); Nett/Gross are raw
+    # strokes relative to nothing in particular, so they read as a plain
+    # stroke count instead -- same "pts" vs strokes distinction as
+    # _leaderboard_player_scorecard's own individual summary line.
+    total = pair.get("total_metric", 0)
+    total_text = f"TOTAL  {total} pts  (par {out_par + in_par})" if scoring_style == "stableford" else (
+        f"TOTAL  {total} strokes  (par {out_par + in_par})"
+    )
+
     summary = html.Div(
         className="t3g-leaderboard-scorecard-summary",
         children=[
             html.Span(f"OUT  (par {out_par})"),
             html.Span(f"IN  (par {in_par})"),
-            html.Span(
-                f"TOTAL  {pair.get('total_stableford', 0)} pts  (par {out_par + in_par})",
-                className="t3g-leaderboard-scorecard-total",
-            ),
+            html.Span(total_text, className="t3g-leaderboard-scorecard-total"),
         ],
     )
 
@@ -3870,7 +3955,9 @@ def toggle_tournament_pairs_leaderboard_scorecard(row_clicks, close_clicks, lead
         raise PreventUpdate
 
     title = f"{pair.get('name') or 'Unknown pair'} — Round {leaderboard_data.get('round_number')}"
-    body = _pairs_leaderboard_scorecard(pair, leaderboard_data.get("holes", []))
+    body = _pairs_leaderboard_scorecard(
+        pair, leaderboard_data.get("holes", []), leaderboard_data.get("scoring_style", "stableford")
+    )
     return True, title, body
 
 
@@ -3933,3 +4020,15 @@ def toggle_tournament_edit_rounds_section(linked_tournament_id):
     # submit-time validation are the real enforcement.
     style = {"display": "none"} if linked_tournament_id else {}
     return style, style, style
+
+
+@callback(
+    Output("tournament-edit-pairs-scoring-style-section", "style"),
+    Input("tournament-edit-format-input", "value"),
+)
+def toggle_tournament_edit_pairs_scoring_style_section(format_value):
+    # Same reasoning as club.py's toggle_tournament_pairs_scoring_style_section
+    # -- only relevant for the two better-ball formats, and not tied to
+    # link status since pairs_scoring_style stays this tournament's own
+    # even when linked (see _attach_link_info, which never overlays it).
+    return {} if format_value in _PAIRS_FORMATS else {"display": "none"}

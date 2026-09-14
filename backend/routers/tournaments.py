@@ -50,7 +50,9 @@ from backend.services.tournaments import (
     InvalidEntryModeError,
     InvalidFormatError,
     InvalidGroupingMethodError,
+    InvalidHandicapAllowanceError,
     InvalidLinkError,
+    InvalidPairsScoringStyleError,
     NoRoundsError,
     NotClubAdminError,
     TournamentNotFoundError,
@@ -75,7 +77,13 @@ def create_tournament_route(payload: TournamentCreate):
     except NotClubAdminError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
     except (
-        InvalidFormatError, InvalidEntryModeError, InvalidGroupingMethodError, NoRoundsError, InvalidLinkError
+        InvalidFormatError,
+        InvalidEntryModeError,
+        InvalidGroupingMethodError,
+        InvalidHandicapAllowanceError,
+        InvalidPairsScoringStyleError,
+        NoRoundsError,
+        InvalidLinkError,
     ) as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
     except TournamentNotFoundError as exc:
@@ -122,7 +130,13 @@ def update_tournament_route(tournament_id: str, payload: TournamentUpdate):
     except NotClubAdminError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
     except (
-        InvalidFormatError, InvalidEntryModeError, InvalidGroupingMethodError, NoRoundsError, InvalidLinkError
+        InvalidFormatError,
+        InvalidEntryModeError,
+        InvalidGroupingMethodError,
+        InvalidHandicapAllowanceError,
+        InvalidPairsScoringStyleError,
+        NoRoundsError,
+        InvalidLinkError,
     ) as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
 

@@ -1517,6 +1517,7 @@ _SAVE_SCORE_OUTPUTS = (
     Output("live-round-score-modal", "is_open", allow_duplicate=True),
     Output("live-round-players-store", "data", allow_duplicate=True),
     Output("live-round-error", "children", allow_duplicate=True),
+    Output("live-round-pending-save-store", "data", allow_duplicate=True),
     Output("live-round-active-hole-store", "data", allow_duplicate=True),
     Output("live-round-holeview-hole-store", "data", allow_duplicate=True),
     Output("live-round-view-mode-store", "data", allow_duplicate=True),
@@ -1536,7 +1537,7 @@ _SAVE_SCORE_OUTPUTS = (
     Output("live-round-score-result-badge", "className", allow_duplicate=True),
 )
 _SAVE_SCORE_OUTPUT_NAMES = (
-    "modal_is_open", "players_store", "error", "active_hole_store",
+    "modal_is_open", "players_store", "error", "pending_save_store", "active_hole_store",
     "holeview_hole_store", "view_mode_store", "holeview_container_style",
     "full_view_container_style", "holebyhole_button_class", "full_button_class",
     "modal_title", "modal_par_store", "shots_store", "shots_display",
@@ -1615,19 +1616,20 @@ def save_score(n_clicks, n_clicks_nr, active_hole, round_id, shots, putts, fairw
 
         update = {"strokes": shots, "putts": putts, "fairway_hit": fairway_hit, "nr": False}
 
-    response = requests.patch(
-        f"{API_BASE_URL}/rounds/{round_id}/players/{target_player_id}/holes/{hole_number}",
-        json=update,
-        params={"updated_by": session.get("player_id")},
-    )
-
-    if response.status_code != 200:
-        try:
-            detail = response.json().get("detail", "Couldn't save that score.")
-        except ValueError:
-            detail = "Couldn't save that score."
-        return _save_score_result(error=detail)
-
+    # Applied to players-store (and the modal closed/auto-advanced) right
+    # away, *before* the PATCH that actually persists it -- the save
+    # itself is handed off to persist_score below via live-round-pending-
+    # save-store instead of happening inline here. Entering a score is by
+    # far the single most repeated tap in a live round (up to 18 holes x
+    # every player in the group), so waiting on that network round trip
+    # before the UI could close the modal or advance to the next player
+    # was the main source of the lag reported against this screen -- same
+    # "render first, persist in the background" split tournament.py's
+    # pairings board already uses for the same reason (see handle_
+    # tournament_pairings_board/persist_tournament_pairs there). A failed
+    # save still surfaces through live-round-error once persist_score's
+    # own PATCH comes back, just after the fact rather than blocking the
+    # tap that triggered it.
     players = [dict(p) for p in (players or [])]
     for p in players:
         if p["player_id"] == target_player_id:
@@ -1637,13 +1639,22 @@ def save_score(n_clicks, n_clicks_nr, active_hole, round_id, shots, putts, fairw
             holes[str(hole_number)] = hole
             p["holes"] = holes
 
+    pending_save = {
+        "round_id": round_id,
+        "player_id": target_player_id,
+        "hole_number": hole_number,
+        "update": update,
+        "updated_by": session.get("player_id"),
+    }
+
     # A Full Scorecard save has nothing to chain to -- the view never
     # changed to open this modal in the first place, so there's nothing
     # to navigate; just close it and land right back on the Full
     # Scorecard, exactly where the tap that opened it came from.
     if source != "holebyhole":
         return _save_score_result(
-            modal_is_open=False, players_store=players, error="", active_hole_store=None,
+            modal_is_open=False, players_store=players, error="", pending_save_store=pending_save,
+            active_hole_store=None,
         )
 
     # Hole by Hole: chain straight to whichever player still needs a
@@ -1662,6 +1673,7 @@ def save_score(n_clicks, n_clicks_nr, active_hole, round_id, shots, putts, fairw
             modal_is_open=modal_is_open,
             players_store=players,
             error="",
+            pending_save_store=pending_save,
             active_hole_store=active_hole_data,
             modal_title=title,
             modal_par_store=modal_par,
@@ -1687,7 +1699,8 @@ def save_score(n_clicks, n_clicks_nr, active_hole, round_id, shots, putts, fairw
     if hole_number >= 18:
         view, holeview_style, full_style, holebyhole_class, full_class = _view_switch_state("full")
         return _save_score_result(
-            modal_is_open=False, players_store=players, error="", active_hole_store=None,
+            modal_is_open=False, players_store=players, error="", pending_save_store=pending_save,
+            active_hole_store=None,
             view_mode_store=view,
             holeview_container_style=holeview_style,
             full_view_container_style=full_style,
@@ -1696,9 +1709,45 @@ def save_score(n_clicks, n_clicks_nr, active_hole, round_id, shots, putts, fairw
         )
 
     return _save_score_result(
-        modal_is_open=False, players_store=players, error="", active_hole_store=None,
+        modal_is_open=False, players_store=players, error="", pending_save_store=pending_save,
+        active_hole_store=None,
         holeview_hole_store=hole_number + 1,
     )
+
+
+@callback(
+    Output("live-round-error", "children", allow_duplicate=True),
+    Input("live-round-pending-save-store", "data"),
+    prevent_initial_call=True,
+)
+def persist_score(pending_save):
+    """The actual save to the backend for whatever save_score just applied
+    to players-store -- split out so the PATCH's network latency happens
+    after the modal has already closed/advanced, not before (see
+    save_score's own comment on this store). Runs as its own, separate
+    round trip once the browser processes save_score's response; a
+    failure surfaces here, after the fact, rather than blocking the tap
+    that triggered it. Live-round-players-store already reflects the
+    optimistic update regardless of whether this succeeds -- same
+    trade-off tournament.py's persist_tournament_pairs makes, and for the
+    same reason: entering scores needs to feel instant, and a save
+    failure here is rare enough (and visible enough via this error
+    banner) not to justify making every tap wait on it."""
+    if not pending_save:
+        raise PreventUpdate
+    response = requests.patch(
+        f"{API_BASE_URL}/rounds/{pending_save['round_id']}/players/{pending_save['player_id']}"
+        f"/holes/{pending_save['hole_number']}",
+        json=pending_save["update"],
+        params={"updated_by": pending_save["updated_by"]},
+    )
+    if response.status_code != 200:
+        try:
+            detail = response.json().get("detail", "Couldn't save that score.")
+        except ValueError:
+            detail = "Couldn't save that score."
+        return detail
+    return ""
 
 
 @callback(

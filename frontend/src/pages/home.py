@@ -15,12 +15,15 @@ Round-post cards ('scorecard' type) are the one genuinely new card shape
 (there's only one player, so "the group" and "the detail" are the same
 information) and shows its full hole-by-hole breakdown immediately. A
 multiplayer round shows the group scorecard first, with prev/next
-arrows to page across to your own detailed scorecard (putts, fairways)
-plus any handicap change, when you were one of the players -- a
-friend's round you didn't play in only ever shows the group view, since
-there's no personal detail of yours to page to. That detailed scorecard
-renders front 9 stacked above back 9 (see _feed_detail_table) rather
-than all 18 holes in one wide row, so it fits a feed card without
+arrows that step through every player's own detailed scorecard (putts,
+fairways, GIR) in turn -- not just yours. Score-to-par/putts/fairways/
+GIR are that player's own numbers regardless of who's looking (see
+_round_scoring_stats in round_posts.py), so a friend's round you didn't
+play in still pages across everyone's detail, just without a
+handicap-change badge attached (that part IS still viewer-specific --
+see the viewer_player_id check in switch_feed_round_view). That detailed
+scorecard renders front 9 stacked above back 9 (see _feed_detail_table)
+rather than all 18 holes in one wide row, so it fits a feed card without
 horizontal scrolling. Any photos on the round render as a swipeable
 carousel (see _feed_round_post_card's photo_gallery, and
 assets/round_photo_carousel.js for the swipe/counter/dot behavior)
@@ -39,6 +42,7 @@ from datetime import datetime
 import dash
 import requests
 from dash import MATCH, Input, Output, State, callback, dcc, html
+from dash.exceptions import PreventUpdate
 from flask import session
 
 from config import API_BASE_URL
@@ -242,19 +246,66 @@ def _feed_group_view(post):
     return html.Div(rows, className="t3g-feed-scorecard")
 
 
-def _feed_detail_view(post):
-    detail = post.get("viewer_detail")
+def _feed_detail_view(detail, handicap_change=None):
+    """One player's hole-by-hole breakdown -- used both for a solo
+    round's immediate detail and for cycling through any round's players
+    via the scorecard slide's prev/next arrows (see switch_feed_round_
+    view). handicap_change is only ever passed for the viewer's own
+    detail -- a friend cycling through isn't shown someone else's
+    handicap delta."""
     if not detail:
-        return _feed_group_view(post)
+        return html.P("This round's scorecard is no longer available.", className="t3g-empty-state")
     children = [_feed_detail_table(detail)]
-    badge = _handicap_delta_badge(post.get("viewer_handicap_change"))
+    badge = _handicap_delta_badge(handicap_change)
     if badge:
         children.append(badge)
     return html.Div(children, className="t3g-feed-detail-view")
 
 
-def _feed_round_body(post, view):
-    return _feed_detail_view(post) if view == "detail" else _feed_group_view(post)
+def _feed_owner_player_id(post):
+    """Whichever player is flagged as the round's owner in the group
+    summary (see _group_scorecard_summary's is_owner field) -- falls
+    back to the first player listed if somehow none is flagged, same
+    safety net _feed_primary_player uses."""
+    players = (post.get("scorecard") or {}).get("players") or []
+    owner = next((p for p in players if p.get("is_owner")), None)
+    if owner:
+        return owner["player_id"]
+    return players[0]["player_id"] if players else None
+
+
+def _feed_default_detail(post):
+    """Whichever player's detail the stats slide (and the scorecard
+    toggle, when first opened) should default to: the viewer's own round
+    when they played in it, otherwise the round's owner -- so a friend
+    just watching still lands on a sensible "whose numbers are these"
+    starting point instead of an arbitrary one."""
+    if post.get("viewer_detail"):
+        return post["viewer_detail"]
+    all_details = post.get("all_details") or []
+    if not all_details:
+        return None
+    owner_id = _feed_owner_player_id(post)
+    return next((d for d in all_details if d.get("player_id") == owner_id), all_details[0])
+
+
+def _feed_round_body(post, view, viewer_player_id=None):
+    """view is "group" for the everyone-scored summary, or an int index
+    into post["all_details"] to show that specific player's own
+    hole-by-hole detail -- prev/next arrows step this index (see
+    switch_feed_round_view), wrapping back to "group" at either end."""
+    if view == "group":
+        return _feed_group_view(post)
+    all_details = post.get("all_details") or []
+    if not isinstance(view, int) or not (0 <= view < len(all_details)):
+        return _feed_group_view(post)
+    detail = all_details[view]
+    handicap_change = (
+        post.get("viewer_handicap_change")
+        if viewer_player_id and detail.get("player_id") == viewer_player_id
+        else None
+    )
+    return _feed_detail_view(detail, handicap_change)
 
 
 def _format_score_to_par(value):
@@ -401,11 +452,12 @@ def _feed_round_post_card(post, player_id):
     a multiplayer round, the same group-scorecard/personal-detail toggle
     this always had -- the prev/next arrows still work exactly as
     before, just inside the carousel's first slide instead of above it).
-    Slide 2 is the stats card, when this viewer has a detail payload to
-    build one from (own round, or a multiplayer round they played in) --
-    skipped for a friend's round they didn't play in, since there's no
-    personal detail of theirs to summarize. Any real photos follow
-    after that."""
+    Slide 2 is the stats card, built from whichever player's detail is
+    currently showing on slide 1 (see _feed_default_detail) -- available
+    for any round with at least one player's detail computed, not just
+    ones this viewer personally played in, since those numbers belong to
+    the player, not the viewer (see hydrate_round_post_card's all_details
+    docstring). Any real photos follow after that."""
     round_id = post["round_id"]
     scorecard = post.get("scorecard") or {}
     course_bits = [b for b in [scorecard.get("club_name"), scorecard.get("course_name")] if b]
@@ -425,17 +477,21 @@ def _feed_round_post_card(post, player_id):
         )
         toggle_controls = None
     else:
-        has_detail = bool(post.get("viewer_detail"))
+        has_detail = bool(post.get("all_details"))
         body = html.Div(
             id={"type": "feed-round-body", "round_id": round_id},
-            children=_feed_round_body(post, "group"),
+            children=_feed_round_body(post, "group", player_id),
         )
         toggle_controls = (
             html.Div(
                 className="t3g-feed-round-toggle",
                 children=[
                     html.Button("‹", id={"type": "feed-round-prev", "round_id": round_id}, className="t3g-feed-round-toggle-arrow", n_clicks=0),
-                    html.Span("Scorecard", className="t3g-feed-round-toggle-label"),
+                    html.Span(
+                        "Scorecard",
+                        id={"type": "feed-round-toggle-label", "round_id": round_id},
+                        className="t3g-feed-round-toggle-label",
+                    ),
                     html.Button("›", id={"type": "feed-round-next", "round_id": round_id}, className="t3g-feed-round-toggle-arrow", n_clicks=0),
                 ],
             )
@@ -453,8 +509,16 @@ def _feed_round_post_card(post, player_id):
     )
 
     photos = post.get("photos") or []
-    detail_for_stats = post.get("solo_detail") or post.get("viewer_detail")
-    stats_slide = [_feed_stats_slide(detail_for_stats)] if detail_for_stats else []
+    default_detail = post.get("solo_detail") or _feed_default_detail(post)
+    # Wrapped in an id'd div (rather than just the raw stats card) so
+    # switch_feed_round_view can swap its contents to match whichever
+    # player the scorecard toggle is currently showing -- see that
+    # callback for the id-shape this needs to line up with.
+    stats_slide = (
+        [html.Div(_feed_stats_slide(default_detail), id={"type": "feed-stats-slide", "round_id": round_id})]
+        if default_detail
+        else []
+    )
 
     # The scroll track itself keeps the same id/className the upload
     # callback already targets (handle_feed_photo_upload just appends
@@ -593,7 +657,9 @@ def layout(**kwargs):
 
 @callback(
     Output({"type": "feed-round-body", "round_id": MATCH}, "children"),
+    Output({"type": "feed-round-toggle-label", "round_id": MATCH}, "children"),
     Output({"type": "feed-round-view", "round_id": MATCH}, "data"),
+    Output({"type": "feed-stats-slide", "round_id": MATCH}, "children"),
     Input({"type": "feed-round-prev", "round_id": MATCH}, "n_clicks"),
     Input({"type": "feed-round-next", "round_id": MATCH}, "n_clicks"),
     State({"type": "feed-round-view", "round_id": MATCH}, "data"),
@@ -601,11 +667,43 @@ def layout(**kwargs):
     prevent_initial_call=True,
 )
 def switch_feed_round_view(prev_clicks, next_clicks, current_view, post):
-    # Only ever two views to page between, so prev and next do the exact
-    # same thing -- flip it -- rather than needing separate branches per
-    # direction.
-    new_view = "detail" if current_view == "group" else "group"
-    return _feed_round_body(post, new_view), new_view
+    """Steps the scorecard slide through "group" (everyone's total
+    score) and each player's own hole-by-hole detail in turn -- used to
+    only flip between two fixed states (group vs the viewer's own
+    round), but now that every player's detail is available to any
+    viewer (see hydrate_round_post_card's all_details), prev/next walk
+    the whole list instead, wrapping back to group at either end. The
+    stats slide (the separate swipeable 2x2 tile card) is kept in sync
+    with whichever player's detail is currently showing, reverting to
+    the default player (see _feed_default_detail) once back on group, so
+    swiping to it after using these arrows still shows numbers that
+    match the scorecard just looked at."""
+    all_details = post.get("all_details") or []
+    if not all_details:
+        raise PreventUpdate
+
+    triggered_id = dash.ctx.triggered_id
+    direction = -1 if triggered_id and triggered_id.get("type") == "feed-round-prev" else 1
+
+    if current_view == "group":
+        new_view = 0 if direction == 1 else len(all_details) - 1
+    else:
+        stepped = current_view + direction
+        new_view = "group" if stepped < 0 or stepped >= len(all_details) else stepped
+
+    viewer_player_id = session.get("player_id")
+    body = _feed_round_body(post, new_view, viewer_player_id)
+
+    if new_view == "group":
+        label = "Scorecard"
+        stats_detail = _feed_default_detail(post)
+    else:
+        stats_detail = all_details[new_view]
+        label = f"{stats_detail.get('name') or 'Player'}'s Scorecard"
+
+    stats_children = _feed_stats_slide(stats_detail) if stats_detail else dash.no_update
+
+    return body, label, new_view, stats_children
 
 
 @callback(

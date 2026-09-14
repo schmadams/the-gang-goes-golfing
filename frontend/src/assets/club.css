@@ -1609,6 +1609,56 @@
     color: var(--t3g-ink);
 }
 
+/* Front nine / back nine render as two separate .t3g-leaderboard-wrap
+   tables now (see _leaderboard_player_scorecard) instead of one
+   continuous 18-hole row -- this is the gap between them, same idea as
+   .t3g-player-scorecard + .t3g-player-scorecard's border-top in
+   live_round.css, just a plain gap since each nine already has its own
+   bordered card look from .t3g-leaderboard-wrap. */
+.t3g-leaderboard-scorecard-table + .t3g-leaderboard-scorecard-table,
+.t3g-leaderboard-wrap + .t3g-leaderboard-wrap {
+    margin-top: 0.75rem;
+}
+
+/* Traditional scorecard marks around a Score cell's value -- birdie =
+   circle, eagle (or better) = double circle, bogey = square, double
+   bogey (or worse) = double square. Same colors/shapes as live_round.
+   css's .t3g-score-birdie/-eagle/-bogey/-double-bogey (which mark a
+   score *button*), just sized for plain read-only cell text instead --
+   see _leaderboard_scorecard_mark_class's own comment for why this
+   isn't just reusing that button-specific base class. */
+.t3g-leaderboard-scorecard-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+}
+
+.t3g-leaderboard-scorecard-mark--birdie {
+    border-radius: 50%;
+    border-color: #2a9d3f;
+}
+
+.t3g-leaderboard-scorecard-mark--eagle {
+    border-radius: 50%;
+    border-color: #2a9d3f;
+    box-shadow: 0 0 0 2px var(--t3g-surface), 0 0 0 4px #2a9d3f;
+}
+
+.t3g-leaderboard-scorecard-mark--bogey {
+    border-radius: 0;
+    border-color: var(--t3g-accent);
+}
+
+.t3g-leaderboard-scorecard-mark--double-bogey {
+    border-radius: 0;
+    border-color: var(--t3g-accent);
+    box-shadow: 0 0 0 2px var(--t3g-surface), 0 0 0 4px var(--t3g-accent);
+}
+
 .t3g-leaderboard-scorecard-summary {
     display: flex;
     justify-content: space-between;

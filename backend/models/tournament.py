@@ -22,6 +22,14 @@ VALID_GROUPING_METHODS = {"random", "handicap", "manual"}
 # Distinct from min_handicap/max_handicap above, which gate entry
 # eligibility rather than scoring.
 VALID_HANDICAP_ALLOWANCES = {50, 75, 100}
+# Which per-hole metric decides the better-ball winner (and the pair's
+# running total) in a 2bbb/4bbb tournament -- "stableford" (the existing,
+# still-default behavior: higher points wins each hole), "nett"
+# (handicap-adjusted strokes, lower wins each hole), or "gross" (raw
+# strokes, lower wins each hole). Meaningless for any other format, same
+# as grouping_method/group_size are meaningless outside a tournament that
+# actually generates tee times -- stored regardless, just never read.
+VALID_PAIRS_SCORING_STYLES = {"stableford", "nett", "gross"}
 
 
 class TournamentRoundCreate(BaseModel):
@@ -50,6 +58,11 @@ class TournamentCreate(BaseModel):
     max_handicap: float | None = None
     grouping_method: str = "random"
     handicap_allowance: int = 100
+    # Only meaningful when format is "2bbb"/"4bbb" -- see
+    # VALID_PAIRS_SCORING_STYLES above. Defaults to "stableford" to match
+    # the behavior every existing pairs tournament already had before
+    # this field existed.
+    pairs_scoring_style: str = "stableford"
     # Set this to make the new tournament a *shadow* of an existing one --
     # e.g. a Pairs Better Ball event run over the same field and rounds as
     # an already-set-up individual Stableford event. A shadow tournament
@@ -73,6 +86,7 @@ class TournamentUpdate(BaseModel):
     max_handicap: float | None = None
     grouping_method: str = "random"
     handicap_allowance: int = 100
+    pairs_scoring_style: str = "stableford"
     # Same meaning as TournamentCreate.linked_tournament_id -- editable
     # after creation too (link a tournament to another later, or clear
     # this back to None to unlink and make it independent again). See
