@@ -8,6 +8,7 @@ from backend.models.tournament import (
     TournamentCreate,
     TournamentEntrantCreate,
     TournamentEntrantHandicapOverrideUpdate,
+    TournamentFinalizeRequest,
     TournamentPairsSetRequest,
     TournamentUpdate,
 )
@@ -55,12 +56,18 @@ from backend.services.tournaments import (
     InvalidPairsScoringStyleError,
     NoRoundsError,
     NotClubAdminError,
+    TournamentAlreadyFinalizedError,
     TournamentNotFoundError,
+    TournamentNotReadyToFinalizeError,
     TournamentRoundNotFoundError,
     create_tournament,
+    finalize_tournament,
+    get_club_tournament_history,
     get_tournament,
     get_tournament_leaderboard,
     get_tournament_pairs_leaderboard,
+    get_tournament_pairs_overall_leaderboard,
+    get_tournament_winner,
     list_tournaments_for_club,
     update_tournament,
 )
@@ -97,6 +104,15 @@ def create_tournament_route(payload: TournamentCreate):
 @router.get("/club/{club_id}")
 def list_tournaments_for_club_route(club_id: str):
     return list_tournaments_for_club(club_id)
+
+
+# Three path segments (club/{club_id}/history) vs. /club/{club_id}'s two,
+# so this can't collide with it regardless of registration order -- kept
+# next to it anyway since it's the same club-scoped shape, just for
+# finalized tournaments. Powers club.py's new History tab.
+@router.get("/club/{club_id}/history")
+def get_club_tournament_history_route(club_id: str):
+    return get_club_tournament_history(club_id)
 
 
 # NOTE: this must stay registered BEFORE /{tournament_id} below -- same
@@ -139,6 +155,29 @@ def update_tournament_route(tournament_id: str, payload: TournamentUpdate):
         InvalidLinkError,
     ) as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+
+
+@router.post("/{tournament_id}/finalize")
+def finalize_tournament_route(tournament_id: str, payload: TournamentFinalizeRequest):
+    try:
+        return finalize_tournament(tournament_id, payload)
+    except TournamentNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    except NotClubAdminError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
+    except (TournamentAlreadyFinalizedError, TournamentNotReadyToFinalizeError) as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+
+
+@router.get("/{tournament_id}/winner")
+def get_tournament_winner_route(tournament_id: str):
+    winner = get_tournament_winner(tournament_id)
+    if not winner:
+        # Same 404 whether the tournament doesn't exist at all or just
+        # isn't finalized yet -- see get_tournament_winner's own
+        # docstring on why that distinction doesn't matter here.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tournament not finalized")
+    return winner
 
 
 @router.post("/{tournament_id}/rounds/{round_id}/tee-times/generate")
@@ -314,4 +353,21 @@ def get_tournament_pairs_leaderboard_route(tournament_id: str, round_id: str):
     try:
         return get_tournament_pairs_leaderboard(tournament_id, round_id)
     except TournamentRoundNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+# One extra path segment vs. the round-scoped route just above, so this
+# can't collide with it regardless of registration order (same reasoning
+# as /club/{club_id}/history vs. /club/{club_id}). This is the pairs
+# equivalent of individual tournaments' "Overall" tab -- unlike that one
+# (which just resolves client-side to the latest round's own already-
+# cumulative response, see _default_leaderboard_round/task #100), pairs
+# rounds carry no cross-round running total of their own, so Overall here
+# genuinely needs its own aggregation (get_tournament_pairs_overall_
+# leaderboard) rather than being a relabeled round fetch.
+@router.get("/{tournament_id}/pairs-leaderboard/overall")
+def get_tournament_pairs_overall_leaderboard_route(tournament_id: str):
+    try:
+        return get_tournament_pairs_overall_leaderboard(tournament_id)
+    except TournamentNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))

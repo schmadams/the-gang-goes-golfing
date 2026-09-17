@@ -723,21 +723,51 @@ def _tournament_info_panel(tournament, is_admin):
     handicap_allowance = tournament.get("handicap_allowance", 100)
     allowance_text = f"Handicap allowance: {handicap_allowance}%"
 
+    is_finalized = bool(tournament.get("finalized_at"))
+
     title_children = [html.Span(tournament.get("name", "Tournament"), className="t3g-tournament-card-title")]
-    if tournament.get("status") == "in_progress":
+    if is_finalized:
+        title_children.append(html.Span("FINAL", className="t3g-tournament-final-badge"))
+    elif tournament.get("status") == "in_progress":
         title_children.append(live_badge())
 
     # Opens tournament-edit-modal (handle_tournament_edit_modal below) --
     # same form as club.py's create-tournament modal, prefilled from this
-    # tournament's current data.
-    action = (
-        html.Button(
-            "Edit",
-            id="tournament-edit-button",
-            className="t3g-panel-action-button t3g-panel-action-button--secondary",
-            n_clicks=0,
+    # tournament's current data. Finalize Tournament sits alongside it,
+    # admin-only, and only while there's still something to finalize --
+    # see _tournament_finalize_modal/handle_tournament_finalize below.
+    # Both stay html.Button (not dbc.Button) to match every other action
+    # button build_panel_navbar renders elsewhere on this page.
+    action = None
+    if is_admin:
+        action = [
+            html.Button(
+                "Edit",
+                id="tournament-edit-button",
+                className="t3g-panel-action-button t3g-panel-action-button--secondary",
+                n_clicks=0,
+            ),
+        ]
+        if not is_finalized:
+            action.append(
+                html.Button(
+                    "Finalize Tournament",
+                    id="tournament-finalize-open-button",
+                    className="t3g-panel-action-button",
+                    n_clicks=0,
+                )
+            )
+
+    # Once finalized, this plain note points the way to the new Winners
+    # tab rather than repeating the winner's name in two places -- the
+    # Winners tab (see _winners_panel) is where the actual headline
+    # treatment lives.
+    finalized_note = (
+        html.P(
+            f"Finalized — winner: {tournament.get('winner_summary') or 'unknown'}. See the Winners tab.",
+            className="t3g-tournament-finalized-note mb-2",
         )
-        if is_admin
+        if is_finalized
         else None
     )
 
@@ -753,10 +783,223 @@ def _tournament_info_panel(tournament, is_admin):
                         _TOURNAMENT_FORMAT_LABELS.get(tournament.get("format"), tournament.get("format")),
                         className="t3g-tournament-format-badge",
                     ),
+                    finalized_note,
                     html.P(entry_description, className="t3g-empty-state mt-2 mb-1"),
                     html.P(range_text, className="t3g-empty-state mb-2") if range_text else None,
                     html.P(allowance_text, className="t3g-empty-state mb-2"),
                     html.Ul(round_items, className="t3g-tournament-round-list"),
+                ],
+            ),
+        ],
+    )
+
+
+def _tournament_finalize_modal():
+    """Confirmation modal for the admin-only Finalize Tournament button
+    (see _tournament_info_panel). Wording is deliberately generic --
+    who actually won isn't known until finalize_tournament computes it
+    server-side, so this can't preview a result the way a delete
+    confirmation might preview what's being removed."""
+    return dbc.Modal(
+        id="tournament-finalize-modal",
+        is_open=False,
+        children=[
+            dbc.ModalHeader(dbc.ModalTitle("Finalize Tournament")),
+            dbc.ModalBody(
+                children=[
+                    html.P(
+                        "This locks the final leaderboard and publishes the results. "
+                        "The Start Sheet and Live Round tabs will be replaced by a "
+                        "Winners tab. This can't be undone."
+                    ),
+                    html.Div(id="tournament-finalize-error", className="text-danger mt-2"),
+                ],
+            ),
+            dbc.ModalFooter(
+                [
+                    dbc.Button("Cancel", id="tournament-finalize-cancel", color="secondary"),
+                    dbc.Button("Finalize", id="tournament-finalize-confirm", color="primary"),
+                ]
+            ),
+        ],
+    )
+
+
+def _winners_panel(tournament, winner_detail):
+    """Winners tab -- visible only once tournament.get("finalized_at") is
+    set (see _tab_visibility/_tournament_subnav). Per the user's own
+    choice, this is deliberately just a simple headline treatment: who
+    won, their final score, and the course/dates the event was played
+    over -- not a podium and not a leaderboard repeat (that's what the
+    now-locked Leaderboard tab, _final_leaderboard_panel, is for).
+
+    winner_detail is the GET /tournaments/{id}/winner response (None if
+    that fetch failed for some reason even though finalized_at is set --
+    shouldn't normally happen, but this renders a plain fallback rather
+    than crashing if it does) -- carries the locked final_leaderboard
+    this needs to work out the winning score, since TournamentResponse
+    itself deliberately leaves that full snapshot out (see the model's
+    own comment)."""
+    if not winner_detail:
+        return html.Div(
+            className="t3g-panel",
+            children=[
+                build_panel_navbar("Winners"),
+                html.Div(
+                    html.P("Couldn't load the results right now.", className="t3g-empty-state"),
+                    className="t3g-panel-body",
+                ),
+            ],
+        )
+
+    winner_summary = winner_detail.get("winner_summary") or "No winner recorded"
+    final_leaderboard = winner_detail.get("final_leaderboard") or {}
+    is_pairs = tournament.get("format") in ("2bbb", "4bbb")
+
+    score_text = None
+    if is_pairs:
+        pairs = final_leaderboard.get("pairs") or []
+        if pairs:
+            higher_wins = final_leaderboard.get("scoring_style") == "stableford"
+            best = max(pairs, key=lambda p: p["total_metric"]) if higher_wins else min(pairs, key=lambda p: p["total_metric"])
+            unit = {"stableford": "pts", "nett": "nett", "gross": "gross"}.get(final_leaderboard.get("scoring_style"), "pts")
+            score_text = f"{best['total_metric']} {unit}"
+    else:
+        players = final_leaderboard.get("players") or []
+        if players:
+            metric_key, higher_wins, unit = {
+                "stableford": ("total_stableford", True, "pts"),
+                "net": ("total_nett", False, "nett"),
+            }.get(tournament.get("format"), ("total_gross", False, "gross"))
+            best = max(players, key=lambda p: p[metric_key]) if higher_wins else min(players, key=lambda p: p[metric_key])
+            score_text = f"{best[metric_key]} {unit}"
+
+    rounds = sorted(tournament.get("rounds", []), key=lambda r: r["round_number"])
+    course_text = None
+    date_text = None
+    if rounds:
+        course_names = []
+        for r in rounds:
+            label = r.get("club_name") or "Course TBC"
+            if r.get("course_name"):
+                label += f", {r['course_name']}"
+            course_names.append(label)
+        # De-duplicate while keeping order -- most tournaments play the
+        # same course every round, so this usually collapses to one name.
+        seen = []
+        for name in course_names:
+            if name not in seen:
+                seen.append(name)
+        course_text = " / ".join(seen)
+
+        dates = [r.get("round_date") for r in rounds if r.get("round_date")]
+        if len(dates) == 1:
+            date_text = dates[0]
+        elif dates:
+            date_text = f"{dates[0]} – {dates[-1]}"
+
+    return html.Div(
+        className="t3g-panel",
+        children=[
+            build_panel_navbar("Winners"),
+            html.Div(
+                className="t3g-panel-body t3g-winners-body",
+                children=[
+                    html.Div(tournament.get("name", "Tournament"), className="t3g-winners-tournament-name"),
+                    html.Div(winner_summary, className="t3g-winners-name"),
+                    html.Div(score_text, className="t3g-winners-score") if score_text else None,
+                    html.Div(course_text, className="t3g-winners-meta") if course_text else None,
+                    html.Div(date_text, className="t3g-winners-meta") if date_text else None,
+                ],
+            ),
+        ],
+    )
+
+
+def _final_leaderboard_table(final_leaderboard, tournament):
+    """Simple Pos/Name/Total table for a finalized tournament's locked
+    final_leaderboard snapshot. Individual formats reuse the exact same
+    _leaderboard_simple_table renderer the live leaderboard uses --
+    final_leaderboard is already shaped exactly like a normal
+    get_tournament_leaderboard response (it's just the last round's own
+    cumulative totals, computed once by finalize_tournament and never
+    touched again), just rendered with clickable=False since there's no
+    live scorecard-modal wiring set up on this static panel. Pairs
+    formats get their own small table here instead -- the cross-round
+    pairs aggregation (get_tournament_pairs_overall_leaderboard) has no
+    per-hole detail to show (a tournament's rounds can span different
+    courses/holes entirely), so there's no existing hole-by-hole table to
+    reuse the way individual formats can."""
+    is_pairs = tournament.get("format") in ("2bbb", "4bbb")
+    if not is_pairs:
+        mode = _default_leaderboard_mode(tournament)
+        return _leaderboard_simple_table(final_leaderboard, mode, clickable=False)
+
+    higher_wins = final_leaderboard.get("scoring_style") == "stableford"
+    metric_label = {"stableford": "Pts", "nett": "Nett", "gross": "Gross"}.get(
+        final_leaderboard.get("scoring_style"), "Pts"
+    )
+    pairs = sorted(final_leaderboard.get("pairs", []), key=lambda p: p["total_metric"], reverse=higher_wins)
+
+    if not pairs:
+        return html.P("No pairs to show.", className="t3g-empty-state")
+
+    rows = [
+        html.Tr(
+            [
+                html.Td(str(i + 1), className="t3g-leaderboard-pos-cell"),
+                html.Td(pair.get("name", "Unknown")),
+                html.Td(str(pair.get("total_metric", 0)), className="t3g-leaderboard-total-cell"),
+            ]
+        )
+        for i, pair in enumerate(pairs)
+    ]
+    return html.Div(
+        html.Table(
+            [
+                html.Thead(html.Tr([html.Th("Pos"), html.Th("Pair"), html.Th(metric_label)])),
+                html.Tbody(rows),
+            ],
+            className="t3g-leaderboard-table",
+        ),
+        className="t3g-leaderboard-wrap",
+    )
+
+
+def _final_leaderboard_panel(tournament, winner_detail):
+    """Replaces the live, round-tabbed, auto-refreshing _leaderboard_panel
+    / _pairs_leaderboard_panel entirely once a tournament is finalized --
+    there's nothing left to poll, and round tabs / an interval on an
+    event that's over would misleadingly suggest a round could still be
+    picked or could still change. Renders exactly tournament's locked
+    final_leaderboard (from winner_detail -- see _winners_panel's own
+    docstring on why that's a separate fetch), with a FINAL badge, no
+    polling, no round selector."""
+    if not winner_detail:
+        return html.Div(
+            className="t3g-panel",
+            children=[
+                build_panel_navbar("Leaderboard"),
+                html.Div(
+                    html.P("Couldn't load the final leaderboard right now.", className="t3g-empty-state"),
+                    className="t3g-panel-body",
+                ),
+            ],
+        )
+
+    final_leaderboard = winner_detail.get("final_leaderboard") or {}
+    return html.Div(
+        className="t3g-panel",
+        children=[
+            build_panel_navbar("Leaderboard"),
+            html.Div(
+                className="t3g-panel-body",
+                children=[
+                    html.Div(
+                        html.Span("FINAL", className="t3g-tournament-final-badge"),
+                        className="t3g-leaderboard-controls",
+                    ),
+                    _final_leaderboard_table(final_leaderboard, tournament),
                 ],
             ),
         ],
@@ -2006,7 +2249,7 @@ _TAB_BUTTON_ACTIVE = "t3g-tournament-tab t3g-tournament-tab--active"
 # liveround, in this fixed order -- should be shown/active on first load.
 # Anything unrecognized (including no ?tab= at all) falls back to "info",
 # same as before this existed.
-_TOURNAMENT_TAB_KEYS = ("info", "startsheet", "leaderboard", "pairs", "liveround")
+_TOURNAMENT_TAB_KEYS = ("info", "startsheet", "leaderboard", "pairs", "liveround", "winners")
 
 
 def _tab_visibility(active_tab):
@@ -2027,22 +2270,30 @@ def _tab_visibility(active_tab):
     return styles, classes
 
 
-def _tournament_subnav(slug, tab_classes, show_pairs_tab):
-    """Page-level subnav: Info/Start Sheet/Leaderboard/Pairings/Live Round
-    are client-side tabs (all five panel groups are always in the DOM,
-    toggled by switch_tournament_tab below), Return to Club is a real
-    navigation link -- same always-render-every-panel-toggle-with-style
-    approach the entry button uses, so the tab buttons' ids are stable
-    across renders. tab_classes (from _tab_visibility) is what makes the
-    *initial* active tab match whatever ?tab= value got here, rather than
-    always opening on Tournament Info.
+def _tournament_subnav(slug, tab_classes, show_pairs_tab, is_finalized):
+    """Page-level subnav: Info/Start Sheet/Leaderboard/Pairings/Live
+    Round/Winners are client-side tabs (all six panel groups are always
+    in the DOM, toggled by switch_tournament_tab below), Return to Club
+    is a real navigation link -- same always-render-every-panel-toggle-
+    with-style approach the entry button uses, so the tab buttons' ids
+    are stable across renders. tab_classes (from _tab_visibility) is what
+    makes the *initial* active tab match whatever ?tab= value got here,
+    rather than always opening on Tournament Info.
 
-    The Pairings button itself is always rendered (switch_tournament_tab's
-    Output list needs it to exist unconditionally, same "always in the
-    DOM" reasoning as every other tab) but hidden via inline style when
-    show_pairs_tab is False -- pairings only mean anything for a 2bbb/4bbb
-    tournament, see _pairings_panel."""
-    info_class, startsheet_class, leaderboard_class, pairs_class, liveround_class = tab_classes
+    The Pairings/Winners buttons are always rendered (switch_tournament_
+    tab's Output list needs every button to exist unconditionally, same
+    "always in the DOM" reasoning as every other tab) but hidden via
+    inline style when they don't apply -- Pairings only means anything
+    for a 2bbb/4bbb tournament (show_pairs_tab), Winners only once
+    finalize_tournament has actually run (is_finalized). Start Sheet and
+    Live Round are the mirror image: shown right up until finalization,
+    then hidden -- per the explicit request that finalizing "removes the
+    start sheet and live round tabs". Hiding the *button* rather than
+    deleting the panel is a UI simplification only; it doesn't itself
+    block the backend actions those tabs offer (starting a round,
+    generating tee times) -- there was no request to lock those down
+    server-side, just to stop surfacing them once the event is over."""
+    info_class, startsheet_class, leaderboard_class, pairs_class, liveround_class, winners_class = tab_classes
     return html.Div(
         className="t3g-tournament-subnav",
         children=html.Div(
@@ -2062,6 +2313,7 @@ def _tournament_subnav(slug, tab_classes, show_pairs_tab):
                             id="tournament-tab-startsheet-button",
                             className=startsheet_class,
                             n_clicks=0,
+                            style={"display": "none"} if is_finalized else {},
                         ),
                         html.Button(
                             "Leaderboard",
@@ -2081,6 +2333,14 @@ def _tournament_subnav(slug, tab_classes, show_pairs_tab):
                             id="tournament-tab-liveround-button",
                             className=liveround_class,
                             n_clicks=0,
+                            style={"display": "none"} if is_finalized else {},
+                        ),
+                        html.Button(
+                            "Winners",
+                            id="tournament-tab-winners-button",
+                            className=winners_class,
+                            n_clicks=0,
+                            style={} if is_finalized else {"display": "none"},
                         ),
                     ],
                 ),
@@ -2280,22 +2540,51 @@ def layout(slug=None, tournament_id=None, tab=None, **kwargs):
         ]
 
     (
-        (info_style, startsheet_style, leaderboard_style, pairs_style, liveround_style), tab_classes
+        (info_style, startsheet_style, leaderboard_style, pairs_style, liveround_style, winners_style), tab_classes
     ) = _tab_visibility(tab)
 
-    info_leaderboard_content = (
-        _pairs_leaderboard_panel(tournament, compact=True) if is_pairs_format
-        else _tournament_info_leaderboard_panel(tournament)
-    )
-    leaderboard_content = (
-        _pairs_leaderboard_panel(tournament) if is_pairs_format else _leaderboard_panel(tournament)
-    )
+    is_finalized = bool(tournament.get("finalized_at"))
+    # The locked final_leaderboard snapshot deliberately isn't part of
+    # TournamentResponse (see the model's own comment on why) -- only
+    # fetched here, and only once finalized, since nothing before that
+    # point has any use for it.
+    winner_detail = None
+    if is_finalized:
+        winner_resp = requests.get(f"{API_BASE_URL}/tournaments/{tournament_id}/winner")
+        winner_detail = winner_resp.json() if winner_resp.status_code == 200 else None
+
+    if is_finalized:
+        # Nothing left to poll once locked -- see _final_leaderboard_panel's
+        # own docstring on why this replaces the live panel outright rather
+        # than the live panel just being handed stale data.
+        info_leaderboard_content = html.Div(
+            className="t3g-panel",
+            children=[
+                build_panel_navbar("Leaderboard"),
+                html.Div(
+                    html.P(
+                        "This tournament has been finalized -- see the Leaderboard and Winners tabs.",
+                        className="t3g-empty-state",
+                    ),
+                    className="t3g-panel-body",
+                ),
+            ],
+        )
+        leaderboard_content = _final_leaderboard_panel(tournament, winner_detail)
+    else:
+        info_leaderboard_content = (
+            _pairs_leaderboard_panel(tournament, compact=True) if is_pairs_format
+            else _tournament_info_leaderboard_panel(tournament)
+        )
+        leaderboard_content = (
+            _pairs_leaderboard_panel(tournament) if is_pairs_format else _leaderboard_panel(tournament)
+        )
 
     return html.Div(
         className="t3g-page t3g-club-page",
         children=[
             dcc.Store(id="tournament-id-store", data=tournament_id),
-            _tournament_subnav(slug, tab_classes, is_pairs_format),
+            _tournament_subnav(slug, tab_classes, is_pairs_format, is_finalized),
             html.Div(
                 id="tournament-tab-panel-info",
                 style=info_style,
@@ -2330,15 +2619,22 @@ def layout(slug=None, tournament_id=None, tab=None, **kwargs):
                 style=liveround_style,
                 children=_live_round_panel(tournament, player_id),
             ),
+            html.Div(
+                id="tournament-tab-panel-winners",
+                style=winners_style,
+                children=_winners_panel(tournament, winner_detail),
+            ),
             dcc.Store(id="tournament-entry-action-store", data=_entry_toggle_meta(tournament, my_entry)[1]),
             _add_player_modal(add_options),
             dcc.Store(id="tournament-edit-original-store", data=tournament),
             _tournament_edit_modal(tournament, club_tournaments),
+            _tournament_finalize_modal(),
             dcc.Location(id="tournament-entry-redirect", refresh=True),
             dcc.Location(id="tournament-admin-action-redirect", refresh=True),
             dcc.Location(id="tournament-add-player-redirect", refresh=True),
             dcc.Location(id="tournament-remove-entrant-redirect", refresh=True),
             dcc.Location(id="tournament-edit-redirect", refresh=True),
+            dcc.Location(id="tournament-finalize-redirect", refresh=True),
         ],
     )
 
@@ -2349,6 +2645,7 @@ _TOURNAMENT_TAB_BUTTON_IDS = {
     "leaderboard": "tournament-tab-leaderboard-button",
     "pairs": "tournament-tab-pairs-button",
     "liveround": "tournament-tab-liveround-button",
+    "winners": "tournament-tab-winners-button",
 }
 
 
@@ -2358,20 +2655,23 @@ _TOURNAMENT_TAB_BUTTON_IDS = {
     Output("tournament-tab-panel-leaderboard", "style"),
     Output("tournament-tab-panel-pairs", "style"),
     Output("tournament-tab-panel-liveround", "style"),
+    Output("tournament-tab-panel-winners", "style"),
     Output("tournament-tab-info-button", "className"),
     Output("tournament-tab-startsheet-button", "className"),
     Output("tournament-tab-leaderboard-button", "className"),
     Output("tournament-tab-pairs-button", "className"),
     Output("tournament-tab-liveround-button", "className"),
+    Output("tournament-tab-winners-button", "className"),
     Input("tournament-tab-info-button", "n_clicks"),
     Input("tournament-tab-startsheet-button", "n_clicks"),
     Input("tournament-tab-leaderboard-button", "n_clicks"),
     Input("tournament-tab-pairs-button", "n_clicks"),
     Input("tournament-tab-liveround-button", "n_clicks"),
+    Input("tournament-tab-winners-button", "n_clicks"),
     prevent_initial_call=True,
 )
-def switch_tournament_tab(info_clicks, startsheet_clicks, leaderboard_clicks, pairs_clicks, liveround_clicks):
-    # Five tabs now -- same always-in-the-DOM, toggle-by-style approach,
+def switch_tournament_tab(info_clicks, startsheet_clicks, leaderboard_clicks, pairs_clicks, liveround_clicks, winners_clicks):
+    # Six tabs now -- same always-in-the-DOM, toggle-by-style approach,
     # just picking which one panel gets shown (and which one button gets
     # the active class) based on whichever tab was actually clicked, with
     # everything else hidden/inactive. Driven off _TOURNAMENT_TAB_KEYS/
@@ -2393,6 +2693,55 @@ def switch_tournament_tab(info_clicks, startsheet_clicks, leaderboard_clicks, pa
     styles = tuple(shown if i == index else hidden for i in range(count))
     classes = tuple(_TAB_BUTTON_ACTIVE if i == index else _TAB_BUTTON_BASE for i in range(count))
     return (*styles, *classes)
+
+
+@callback(
+    Output("tournament-finalize-modal", "is_open"),
+    Output("tournament-finalize-error", "children"),
+    Output("tournament-finalize-redirect", "href"),
+    Input("tournament-finalize-open-button", "n_clicks"),
+    Input("tournament-finalize-cancel", "n_clicks"),
+    Input("tournament-finalize-confirm", "n_clicks"),
+    State("tournament-id-store", "data"),
+    State("_pages_location", "pathname"),
+    prevent_initial_call=True,
+)
+def handle_tournament_finalize(open_clicks, cancel_clicks, confirm_clicks, tournament_id, current_pathname):
+    """Open/cancel just toggle the modal; Finalize POSTs to /tournaments/
+    {id}/finalize (see finalize_tournament) and, on success, redirects
+    back to this same page with a cache-busting query param -- same
+    "mutate then full reload" convention every other admin action on this
+    page uses (handle_tournament_entry, handle_add_player_modal, etc.).
+    layout() re-fetches the tournament fresh on that reload, so the
+    Start Sheet/Live Round tabs disappearing and the Winners tab/FINAL
+    leaderboard appearing both just fall out of the normal finalized_at-
+    aware render (see _tab_visibility/_tournament_subnav/layout) instead
+    of needing a partial client-side update here."""
+    triggered_id = dash.ctx.triggered_id
+
+    if triggered_id == "tournament-finalize-open-button":
+        return True, "", dash.no_update
+
+    if triggered_id == "tournament-finalize-cancel":
+        return False, "", dash.no_update
+
+    if triggered_id == "tournament-finalize-confirm":
+        admin_id = session.get("player_id")
+        response = requests.post(
+            f"{API_BASE_URL}/tournaments/{tournament_id}/finalize",
+            json={"admin_id": admin_id},
+        )
+        if response.status_code == 200:
+            return False, "", f"{current_pathname}?_r={time.time()}"
+        try:
+            detail = response.json().get("detail", "Couldn't finalize this tournament.")
+            if not isinstance(detail, str):
+                detail = "Couldn't finalize this tournament."
+        except ValueError:
+            detail = "Couldn't finalize this tournament."
+        return True, detail, dash.no_update
+
+    return dash.no_update, dash.no_update, dash.no_update
 
 
 @callback(
@@ -3578,6 +3927,51 @@ def _pairs_leaderboard_table(data, clickable=True):
     )
 
 
+def _pairs_overall_table(data):
+    """Pos/Pair/Rounds/<metric> -- the Overall tab's table (see
+    _pairs_leaderboard_panel), built from get_tournament_pairs_overall_
+    leaderboard's response shape (each pair's total_metric summed across
+    every round, plus rounds_played/round_count) rather than
+    _pairs_leaderboard_table's per-round shape (which carries "holes" and
+    per-hole detail for exactly one round). Deliberately not clickable --
+    there's no single round's scorecard to open for a total that may span
+    different courses/holes across rounds (see get_tournament_pairs_
+    overall_leaderboard's own docstring). "Rounds" (e.g. "2/2") stands in
+    for the per-round table's "Thru" column -- it's the Overall
+    equivalent: how much of the whole event this pair's total actually
+    reflects, so a pair that missed a round reads differently from one
+    that played every round and simply scored lower."""
+    if not data:
+        return html.P("Loading…", className="t3g-empty-state")
+
+    pairs = data.get("pairs", [])
+    if not pairs:
+        return html.P("No pairings set yet -- add pairs on the Pairings tab.", className="t3g-empty-state")
+
+    scoring_style = data.get("scoring_style", "stableford")
+    metric_label = _PAIRS_METRIC_COLUMN_LABELS.get(scoring_style, "Pts")
+    round_count = data.get("round_count", 0)
+
+    rows = [
+        html.Tr(
+            [
+                html.Td(str(index + 1), className="t3g-leaderboard-pos"),
+                html.Td(pair.get("name") or "Unknown pair"),
+                html.Td(f"{pair.get('rounds_played', 0)}/{round_count}", className="text-center"),
+                html.Td(str(pair.get("total_metric", 0)), className="text-center fw-bold"),
+            ]
+        )
+        for index, pair in enumerate(pairs)
+    ]
+    return html.Table(
+        className="t3g-leaderboard-table t3g-pairs-leaderboard-table",
+        children=[
+            html.Thead(html.Tr([html.Th("Pos"), html.Th("Pair"), html.Th("Rounds"), html.Th(metric_label)])),
+            html.Tbody(rows),
+        ],
+    )
+
+
 def _pairs_leaderboard_scorecard_modal():
     """Opened by clicking a pair's row in the full pairs Leaderboard tab
     (see toggle_tournament_pairs_leaderboard_scorecard) -- same shell as
@@ -3666,15 +4060,27 @@ def _pairs_leaderboard_panel(tournament, compact=False):
     _leaderboard_panel (compact=False, the full Leaderboard tab) and
     _tournament_info_leaderboard_panel (compact=True, the Tournament Info
     tab's half-width slot), rendered instead of those two when the
-    tournament's format is a pairs one (see layout()). Deliberately
-    simpler than either: pairs only have the one number, so there's no
-    Gross/Nett/Detailed toggle to offer, and (unlike the individual
-    board's "Overall" tab) no cross-round cumulative total yet -- each
-    round tab shows just that round's own pairs standings. id_prefix
-    keeps this panel's ids distinct from the compact instance's, since
-    both can be in the DOM at once (Info tab + Leaderboard tab), same
-    reasoning as tournament-leaderboard-* vs tournament-info-leaderboard-*
-    already being two separate id families for the individual board."""
+    tournament's format is a pairs one (see layout()). Simpler than the
+    individual board in one respect: pairs only have the one number, so
+    there's no Gross/Nett/Detailed toggle to offer. It DOES get its own
+    "Overall" tab, first among the round tabs and the default selection --
+    same reasoning as the individual board's own Overall tab (see
+    _leaderboard_panel), just resolved differently: the individual board's
+    Overall is a client-side relabel of "whichever round is furthest
+    along" (each round's own response already carries that round's
+    cross-round cumulative totals), but a pairs round's response has no
+    such running total, so Overall here is backed by a genuinely separate
+    aggregation -- get_tournament_pairs_overall_leaderboard, fetched via
+    load_tournament_pairs_leaderboard's own "overall" branch and rendered
+    by _pairs_overall_table instead of _pairs_leaderboard_table. Without
+    this tab, whichever round the panel happened to default to read as
+    "the" standings with no way to tell it wasn't the cumulative picture --
+    the individual board never has that ambiguity, so pairs shouldn't
+    either. id_prefix keeps this panel's ids distinct from the compact
+    instance's, since both can be in the DOM at once (Info tab +
+    Leaderboard tab), same reasoning as tournament-leaderboard-* vs
+    tournament-info-leaderboard-* already being two separate id families
+    for the individual board."""
     rounds = sorted(tournament.get("rounds", []), key=lambda r: r["round_number"])
     if not rounds:
         return html.Div(
@@ -3689,21 +4095,39 @@ def _pairs_leaderboard_panel(tournament, compact=False):
     default_round_id = default_round["id"] if default_round else rounds[0]["id"]
     id_prefix = "tournament-info-pairs-leaderboard" if compact else "tournament-pairs-leaderboard"
 
+    # compact (the Tournament Info tab's half-width slot) keeps its old
+    # behavior -- no tabs at all, just whichever round is furthest along
+    # (_default_leaderboard_round) -- same as before. Only the full
+    # Leaderboard tab gets Overall + per-round tabs, always (not gated on
+    # len(rounds) > 1 the way this used to be) so Round 1 of a single-
+    # round tournament still reads unambiguously against an Overall tab
+    # sitting right next to it, rather than looking like the only view
+    # there is.
     controls = []
-    if not compact and len(rounds) > 1:
-        round_keys = [r["id"] for r in rounds]
-        round_classes = _leaderboard_round_classes(round_keys, default_round_id)
+    default_round_key = default_round_id
+    if not compact:
+        default_round_key = "overall"
+        round_keys = ["overall"] + [r["id"] for r in rounds]
+        round_classes = _leaderboard_round_classes(round_keys, default_round_key)
         controls.append(
             html.Div(
                 className="t3g-leaderboard-format-tabs t3g-leaderboard-round-tabs",
                 children=[
                     html.Button(
-                        f"Round {r['round_number']}",
-                        id={"type": f"{id_prefix}-round-button", "round_id": r["id"]},
-                        className=round_classes[r["id"]],
+                        "Overall",
+                        id={"type": f"{id_prefix}-round-button", "round_id": "overall"},
+                        className=round_classes["overall"],
                         n_clicks=0,
-                    )
-                    for r in rounds
+                    ),
+                    *[
+                        html.Button(
+                            f"Round {r['round_number']}",
+                            id={"type": f"{id_prefix}-round-button", "round_id": r["id"]},
+                            className=round_classes[r["id"]],
+                            n_clicks=0,
+                        )
+                        for r in rounds
+                    ],
                 ],
             )
         )
@@ -3727,7 +4151,7 @@ def _pairs_leaderboard_panel(tournament, compact=False):
         html.Div(id=f"{id_prefix}-error", className="text-danger mb-2"),
         table_loading,
         dcc.Store(id=f"{id_prefix}-store"),
-        dcc.Store(id=f"{id_prefix}-round-store", data=default_round_id),
+        dcc.Store(id=f"{id_prefix}-round-store", data=default_round_key),
         dcc.Interval(id=f"{id_prefix}-refresh-interval", interval=_LEADERBOARD_REFRESH_INTERVAL_MS, n_intervals=0),
     ])
     if not compact:
@@ -3908,9 +4332,16 @@ def persist_tournament_pairs(draft, is_admin, tournament_id):
 def load_tournament_pairs_leaderboard(round_id, n_intervals, tournament_id):
     if not round_id or not tournament_id:
         raise PreventUpdate
-    response = requests.get(
-        f"{API_BASE_URL}/tournaments/{tournament_id}/pairs-leaderboard", params={"round_id": round_id}
-    )
+    # "overall" is a genuinely separate endpoint here (not a client-side
+    # relabel the way the individual board's Overall is -- see
+    # _pairs_leaderboard_panel's own docstring), so this branches on it
+    # rather than always hitting the round-scoped route.
+    if round_id == "overall":
+        response = requests.get(f"{API_BASE_URL}/tournaments/{tournament_id}/pairs-leaderboard/overall")
+    else:
+        response = requests.get(
+            f"{API_BASE_URL}/tournaments/{tournament_id}/pairs-leaderboard", params={"round_id": round_id}
+        )
     if response.status_code != 200:
         return dash.no_update, "Couldn't load the leaderboard right now."
     return response.json(), ""
@@ -3923,6 +4354,12 @@ def load_tournament_pairs_leaderboard(round_id, n_intervals, tournament_id):
 def render_tournament_pairs_leaderboard_table(leaderboard_data):
     if not leaderboard_data:
         raise PreventUpdate
+    # The overall aggregation's response has no "round_id" key (it isn't
+    # scoped to one round) -- the round-scoped response always does, so
+    # this is a safe, cheap way to tell the two shapes apart without a
+    # separate store/flag to thread through.
+    if "round_id" not in leaderboard_data:
+        return _pairs_overall_table(leaderboard_data)
     return _pairs_leaderboard_table(leaderboard_data, clickable=True)
 
 

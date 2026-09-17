@@ -141,6 +141,72 @@ def create_tournament_post(club_id: str, tournament_id: str, tournament_name: st
     return response.data[0]
 
 
+def create_tournament_finalized_post(
+    club_id: str,
+    tournament_id: str,
+    tournament_name: str,
+    tournament_format: str,
+    winner_summary: str | None,
+    final_leaderboard: dict,
+) -> dict:
+    """Automated post whenever finalize_tournament succeeds -- author_id
+    is left null (same reasoning as a 'scorecard' post: this announces
+    the whole field's result, not one person's update, so there's no one
+    author to attribute it to -- see this module's own docstring on
+    author_id's nullability). tournament_format and the full final_
+    leaderboard snapshot both go in metadata so the feed card can render
+    the winner headline and a Pos/Name/Score table (first 5 rows, the
+    rest scrollable -- same locked snapshot the tournament's own Winners/
+    FINAL leaderboard tabs show, see _final_leaderboard_table in
+    frontend/pages/tournament.py) without a second fetch back to the
+    tournament itself. Best-effort from its call site in finalize_
+    tournament, same reasoning as create_tournament_post -- a feed post
+    failing should never be able to undo an otherwise-successful
+    finalize."""
+    response = (
+        supabase
+        .table("club_posts")
+        .insert({
+            "club_id": club_id,
+            "post_type": "tournament_finalized",
+            "author_id": None,
+            "metadata": {
+                "tournament_id": tournament_id,
+                "tournament_name": tournament_name,
+                "tournament_format": tournament_format,
+                "winner_summary": winner_summary,
+                "final_leaderboard": final_leaderboard,
+            },
+        })
+        .execute()
+    )
+    post = response.data[0]
+
+    # Best-effort fan-out to every club member, same pattern as
+    # create_manual_post's own notification block -- a finalized
+    # tournament is exactly the kind of thing every member (not just
+    # whoever's looking at the feed right now) would want a heads-up on.
+    try:
+        club_response = supabase.table("clubs").select("slug, name").eq("id", club_id).maybe_single().execute()
+        club = (club_response.data if club_response is not None else None) or {}
+        club_slug = club.get("slug")
+
+        for member in list_players_in_club(club_id):
+            member_id = member.get("player_id")
+            if not member_id:
+                continue
+            create_notification(
+                member_id,
+                "home",
+                f"{tournament_name} is finalized" + (f" -- {winner_summary} won" if winner_summary else ""),
+                url=f"/clubs/{club_slug}/tournaments/{tournament_id}" if club_slug else None,
+            )
+    except Exception as exc:
+        print(f"[NOTIFY] Failed to notify club {club_id} members of finalized tournament {tournament_id}: {exc}")
+
+    return post
+
+
 def get_club_feed(club_id: str, limit: int = 30) -> list[dict]:
     """Newest-first feed for one club -- every post_type mixed together
     in one list. join/tournament/manual posts come straight from

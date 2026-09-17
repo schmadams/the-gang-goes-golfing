@@ -102,11 +102,26 @@
     color: var(--t3g-ink) !important;
     text-decoration: none !important;
     transition: transform 0.15s ease, box-shadow 0.15s ease;
+    border-left: 4px solid var(--t3g-border);
 }
 
 .t3g-tournament-item:hover {
     transform: translateY(-3px);
     box-shadow: none;
+}
+
+/* Lifecycle status border -- see _tournament_lifecycle_status in
+   club.py. Upcoming stays the plain neutral border above (nothing to
+   highlight yet); underway reuses the same red as .t3g-live-badge so a
+   tournament that's live reads consistently wherever that color shows up
+   in the app; finished reuses the existing success green token, same as
+   every other "this is done" indicator (sign-off confirmations etc). */
+.t3g-tournament-item--underway {
+    border-left-color: #c0392b;
+}
+
+.t3g-tournament-item--finished {
+    border-left-color: var(--t3g-success-text);
 }
 
 .t3g-tournament-item-title-group {
@@ -2031,4 +2046,201 @@
     color: var(--t3g-muted);
     font-size: 1rem;
     font-weight: 700;
+}
+
+/* Tournament finalization -- Finalize button (plain .t3g-panel-action-
+   button, no new class needed there), FINAL badge, the Tournament Info
+   tab's finalized note, the Winners tab's headline treatment, the static
+   final-leaderboard table, and club.py's History tab. See tournament.py's
+   _tournament_info_panel/_winners_panel/_final_leaderboard_panel and
+   club.py's _tournament_history_panel. */
+
+/* FINAL badge -- reuses live_badge's own pill shape/sizing (see
+   .t3g-liveround-inprogress-badge above and live_badge in components/
+   scorecard.py) but in the accent color rather than success-green, since
+   this marks something finished, not something currently happening.
+   Sits next to the tournament title (_tournament_info_panel) and above
+   the locked leaderboard table (_final_leaderboard_panel) -- same class,
+   two call sites. */
+.t3g-tournament-final-badge {
+    display: inline-block;
+    color: var(--t3g-accent);
+    background: var(--t3g-accent-soft);
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    padding: 0.3rem 0.65rem;
+    border-radius: var(--t3g-radius-md);
+    white-space: nowrap;
+}
+
+/* Tournament Info tab's one-line pointer to the Winners tab, shown only
+   once finalized_at is set -- quiet like every other .t3g-empty-state
+   note on this page, not a shout, since the actual headline lives on the
+   Winners tab itself. */
+.t3g-tournament-finalized-note {
+    color: var(--t3g-muted);
+    font-size: 0.85rem;
+}
+
+/* Winners tab -- deliberately just a simple headline (per the product
+   choice: winner, final score, course/dates -- not a podium, not a
+   leaderboard repeat), so this is centered display type rather than a
+   table or list. */
+.t3g-winners-body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 0.35rem;
+    padding: 2rem 1rem;
+}
+
+.t3g-winners-tournament-name {
+    color: var(--t3g-muted);
+    font-size: 0.85rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.t3g-winners-name {
+    color: var(--t3g-ink);
+    font-size: 1.8rem;
+    font-weight: 800;
+    line-height: 1.15;
+}
+
+.t3g-winners-score {
+    color: var(--t3g-accent);
+    font-size: 1.1rem;
+    font-weight: 700;
+}
+
+.t3g-winners-meta {
+    color: var(--t3g-muted);
+    font-size: 0.85rem;
+}
+
+@media (max-width: 640px) {
+    .t3g-winners-name {
+        font-size: 1.4rem;
+    }
+}
+
+/* Static final-leaderboard table (pairs branch of _final_leaderboard_
+   table -- the individual branch reuses .t3g-leaderboard-table/-wrap
+   wholesale via _leaderboard_simple_table, so needs nothing new here).
+   Plain table styling matching the app's other real <table> elements
+   (e.g. .t3g-entrant-table) rather than the Masters-grid look, since
+   there's no per-hole detail in this cross-round summary to justify
+   that treatment -- see get_tournament_pairs_overall_leaderboard's own
+   docstring on why. */
+.t3g-leaderboard-table .t3g-leaderboard-pos-cell {
+    width: 2.5rem;
+    color: var(--t3g-muted);
+    font-weight: 700;
+}
+
+.t3g-leaderboard-table .t3g-leaderboard-total-cell {
+    text-align: right;
+    font-weight: 800;
+    color: var(--t3g-ink);
+}
+
+/* tournament_finalized feed cards (club.py's Feed tab and home.py's own
+   copy) -- shows the full locked final_leaderboard, but capped to about
+   5 rows tall so a big field doesn't dominate the feed; the rest is
+   reachable by scrolling inside the card instead of pushing everything
+   below it down the page. Sized off .t3g-leaderboard-compact's own row
+   metrics (~0.55rem/0.4rem cell padding) -- header row plus 5 body rows
+   at that density comes to roughly this height. thead is sticky so the
+   column labels stay pinned while scrolling through the rest of the
+   field. */
+.t3g-feed-finalized-leaderboard-wrap {
+    max-height: 230px;
+    overflow-y: auto;
+    border: 1px solid var(--t3g-border);
+    border-radius: var(--t3g-radius-md);
+    margin-top: 0.5rem;
+}
+
+.t3g-feed-finalized-leaderboard-wrap .t3g-leaderboard-table thead {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+/* club.py's History tab -- one row per finalized tournament (tournament
+   name / year / winner), same tile language as .t3g-tournament-item so
+   this reads as "more of the same list", just a different row shape
+   (three columns instead of a title+meta stack). Wrapped in a real
+   dcc.Link (not a button) -- .t3g-tournament-history-link strips the
+   underline/color a bare <a> would otherwise add, same treatment
+   .t3g-tournament-item's own link wrapper already gets. */
+.t3g-tournament-history-link {
+    display: block;
+    text-decoration: none;
+    color: inherit;
+}
+
+.t3g-tournament-history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+}
+
+.t3g-tournament-history-row {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) 4rem minmax(0, 2fr);
+    align-items: center;
+    gap: 0.75rem;
+    background: var(--t3g-surface);
+    border: 1px solid var(--t3g-border);
+    border-radius: var(--t3g-radius-md);
+    padding: 0.75rem 0.9rem;
+    transition: background-color 0.15s ease;
+}
+
+.t3g-tournament-history-row:hover {
+    background: var(--t3g-surface-raised);
+}
+
+.t3g-tournament-history-name {
+    color: var(--t3g-ink);
+    font-weight: 700;
+    font-size: 0.92rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.t3g-tournament-history-year {
+    color: var(--t3g-muted);
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-align: center;
+}
+
+.t3g-tournament-history-winner {
+    color: var(--t3g-accent);
+    font-weight: 700;
+    font-size: 0.88rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: right;
+}
+
+@media (max-width: 640px) {
+    .t3g-tournament-history-row {
+        grid-template-columns: 1fr;
+        gap: 0.15rem;
+        text-align: left;
+    }
+
+    .t3g-tournament-history-year,
+    .t3g-tournament-history-winner {
+        text-align: left;
+    }
 }

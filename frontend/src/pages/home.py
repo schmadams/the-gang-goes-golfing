@@ -110,8 +110,14 @@ def _handicap_delta_badge(change):
     """{"before": x, "after": y} -> a small colored badge -- green/down
     for an improved (lower) Handicap Index, amber/up if it went the other
     way. None (no change, or a solo round which never gets one at all --
-    see create_round_post's docstring) renders nothing."""
-    if not change or change.get("before") is None or change.get("after") is None:
+    see create_round_post's docstring) renders nothing. Some older
+    round_posts rows -- created before finish_round standardized on the
+    {"before", "after"} shape (see that function's own comment) -- have a
+    plain float here instead of a dict, from whatever the feature stored
+    at the time; isinstance-guarding against that rather than assuming
+    every historic row matches today's shape, so an old post can't crash
+    the whole feed."""
+    if not change or not isinstance(change, dict) or change.get("before") is None or change.get("after") is None:
         return None
     before, after = change["before"], change["after"]
     improved = after < before
@@ -493,6 +499,55 @@ def _feed_round_post_card(post, player_id):
     )
 
 
+def _finalized_post_leaderboard_rows(final_leaderboard, tournament_format):
+    """[(pos, name, score_text), ...] best-first -- duplicated verbatim
+    from club.py's own copy, see that one's docstring for the full
+    reasoning on the pairs-vs-individual shape split and the NR-sorts-
+    last tiebreak."""
+    if tournament_format in ("2bbb", "4bbb"):
+        higher_wins = final_leaderboard.get("scoring_style") == "stableford"
+        unit = {"stableford": "pts", "nett": "nett", "gross": "gross"}.get(
+            final_leaderboard.get("scoring_style"), "pts"
+        )
+        pairs = sorted(final_leaderboard.get("pairs", []), key=lambda p: p.get("total_metric", 0), reverse=higher_wins)
+        return [(i + 1, p.get("name") or "Unknown pair", f"{p.get('total_metric', 0)} {unit}") for i, p in enumerate(pairs)]
+
+    metric_key, higher_wins, unit = {
+        "stableford": ("total_stableford", True, "pts"),
+        "net": ("total_nett", False, "nett"),
+    }.get(tournament_format, ("total_gross", False, "gross"))
+    players = sorted(
+        final_leaderboard.get("players", []),
+        key=lambda p: (bool(p.get("is_nr")), 0 if higher_wins else 1, -p.get(metric_key, 0) if higher_wins else p.get(metric_key, 0)),
+    )
+    return [(i + 1, p.get("name") or "Unknown player", f"{p.get(metric_key, 0)} {unit}") for i, p in enumerate(players)]
+
+
+def _finalized_post_leaderboard_table(final_leaderboard, tournament_format):
+    """Pos/Name/Score table, capped to a ~5-row scroll window -- see
+    club.py's own copy for the full reasoning."""
+    rows = _finalized_post_leaderboard_rows(final_leaderboard, tournament_format)
+    if not rows:
+        return None
+    return html.Div(
+        html.Table(
+            [
+                html.Thead(html.Tr([html.Th("Pos"), html.Th("Name"), html.Th("Score")])),
+                html.Tbody([
+                    html.Tr([
+                        html.Td(str(pos), className="t3g-leaderboard-pos-cell"),
+                        html.Td(name),
+                        html.Td(score, className="t3g-leaderboard-total-cell"),
+                    ])
+                    for pos, name, score in rows
+                ]),
+            ],
+            className="t3g-leaderboard-table t3g-leaderboard-compact",
+        ),
+        className="t3g-feed-finalized-leaderboard-wrap",
+    )
+
+
 def _feed_post_card(post, player_id):
     post_type = post.get("post_type")
     if post_type == "scorecard":
@@ -500,6 +555,49 @@ def _feed_post_card(post, player_id):
 
     timestamp_text = _format_feed_timestamp(post.get("created_at"))
     author_name = post.get("author_name") or "A player"
+
+    if post_type == "tournament_finalized":
+        metadata = post.get("metadata") or {}
+        tournament_name = metadata.get("tournament_name") or "A tournament"
+        tournament_id = metadata.get("tournament_id")
+        winner_summary = metadata.get("winner_summary")
+        final_leaderboard = metadata.get("final_leaderboard") or {}
+        tournament_format = metadata.get("tournament_format")
+        slug = post.get("club_slug")
+
+        name_node = (
+            dcc.Link(tournament_name, href=f"/clubs/{slug}/tournaments/{tournament_id}")
+            if tournament_id and slug
+            else tournament_name
+        )
+        headline = (
+            html.P([name_node, " is finalized -- ", html.Strong(winner_summary), " won."], className="t3g-feed-post-body")
+            if winner_summary
+            else html.P([name_node, " is finalized."], className="t3g-feed-post-body")
+        )
+        return html.Div(
+            className="t3g-feed-post",
+            children=[
+                html.Div(
+                    className="t3g-feed-post-header",
+                    children=[
+                        html.Span("🏆", className="t3g-feed-post-icon"),
+                        html.Div(
+                            className="t3g-feed-post-header-text",
+                            children=[
+                                html.Span(f"{tournament_name} -- Final Results", className="t3g-feed-post-author"),
+                                html.Div(
+                                    className="t3g-feed-post-timestamp-row",
+                                    children=[html.Span(timestamp_text, className="t3g-feed-post-timestamp"), _club_tag(post)],
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+                headline,
+                _finalized_post_leaderboard_table(final_leaderboard, tournament_format),
+            ],
+        )
 
     if post_type == "join":
         return html.Div(

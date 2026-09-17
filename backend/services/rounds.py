@@ -2318,13 +2318,16 @@ def sign_off_round(round_id: str, player_id: str) -> dict:
                 .execute()
             )
         accepted_player_ids = [row["player_id"] for row in (accepted_response.data or [])]
-        # Handicap deltas per player -- read each one's current index
-        # BEFORE recalculating, so the round post can show "your
-        # handicap moved from X to Y" rather than just the after-value.
-        # Uses the 't3g' source specifically (not the bare/no-source
-        # lookup) since this delta is about the WHS recalculation this
-        # round just triggered, not whichever source happens to be
-        # "current" for the player overall.
+        # Handicap before/after per player -- read each one's current
+        # index BEFORE recalculating, so the round post can show "your
+        # handicap moved from X to Y" (see _handicap_delta_badge in
+        # frontend/src/pages/home.py, which renders exactly this
+        # {"before", "after"} shape -- NOT a pre-computed delta, since
+        # the badge's own text needs both raw values, not just the
+        # difference between them). Uses the 't3g' source specifically
+        # (not the bare/no-source lookup) since this is about the WHS
+        # recalculation this round just triggered, not whichever source
+        # happens to be "current" for the player overall.
         handicap_changes = {}
         before_by_player = {
             pid: (get_current_player_handicap(pid, source="t3g") or {}).get("handicap")
@@ -2338,7 +2341,7 @@ def sign_off_round(round_id: str, player_id: str) -> dict:
             after = (get_current_player_handicap(pid, source="t3g") or {}).get("handicap")
             before = before_by_player.get(pid)
             if before is not None and after is not None:
-                handicap_changes[pid] = round(after - before, 1)
+                handicap_changes[pid] = {"before": before, "after": after}
 
         # Best-effort, same reasoning as every other automated feed post
         # hook (join/tournament) -- a feed post failing should never be

@@ -1,4 +1,6 @@
 # target path: backend/services/tournaments.py (full replacement)
+from datetime import datetime, timezone
+
 from backend.database import supabase
 from backend.models.tournament import (
     VALID_ENTRY_MODES,
@@ -7,6 +9,7 @@ from backend.models.tournament import (
     VALID_PAIRS_SCORING_STYLES,
     VALID_TOURNAMENT_FORMATS,
     TournamentCreate,
+    TournamentFinalizeRequest,
     TournamentUpdate,
 )
 from backend.services.handicaps import get_current_player_handicap, get_effective_handicap_source
@@ -63,6 +66,22 @@ class TournamentRoundNotFoundError(Exception):
 class InvalidLinkError(Exception):
     """Raised when a linked_tournament_id fails one of the sharing rules
     below -- see _validate_link."""
+
+
+class TournamentNotReadyToFinalizeError(Exception):
+    """Raised when finalize_tournament is called before every round has
+    been played and fully signed off -- see
+    _all_tournament_rounds_completed. Its message is the specific
+    admin-facing reason (which round, and why) rather than a generic
+    "not ready" string."""
+
+
+class TournamentAlreadyFinalizedError(Exception):
+    """Raised when finalize_tournament is called on a tournament whose
+    finalized_at is already set -- finalizing is a one-way action (there's
+    no un-finalize), so a second attempt is almost always a stale page
+    double-submitting the same click rather than a real request to
+    recompute the standings."""
 
 
 def _get_club(club_id: str) -> dict | None:
@@ -758,15 +777,24 @@ def get_tournament_leaderboard(tournament_id: str, round_id: str) -> dict:
         if entrant.get("handicap_override") is not None:
             handicap_by_player[entrant["player_id"]] = entrant["handicap_override"]
             continue
-        # BUG FIX: this used to call get_current_player_handicap with no
-        # source, so a player's live leaderboard Net/Stableford could
-        # silently flip between using their T3G-calculated handicap and a
-        # manually-typed one depending on which was most recently
-        # written -- not even the source captured at entry time
-        # (entrant["handicap_source"]). Resolving it the same way
-        # enter_tournament itself did (entry's own choice, falling back
-        # to the player's account preference) keeps this tournament's
-        # scoring consistent with whatever was actually agreed at entry.
+        # Frozen at entry, not a live lookup -- standard competition
+        # convention is that a player's handicap for the event is fixed
+        # once the field is set, so a round played elsewhere (or a WHS
+        # recalculation from finishing an earlier round of THIS
+        # tournament) never moves their tournament scoring mid-event.
+        # handicap_at_entry is captured once, at the moment they entered
+        # (see enter_tournament/add_entrant in tournament_entrants.py),
+        # via this exact same source-resolution -- so this isn't a
+        # behavior change from what used to run here, just WHEN it's
+        # evaluated: once, at entry, instead of live on every leaderboard
+        # poll. Falls back to a live lookup only for the edge case of an
+        # entrant row with no handicap_at_entry on record at all (a
+        # player who entered before this field existed, or one whose
+        # handicap was unavailable at entry time) so the leaderboard
+        # still shows a number rather than silently dropping them.
+        if entrant.get("handicap_at_entry") is not None:
+            handicap_by_player[entrant["player_id"]] = entrant["handicap_at_entry"]
+            continue
         source = get_effective_handicap_source(entrant["player_id"], entrant.get("handicap_source"))
         handicap_row = get_current_player_handicap(entrant["player_id"], source=source)
         handicap_by_player[entrant["player_id"]] = handicap_row["handicap"] if handicap_row else None
@@ -906,6 +934,67 @@ def _per_hole_pair_metric(
     return values
 
 
+def _pair_round_metrics(
+    pair: dict,
+    metric_by_player: dict[str, list[int | None]],
+    scores_by_player: dict[str, dict[int, int]],
+    higher_wins: bool,
+) -> dict:
+    """One pair's better-ball combination for a single round -- extracted
+    from get_tournament_pairs_leaderboard so get_tournament_pairs_overall_
+    leaderboard (which needs the exact same per-round combination, just
+    summed across every round instead of shown for one) doesn't duplicate
+    the hole-by-hole "better of the two partners' metric" loop. See
+    get_tournament_pairs_leaderboard's own docstring for the full
+    better-ball/masking rules this implements -- unchanged here, just
+    lifted out.
+
+    metric_by_player/scores_by_player are one round's worth of data
+    (built by the caller via _per_hole_pair_metric / _tournament_round_
+    scores_by_player for that round's tee/holes_meta) -- this function
+    itself has no notion of which round it's looking at."""
+    a_id = str(pair["player_id_a"])
+    b_id = str(pair["player_id_b"])
+    a_metric = metric_by_player.get(a_id)
+    b_metric = metric_by_player.get(b_id)
+    a_strokes_by_hole = scores_by_player.get(a_id, {})
+    b_strokes_by_hole = scores_by_player.get(b_id, {})
+
+    holes_metric: list[int | None] = []
+    a_holes_score: list[int | None] = []
+    b_holes_score: list[int | None] = []
+    running = 0
+    thru = 0
+    for i in range(18):
+        hole_number = i + 1
+        a = a_metric[i] if a_metric else None
+        b = b_metric[i] if b_metric else None
+        candidates = [v for v in (a, b) if v is not None]
+        if not candidates:
+            holes_metric.append(None)
+        else:
+            thru += 1
+            running += max(candidates) if higher_wins else min(candidates)
+            holes_metric.append(running)
+
+        if higher_wins:
+            a_contributed = a is not None and (b is None or a >= b)
+            b_contributed = b is not None and (a is None or b > a)
+        else:
+            a_contributed = a is not None and (b is None or a <= b)
+            b_contributed = b is not None and (a is None or b < a)
+        a_holes_score.append(a_strokes_by_hole.get(hole_number) if a_contributed else None)
+        b_holes_score.append(b_strokes_by_hole.get(hole_number) if b_contributed else None)
+
+    return {
+        "holes_metric": holes_metric,
+        "total_metric": running,
+        "thru": thru,
+        "a_holes_score": a_holes_score,
+        "b_holes_score": b_holes_score,
+    }
+
+
 def get_tournament_pairs_leaderboard(tournament_id: str, round_id: str) -> dict:
     """Better-ball pairs leaderboard for one round of a *pairs* tournament
     (format 2bbb/4bbb) -- same live-poll shape as get_tournament_leaderboard
@@ -960,6 +1049,13 @@ def get_tournament_pairs_leaderboard(tournament_id: str, round_id: str) -> dict:
         if entrant.get("handicap_override") is not None:
             handicap_by_player[entrant["player_id"]] = entrant["handicap_override"]
             continue
+        # Frozen at entry, not a live lookup -- see get_tournament_
+        # leaderboard's own copy of this same comment just above for the
+        # full reasoning; same fallback for an entrant row with no
+        # handicap_at_entry on record.
+        if entrant.get("handicap_at_entry") is not None:
+            handicap_by_player[entrant["player_id"]] = entrant["handicap_at_entry"]
+            continue
         source = get_effective_handicap_source(entrant["player_id"], entrant.get("handicap_source"))
         handicap_row = get_current_player_handicap(entrant["player_id"], source=source)
         handicap_by_player[entrant["player_id"]] = handicap_row["handicap"] if handicap_row else None
@@ -985,60 +1081,18 @@ def get_tournament_pairs_leaderboard(tournament_id: str, round_id: str) -> dict:
 
     pairs = []
     for pair in list_tournament_pairs(tournament_id):
-        a_id = str(pair["player_id_a"])
-        b_id = str(pair["player_id_b"])
-        a_metric = metric_by_player.get(a_id)
-        b_metric = metric_by_player.get(b_id)
-        a_strokes_by_hole = scores_by_player.get(a_id, {})
-        b_strokes_by_hole = scores_by_player.get(b_id, {})
-
-        holes_metric: list[int | None] = []
-        # Raw strokes for the scorecard modal (see
-        # get_tournament_pairs_leaderboard's docstring) -- masked down to
-        # just whichever ONE partner actually supplied the pair's
-        # better-ball score on that hole, None (renders "-") for the
-        # other. A better-ball score is always exactly one player's
-        # score, never two -- when both partners tie for the hole's best
-        # metric, only one of them can have actually been "the" score
-        # that counted, so the tie is broken arbitrarily (player A wins
-        # ties) rather than crediting the hole to both. A hole neither
-        # has played yet is None for both.
-        a_holes_score: list[int | None] = []
-        b_holes_score: list[int | None] = []
-        running = 0
-        thru = 0
-        for i in range(18):
-            hole_number = i + 1
-            a = a_metric[i] if a_metric else None
-            b = b_metric[i] if b_metric else None
-            candidates = [v for v in (a, b) if v is not None]
-            if not candidates:
-                holes_metric.append(None)
-            else:
-                thru += 1
-                running += max(candidates) if higher_wins else min(candidates)
-                holes_metric.append(running)
-
-            if higher_wins:
-                a_contributed = a is not None and (b is None or a >= b)
-                b_contributed = b is not None and (a is None or b > a)
-            else:
-                a_contributed = a is not None and (b is None or a <= b)
-                b_contributed = b is not None and (a is None or b < a)
-            a_holes_score.append(a_strokes_by_hole.get(hole_number) if a_contributed else None)
-            b_holes_score.append(b_strokes_by_hole.get(hole_number) if b_contributed else None)
-
+        line = _pair_round_metrics(pair, metric_by_player, scores_by_player, higher_wins)
         pairs.append({
             "pair_id": pair["id"],
             "player_id_a": pair["player_id_a"],
             "player_id_b": pair["player_id_b"],
             "name": f"{pair.get('player_a_name') or 'Unknown'} & {pair.get('player_b_name') or 'Unknown'}",
-            "thru": thru,
-            "holes_metric": holes_metric,
-            "total_metric": running,
+            "thru": line["thru"],
+            "holes_metric": line["holes_metric"],
+            "total_metric": line["total_metric"],
             "players": [
-                {"player_id": pair["player_id_a"], "name": pair.get("player_a_name") or "Unknown", "holes_score": a_holes_score},
-                {"player_id": pair["player_id_b"], "name": pair.get("player_b_name") or "Unknown", "holes_score": b_holes_score},
+                {"player_id": pair["player_id_a"], "name": pair.get("player_a_name") or "Unknown", "holes_score": line["a_holes_score"]},
+                {"player_id": pair["player_id_b"], "name": pair.get("player_b_name") or "Unknown", "holes_score": line["b_holes_score"]},
             ],
         })
 
@@ -1060,3 +1114,376 @@ def get_tournament_pairs_leaderboard(tournament_id: str, round_id: str) -> dict:
         ],
         "pairs": pairs,
     }
+
+
+def get_tournament_pairs_overall_leaderboard(tournament_id: str) -> dict:
+    """True cross-round OVERALL pairs standings for a pairs tournament
+    (2bbb/4bbb) -- each pair's total_metric summed across *every* round of
+    the tournament, not just one round at a time like
+    get_tournament_pairs_leaderboard. This is the pairs equivalent of
+    get_tournament_leaderboard's prior_gross/prior_nett/prior_stableford
+    cross-round summation, which pairs never had until now -- the live
+    Pairings tab only ever showed one round's totals via its per-round
+    tabs, with no "Overall" resolution the way the individual leaderboard
+    has (see its "overall" sentinel). Reuses _pair_round_metrics (the
+    same better-ball per-round combination as get_tournament_pairs_
+    leaderboard) once per round, per pair, then sums.
+
+    Currently used by finalize_tournament to compute a pairs tournament's
+    official final standings -- calling this once, after the last round,
+    already gives the complete picture, no separate "last round" special
+    case needed the way individual formats get one for free from their
+    own prior-totals pattern.
+
+    rounds_played is how many of the tournament's rounds this pair
+    actually has at least one hole's score in (thru > 0 for that round) --
+    included so a finalize-time edge case (a pair that missed a round
+    entirely) is visible in the response rather than silently indistinct
+    from a pair that played every round but scored 0."""
+    source_id = _resolve_source_tournament_id(tournament_id)
+
+    tournament_response = (
+        supabase
+        .table("tournaments")
+        .select("handicap_allowance, pairs_scoring_style")
+        .eq("id", source_id)
+        .maybe_single()
+        .execute()
+    )
+    tournament_fields = tournament_response.data if tournament_response is not None else None
+    if not tournament_fields:
+        raise TournamentNotFoundError("Tournament not found.")
+
+    handicap_allowance = tournament_fields.get("handicap_allowance") or 100
+    scoring_style = tournament_fields.get("pairs_scoring_style") or "stableford"
+    if scoring_style not in VALID_PAIRS_SCORING_STYLES:
+        scoring_style = "stableford"
+    higher_wins = scoring_style == "stableford"
+
+    entrants_by_tournament = _fetch_entrants_by_tournament([source_id])
+    entrants = [e for e in entrants_by_tournament.get(source_id, []) if e["status"] == "confirmed"]
+
+    # Same frozen-at-entry handicap resolution as get_tournament_pairs_
+    # leaderboard -- one fixed value for the whole tournament, so it's
+    # resolved once here rather than per round.
+    handicap_by_player: dict[str, float | None] = {}
+    for entrant in entrants:
+        if entrant.get("handicap_override") is not None:
+            handicap_by_player[entrant["player_id"]] = entrant["handicap_override"]
+            continue
+        if entrant.get("handicap_at_entry") is not None:
+            handicap_by_player[entrant["player_id"]] = entrant["handicap_at_entry"]
+            continue
+        source = get_effective_handicap_source(entrant["player_id"], entrant.get("handicap_source"))
+        handicap_row = get_current_player_handicap(entrant["player_id"], source=source)
+        handicap_by_player[entrant["player_id"]] = handicap_row["handicap"] if handicap_row else None
+
+    if handicap_allowance != 100:
+        handicap_by_player = {
+            player_id: (handicap * handicap_allowance / 100 if handicap is not None else None)
+            for player_id, handicap in handicap_by_player.items()
+        }
+
+    rounds_response = (
+        supabase
+        .table("tournament_rounds")
+        .select("id, round_number, tee_id")
+        .eq("tournament_id", source_id)
+        .order("round_number")
+        .execute()
+    )
+    tournament_rounds = rounds_response.data or []
+
+    pairs_meta = list_tournament_pairs(tournament_id)
+    total_by_pair = {pair["id"]: 0 for pair in pairs_meta}
+    rounds_played_by_pair = {pair["id"]: 0 for pair in pairs_meta}
+
+    for tournament_round in tournament_rounds:
+        holes_meta = _course_holes_meta(tournament_round["tee_id"])
+        scores_by_player, _nr_by_player = _tournament_round_scores_by_player(tournament_round["id"])
+        metric_by_player = {
+            entrant["player_id"]: _per_hole_pair_metric(
+                scores_by_player.get(entrant["player_id"], {}),
+                holes_meta,
+                handicap_by_player[entrant["player_id"]],
+                scoring_style,
+            )
+            for entrant in entrants
+        }
+        for pair in pairs_meta:
+            line = _pair_round_metrics(pair, metric_by_player, scores_by_player, higher_wins)
+            total_by_pair[pair["id"]] += line["total_metric"]
+            if line["thru"] > 0:
+                rounds_played_by_pair[pair["id"]] += 1
+
+    pairs = [
+        {
+            "pair_id": pair["id"],
+            "player_id_a": pair["player_id_a"],
+            "player_id_b": pair["player_id_b"],
+            "name": f"{pair.get('player_a_name') or 'Unknown'} & {pair.get('player_b_name') or 'Unknown'}",
+            "rounds_played": rounds_played_by_pair[pair["id"]],
+            "total_metric": total_by_pair[pair["id"]],
+        }
+        for pair in pairs_meta
+    ]
+    # Leader-first, same win direction per scoring style as the per-round
+    # leaderboard's own sort.
+    pairs.sort(key=lambda p: p["total_metric"], reverse=higher_wins)
+
+    return {
+        "scoring_style": scoring_style,
+        "round_count": len(tournament_rounds),
+        "pairs": pairs,
+    }
+
+
+def _all_tournament_rounds_completed(tournament_id: str) -> tuple[bool, str | None]:
+    """Precondition check for finalize_tournament -- every tournament_
+    rounds row (one per round-in-the-comp -- date/course/tee/group_size,
+    see TournamentRoundCreate) needs at least one linked `rounds` row
+    (rounds.tournament_round_id -- one per tee-time group that actually
+    played that day), and every one of those needs status == "completed".
+    A round only reaches "completed" once every accepted player in that
+    group has signed off (see sign_off_round in backend/services/
+    rounds.py) -- so this transitively requires full sign-off across the
+    whole field, not just that scores were entered.
+
+    Resolves through _resolve_source_tournament_id first so calling this
+    with either a source tournament's id or its pairs shadow's id checks
+    the same underlying rounds (a shadow owns none of its own).
+
+    Returns (True, None) once every round for every group is done, or
+    (False, <reason>) naming the first round that isn't -- either never
+    started at all, or started but not yet fully signed off -- so the
+    Finalize button's error message can tell the admin specifically what's
+    still outstanding instead of a generic "not ready" toast."""
+    source_id = _resolve_source_tournament_id(tournament_id)
+
+    rounds_response = (
+        supabase
+        .table("tournament_rounds")
+        .select("id, round_number, round_date")
+        .eq("tournament_id", source_id)
+        .order("round_number")
+        .execute()
+    )
+    tournament_rounds = rounds_response.data or []
+    if not tournament_rounds:
+        return False, "This tournament has no rounds set up yet."
+
+    for tournament_round in tournament_rounds:
+        label = f"Round {tournament_round['round_number']} ({tournament_round['round_date']})"
+
+        played_response = (
+            supabase
+            .table("rounds")
+            .select("id, status")
+            .eq("tournament_round_id", tournament_round["id"])
+            .execute()
+        )
+        played_rounds = played_response.data or []
+        if not played_rounds:
+            return False, f"{label} hasn't been started yet."
+
+        not_completed = [r for r in played_rounds if r.get("status") != "completed"]
+        if not_completed:
+            return (
+                False,
+                f"{label} is still in progress -- every group has to finish and be signed off before finalizing.",
+            )
+
+    return True, None
+
+
+def _winner_summary_from_ranked(winners: list[dict], separator: str = " & ") -> str | None:
+    """Joins one or more tied winners' display names into the plain
+    winner_summary string persisted on the tournament row -- a single
+    winner is just their own name, an exact tie joins every tied name
+    with separator. Shared by both the individual and pairs branches of
+    finalize_tournament below (pairs passes " / " instead of the default
+    " & " since a pair's own `name` already contains "Player A & Player
+    B", so joining two TIED pairs with the same separator would read as
+    one ambiguous four-person string)."""
+    if not winners:
+        return None
+    return separator.join(w["name"] for w in winners)
+
+
+def finalize_tournament(tournament_id: str, payload: TournamentFinalizeRequest) -> dict:
+    """Admin-only, one-way action: locks this tournament's official final
+    standings once every round has been played and fully signed off (see
+    _all_tournament_rounds_completed). Persists a snapshot (final_
+    leaderboard) computed once, right now, plus a plain winner_summary
+    display string and event_date (the last round's own date, not
+    finalized_at -- an admin might not click Finalize until well after
+    the tournament actually finished; see finalize_tournament.sql). See
+    TournamentAlreadyFinalizedError -- there's no un-finalize, a second
+    call just refuses rather than silently recomputing.
+
+    Operates on tournament_id's own row, not necessarily its resolved
+    source -- per the user's explicit choice, a pairs tournament linked
+    to an individual one finalizes independently, with its own Finalize
+    action, its own final_leaderboard, and its own winner, never tied to
+    its linked tournament's own finalize state. Round/score data is still
+    read through _resolve_source_tournament_id (a shadow owns none of its
+    own), same as every other read in this file -- only the *write*
+    target (which tournament row gets finalized_at set) is tournament_id
+    itself.
+
+    format alone decides which branch runs: 2bbb/4bbb use the new
+    get_tournament_pairs_overall_leaderboard (#413) for a true cross-round
+    pairs standings; every other format calls get_tournament_leaderboard
+    for the *last* round only, which already includes each player's full
+    cross-round prior_gross/prior_nett/prior_stableford totals -- no new
+    aggregation needed there, that leaderboard was always cumulative."""
+    tournament_response = supabase.table("tournaments").select("*").eq("id", tournament_id).maybe_single().execute()
+    tournament = tournament_response.data if tournament_response is not None else None
+    if not tournament:
+        raise TournamentNotFoundError("Tournament not found.")
+
+    club = _get_club(tournament["club_id"])
+    if not club or str(club.get("club_admin")) != str(payload.admin_id):
+        raise NotClubAdminError("Only this club's admin can finalize tournaments.")
+
+    if tournament.get("finalized_at"):
+        raise TournamentAlreadyFinalizedError("This tournament has already been finalized.")
+
+    ready, reason = _all_tournament_rounds_completed(tournament_id)
+    if not ready:
+        raise TournamentNotReadyToFinalizeError(reason)
+
+    source_id = _resolve_source_tournament_id(tournament_id)
+    rounds_response = (
+        supabase
+        .table("tournament_rounds")
+        .select("id, round_number, round_date")
+        .eq("tournament_id", source_id)
+        .order("round_number")
+        .execute()
+    )
+    tournament_rounds = rounds_response.data or []
+    # _all_tournament_rounds_completed above already refused to get this
+    # far if tournament_rounds were empty, so there's always a last round
+    # here.
+    last_round = tournament_rounds[-1]
+    event_date = last_round["round_date"]
+
+    if tournament["format"] in ("2bbb", "4bbb"):
+        final_leaderboard = get_tournament_pairs_overall_leaderboard(tournament_id)
+        pairs = final_leaderboard["pairs"]
+        if not pairs:
+            winner_summary = None
+        else:
+            higher_wins = final_leaderboard["scoring_style"] == "stableford"
+            best_value = pairs[0]["total_metric"]
+            winners = [p for p in pairs if p["total_metric"] == best_value]
+            # Pair names already read "Player A & Player B" -- " / "
+            # keeps a tie between two whole pairs unambiguous rather than
+            # chaining a second " & " onto the same string.
+            winner_summary = _winner_summary_from_ranked(winners, separator=" / ")
+    else:
+        final_leaderboard = get_tournament_leaderboard(tournament_id, last_round["id"])
+        all_players = final_leaderboard["players"]
+        # NR'd players are excluded from winner contention (same as they're
+        # sorted to the bottom of the live leaderboard) -- but if literally
+        # everyone in the field is NR, fall back to ranking them anyway
+        # rather than leaving winner_summary blank for a tournament that
+        # did get played.
+        ranked_players = [p for p in all_players if not p.get("is_nr")] or all_players
+        if not ranked_players:
+            winner_summary = None
+        else:
+            format_metric = {
+                "stableford": ("total_stableford", True),
+                "net": ("total_nett", False),
+            }
+            metric_key, higher_wins = format_metric.get(tournament["format"], ("total_gross", False))
+            best_value = (
+                max(p[metric_key] for p in ranked_players)
+                if higher_wins
+                else min(p[metric_key] for p in ranked_players)
+            )
+            winners = [p for p in ranked_players if p[metric_key] == best_value]
+            winner_summary = _winner_summary_from_ranked(winners)
+
+    update_response = (
+        supabase
+        .table("tournaments")
+        .update({
+            "finalized_at": datetime.now(timezone.utc).isoformat(),
+            "finalized_by": str(payload.admin_id),
+            "final_leaderboard": final_leaderboard,
+            "winner_summary": winner_summary,
+            "event_date": event_date,
+        })
+        .eq("id", tournament_id)
+        .execute()
+    )
+    updated_tournament = update_response.data[0]
+
+    # Best-effort, same "never let a feed post block the real action"
+    # convention as create_tournament's own create_tournament_post call --
+    # finalize itself has already fully succeeded above by this point.
+    # Local import for the same avoid-a-module-scope-circular-import
+    # reason as that call site.
+    try:
+        from backend.services.club_posts import create_tournament_finalized_post
+        create_tournament_finalized_post(
+            tournament["club_id"],
+            tournament_id,
+            tournament["name"],
+            tournament["format"],
+            winner_summary,
+            final_leaderboard,
+        )
+    except Exception as exc:
+        print(f"[FEED] Failed to create finalized-tournament post for tournament={tournament_id}: {exc}")
+
+    return _attach_link_info([updated_tournament])[0]
+
+
+def get_tournament_winner(tournament_id: str) -> dict | None:
+    """Plain read of a tournament's own finalize fields -- name, format,
+    when/who finalized it, the locked final_leaderboard snapshot, and
+    winner_summary. No linked-tournament resolution here (unlike every
+    other read in this file) since finalize is independent per tournament
+    -- see finalize_tournament's own docstring on that choice; a shadow
+    and its source can each be finalized (or not) entirely on their own.
+    Returns None both when tournament_id doesn't exist at all and when it
+    exists but simply isn't finalized yet -- the router maps either to a
+    404, since "nothing to show on a Winners page" is the same response
+    either way from the frontend's perspective."""
+    response = (
+        supabase
+        .table("tournaments")
+        .select("id, name, format, finalized_at, finalized_by, final_leaderboard, winner_summary, event_date")
+        .eq("id", tournament_id)
+        .maybe_single()
+        .execute()
+    )
+    tournament = response.data if response is not None else None
+    if not tournament or not tournament.get("finalized_at"):
+        return None
+    return tournament
+
+
+def get_club_tournament_history(club_id: str) -> list[dict]:
+    """Every finalized tournament at this club -- tournament name, format,
+    winner_summary, and event_date (the History page's "year" column
+    reads off this, not finalized_at -- see finalize_tournament.sql) --
+    newest first. Filtered client-side on finalized_at being set rather
+    than a `.not_.is_()` filter in the query, so this doesn't depend on
+    exactly how this project's supabase-py version expresses "IS NOT
+    NULL"; club tournament counts are small enough that fetching every
+    row and filtering here costs nothing meaningful."""
+    response = (
+        supabase
+        .table("tournaments")
+        .select("id, name, format, winner_summary, event_date, finalized_at")
+        .eq("club_id", club_id)
+        .order("event_date", desc=True)
+        .execute()
+    )
+    tournaments = response.data or []
+    return [t for t in tournaments if t.get("finalized_at")]

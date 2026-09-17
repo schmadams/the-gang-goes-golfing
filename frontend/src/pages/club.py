@@ -758,15 +758,119 @@ def _feed_post_header(name, photo_url, timestamp_text):
     )
 
 
+def _finalized_post_leaderboard_rows(final_leaderboard, tournament_format):
+    """[(pos, name, score_text), ...] best-first, from the same locked
+    final_leaderboard snapshot finalize_tournament stores on the
+    tournament row (and _final_leaderboard_table in tournament.py already
+    renders on that tournament's own Winners tab) -- pairs formats
+    (2bbb/4bbb) carry {"scoring_style","pairs":[{name,total_metric,...}]},
+    every other format carries {"players":[{...,total_gross/total_nett/
+    total_stableford,...}]}, same shape get_tournament_leaderboard always
+    returns. Not clickable here -- this is a one-glance feed summary, not
+    a full leaderboard; the tournament's own locked Leaderboard tab is
+    one tap away via the headline link if someone wants the real thing."""
+    if tournament_format in ("2bbb", "4bbb"):
+        higher_wins = final_leaderboard.get("scoring_style") == "stableford"
+        unit = {"stableford": "pts", "nett": "nett", "gross": "gross"}.get(
+            final_leaderboard.get("scoring_style"), "pts"
+        )
+        pairs = sorted(final_leaderboard.get("pairs", []), key=lambda p: p.get("total_metric", 0), reverse=higher_wins)
+        return [(i + 1, p.get("name") or "Unknown pair", f"{p.get('total_metric', 0)} {unit}") for i, p in enumerate(pairs)]
+
+    metric_key, higher_wins, unit = {
+        "stableford": ("total_stableford", True, "pts"),
+        "net": ("total_nett", False, "nett"),
+    }.get(tournament_format, ("total_gross", False, "gross"))
+    # NR'd players sort to the bottom regardless of score, same convention
+    # as the live leaderboard (see get_tournament_leaderboard's own
+    # is_nr-based sort) -- a not-returned card shouldn't read as if it
+    # beat everyone who actually finished.
+    players = sorted(
+        final_leaderboard.get("players", []),
+        key=lambda p: (bool(p.get("is_nr")), 0 if higher_wins else 1, -p.get(metric_key, 0) if higher_wins else p.get(metric_key, 0)),
+    )
+    return [(i + 1, p.get("name") or "Unknown player", f"{p.get(metric_key, 0)} {unit}") for i, p in enumerate(players)]
+
+
+def _finalized_post_leaderboard_table(final_leaderboard, tournament_format):
+    """Pos/Name/Score table for a tournament_finalized feed card -- capped
+    to a ~5-row-tall scroll window (.t3g-feed-finalized-leaderboard-wrap
+    in club.css) rather than dumping the whole field into the feed, since
+    a feed card is meant to be skimmed, not read top to bottom the way
+    the tournament's own Leaderboard tab is."""
+    rows = _finalized_post_leaderboard_rows(final_leaderboard, tournament_format)
+    if not rows:
+        return None
+    return html.Div(
+        html.Table(
+            [
+                html.Thead(html.Tr([html.Th("Pos"), html.Th("Name"), html.Th("Score")])),
+                html.Tbody([
+                    html.Tr([
+                        html.Td(str(pos), className="t3g-leaderboard-pos-cell"),
+                        html.Td(name),
+                        html.Td(score, className="t3g-leaderboard-total-cell"),
+                    ])
+                    for pos, name, score in rows
+                ]),
+            ],
+            className="t3g-leaderboard-table t3g-leaderboard-compact",
+        ),
+        className="t3g-feed-finalized-leaderboard-wrap",
+    )
+
+
 def _feed_post_card(post, slug):
     """Dispatches on post_type -- see get_club_feed's docstring in
     backend/services/club_posts.py for exactly what each type's payload
     carries. 'scorecard' is the odd one out: it has no single author (a
     completed round belongs to everyone who played it), so it gets its
-    own header treatment instead of _feed_post_header."""
+    own header treatment instead of _feed_post_header. 'tournament_
+    finalized' is a second author-less type, same reasoning -- a final
+    result belongs to the whole field, not one person, see create_
+    tournament_finalized_post's own docstring."""
     post_type = post.get("post_type")
     timestamp_text = _format_feed_timestamp(post.get("created_at"))
     author_name = post.get("author_name") or "A player"
+
+    if post_type == "tournament_finalized":
+        metadata = post.get("metadata") or {}
+        tournament_name = metadata.get("tournament_name") or "A tournament"
+        tournament_id = metadata.get("tournament_id")
+        winner_summary = metadata.get("winner_summary")
+        final_leaderboard = metadata.get("final_leaderboard") or {}
+        tournament_format = metadata.get("tournament_format")
+
+        name_node = (
+            dcc.Link(tournament_name, href=f"/clubs/{slug}/tournaments/{tournament_id}")
+            if tournament_id
+            else tournament_name
+        )
+        headline = (
+            html.P([name_node, " is finalized -- ", html.Strong(winner_summary), " won."], className="t3g-feed-post-body")
+            if winner_summary
+            else html.P([name_node, " is finalized."], className="t3g-feed-post-body")
+        )
+        return html.Div(
+            className="t3g-feed-post",
+            children=[
+                html.Div(
+                    className="t3g-feed-post-header",
+                    children=[
+                        html.Span("🏆", className="t3g-feed-post-icon"),
+                        html.Div(
+                            className="t3g-feed-post-header-text",
+                            children=[
+                                html.Span(f"{tournament_name} -- Final Results", className="t3g-feed-post-author"),
+                                html.Span(timestamp_text, className="t3g-feed-post-timestamp"),
+                            ],
+                        ),
+                    ],
+                ),
+                headline,
+                _finalized_post_leaderboard_table(final_leaderboard, tournament_format),
+            ],
+        )
 
     if post_type == "join":
         body = html.P(f"{author_name} joined the club.", className="t3g-feed-post-body")
@@ -1014,22 +1118,51 @@ def _tournament_round_row(index, group_size=_DEFAULT_GROUP_SIZE):
     )
 
 
+def _tournament_lifecycle_status(tournament):
+    """upcoming/underway/finished -- purely derived from data already on
+    every tournament dict returned by list_tournaments_for_club, no new
+    backend field needed. finalized_at is the same definitive "this
+    tournament is over" signal the Winners tab and club History tab
+    already key off (see finalize_tournament.sql's own comment on why
+    that's more honest than tournaments.status, which nothing in this app
+    actually keeps updated -- it's stuck at its 'upcoming' default from
+    creation onward). Short of that, "underway" means at least one tee
+    time slot in any round has ever had a live round started against it
+    (tournament_round["tee_times"][*]["live_round"] is present -- see
+    fetch_tee_times_by_round's own docstring on that field -- regardless
+    of whether that particular group has since finished, so a tournament
+    where every round's been played but not yet finalized still reads as
+    underway rather than snapping back to "upcoming"). No started rounds
+    at all -- "upcoming"."""
+    if tournament.get("finalized_at"):
+        return "finished"
+    for round_ in tournament.get("rounds", []):
+        for tee_time in round_.get("tee_times", []):
+            if tee_time.get("live_round"):
+                return "underway"
+    return "upcoming"
+
+
 def _tournament_item(tournament, slug):
     """One solid tile per tournament -- same visual treatment as Your
     Clubs' .t3g-club-item tiles on the home page (light tile, bold title,
     hover lift), just with a second, muted line for round/entrant counts
     and a live badge while the tournament's underway. Links through to the
-    tournament's own page (info/entrants/leaderboard)."""
+    tournament's own page (info/entrants/leaderboard). A left-edge status
+    border (see _tournament_lifecycle_status) gives the whole list an
+    at-a-glance read of which tournaments are still ahead, live right now,
+    or already wrapped up, without opening any of them."""
     rounds = tournament.get("rounds", [])
     entrant_count = sum(1 for e in tournament.get("entrants", []) if e.get("status") == "confirmed")
+    status = _tournament_lifecycle_status(tournament)
 
     title_children = [html.Span(tournament.get("name", "Tournament"), className="t3g-tournament-item-title")]
-    if tournament.get("status") == "in_progress":
+    if status == "underway":
         title_children.append(live_badge())
 
     return dcc.Link(
         href=f"/clubs/{slug}/tournaments/{tournament['id']}",
-        className="t3g-tournament-item",
+        className=f"t3g-tournament-item t3g-tournament-item--{status}",
         children=[
             html.Div(title_children, className="t3g-tournament-item-title-group"),
             html.Div(
@@ -1058,6 +1191,55 @@ def _tournaments_panel(tournaments, slug):
         className="t3g-panel",
         children=[
             build_panel_navbar("Tournaments"),
+            html.Div(body, className="t3g-panel-body"),
+        ],
+    )
+
+
+def _tournament_history_panel(history, slug):
+    """History tab -- every finalized tournament at this club (see
+    get_club_tournament_history), one row per event: tournament name,
+    year, and winner. year is read off each row's own event_date (the
+    last round's own date, captured at finalize time -- not finalized_at,
+    see finalize_tournament.sql's own comment) rather than finalized_at,
+    so "the year this was actually played" is what shows even if an admin
+    finalizes well after the fact. Visible to every viewer, not just
+    admins -- past results aren't an admin-only concern the way running
+    the tournament itself is. Each row links to that tournament's own
+    page (its Winners tab is exactly one click away from there -- no
+    ?tab=winners deep link needed here, since a name click already lands
+    an admin/player on the tournament they'd want to look at first,
+    Tournament Info, same as every other tournament link on this page)."""
+    if not history:
+        body = html.P("No finalized tournaments yet.", className="t3g-empty-state")
+    else:
+        rows = []
+        for t in history:
+            event_date = t.get("event_date") or ""
+            year = event_date[:4] if event_date else "—"
+            rows.append(
+                dcc.Link(
+                    html.Div(
+                        className="t3g-tournament-history-row",
+                        children=[
+                            html.Span(t.get("name", "Tournament"), className="t3g-tournament-history-name"),
+                            html.Span(year, className="t3g-tournament-history-year"),
+                            html.Span(
+                                t.get("winner_summary") or "—",
+                                className="t3g-tournament-history-winner",
+                            ),
+                        ],
+                    ),
+                    href=f"/clubs/{slug}/tournaments/{t['id']}",
+                    className="t3g-tournament-history-link",
+                )
+            )
+        body = html.Div(rows, className="t3g-tournament-history-list")
+
+    return html.Div(
+        className="t3g-panel",
+        children=[
+            build_panel_navbar("History"),
             html.Div(body, className="t3g-panel-body"),
         ],
     )
@@ -1318,7 +1500,7 @@ def _not_found_page():
     )
 
 
-_CLUB_TAB_KEYS = ("feed", "directory", "tournaments", "comparison", "admin")
+_CLUB_TAB_KEYS = ("feed", "directory", "tournaments", "comparison", "admin", "history")
 _CLUB_TAB_BUTTON_BASE = "t3g-tournament-tab"
 _CLUB_TAB_BUTTON_ACTIVE = "t3g-tournament-tab t3g-tournament-tab--active"
 
@@ -1368,7 +1550,7 @@ def _club_subnav(tab_classes, is_admin):
     omitted outright for non-admins, a non-admin clicking any other tab
     would trip a Dash error trying to update a button that doesn't
     exist."""
-    feed_class, directory_class, tournaments_class, comparison_class, admin_class = tab_classes
+    feed_class, directory_class, tournaments_class, comparison_class, admin_class, history_class = tab_classes
     return html.Div(
         className="t3g-tournament-subnav",
         children=html.Div(
@@ -1392,6 +1574,15 @@ def _club_subnav(tab_classes, is_admin):
                         "Tournaments",
                         id="club-tab-tournaments-button",
                         className=tournaments_class,
+                        n_clicks=0,
+                    ),
+                    # Visible to every viewer, not gated behind is_admin the
+                    # way Admin is below -- past tournament results aren't
+                    # an admin-only concern, see _tournament_history_panel.
+                    html.Button(
+                        "History",
+                        id="club-tab-history-button",
+                        className=history_class,
                         n_clicks=0,
                     ),
                     html.Button(
@@ -1419,19 +1610,22 @@ def _club_subnav(tab_classes, is_admin):
     Output("club-tab-panel-tournaments", "style"),
     Output("club-tab-panel-comparison", "style"),
     Output("club-tab-panel-admin", "style"),
+    Output("club-tab-panel-history", "style"),
     Output("club-tab-feed-button", "className"),
     Output("club-tab-directory-button", "className"),
     Output("club-tab-tournaments-button", "className"),
     Output("club-tab-comparison-button", "className"),
     Output("club-tab-admin-button", "className"),
+    Output("club-tab-history-button", "className"),
     Input("club-tab-feed-button", "n_clicks"),
     Input("club-tab-directory-button", "n_clicks"),
     Input("club-tab-tournaments-button", "n_clicks"),
     Input("club-tab-comparison-button", "n_clicks"),
     Input("club-tab-admin-button", "n_clicks"),
+    Input("club-tab-history-button", "n_clicks"),
     prevent_initial_call=True,
 )
-def switch_club_tab(feed_clicks, directory_clicks, tournaments_clicks, comparison_clicks, admin_clicks):
+def switch_club_tab(feed_clicks, directory_clicks, tournaments_clicks, comparison_clicks, admin_clicks, history_clicks):
     # A non-admin can never actually trigger the "admin" branch below --
     # their Admin button is display:none (see _club_subnav), so it can't
     # be clicked -- but the branch still needs to exist since this same
@@ -1443,27 +1637,32 @@ def switch_club_tab(feed_clicks, directory_clicks, tournaments_clicks, compariso
 
     if triggered_id == "club-tab-directory-button":
         return (
-            hidden, shown, hidden, hidden, hidden,
-            _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_ACTIVE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE,
+            hidden, shown, hidden, hidden, hidden, hidden,
+            _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_ACTIVE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE,
         )
     if triggered_id == "club-tab-tournaments-button":
         return (
-            hidden, hidden, shown, hidden, hidden,
-            _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_ACTIVE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE,
+            hidden, hidden, shown, hidden, hidden, hidden,
+            _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_ACTIVE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE,
         )
     if triggered_id == "club-tab-comparison-button":
         return (
-            hidden, hidden, hidden, shown, hidden,
-            _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_ACTIVE, _CLUB_TAB_BUTTON_BASE,
+            hidden, hidden, hidden, shown, hidden, hidden,
+            _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_ACTIVE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE,
         )
     if triggered_id == "club-tab-admin-button":
         return (
-            hidden, hidden, hidden, hidden, shown,
-            _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_ACTIVE,
+            hidden, hidden, hidden, hidden, shown, hidden,
+            _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_ACTIVE, _CLUB_TAB_BUTTON_BASE,
+        )
+    if triggered_id == "club-tab-history-button":
+        return (
+            hidden, hidden, hidden, hidden, hidden, shown,
+            _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_ACTIVE,
         )
     return (
-        shown, hidden, hidden, hidden, hidden,
-        _CLUB_TAB_BUTTON_ACTIVE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE,
+        shown, hidden, hidden, hidden, hidden, hidden,
+        _CLUB_TAB_BUTTON_ACTIVE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE, _CLUB_TAB_BUTTON_BASE,
     )
 
 
@@ -1510,9 +1709,12 @@ def layout(slug=None, tab=None, **kwargs):
     feed_resp = requests.get(f"{API_BASE_URL}/clubs/{club['id']}/feed")
     feed_posts = feed_resp.json() if feed_resp.status_code == 200 else []
 
-    (feed_style, directory_style, tournaments_style, comparison_style, admin_style), tab_classes = (
-        _club_tab_visibility(tab, is_admin)
-    )
+    history_resp = requests.get(f"{API_BASE_URL}/tournaments/club/{club['id']}/history")
+    tournament_history = history_resp.json() if history_resp.status_code == 200 else []
+
+    (
+        (feed_style, directory_style, tournaments_style, comparison_style, admin_style, history_style), tab_classes
+    ) = _club_tab_visibility(tab, is_admin)
 
     return html.Div(
         # t3g-club-page scopes the more compact panel spacing in club.css
@@ -1579,6 +1781,11 @@ def layout(slug=None, tab=None, **kwargs):
                 id="club-tab-panel-admin",
                 style=admin_style,
                 children=_admin_tab_panel(club, player_id, is_admin),
+            ),
+            html.Div(
+                id="club-tab-panel-history",
+                style=history_style,
+                children=_tournament_history_panel(tournament_history, slug),
             ),
             _tournament_modal(tournaments),
             dcc.Location(id="tournament-redirect", refresh=True),

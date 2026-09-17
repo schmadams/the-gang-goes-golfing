@@ -199,6 +199,22 @@ class TournamentResponse(BaseModel):
     # only; nothing about data resolution depends on it.
     linked_from_tournament_id: UUID | None = None
     linked_from_tournament_name: str | None = None
+    # Set once the admin finalizes -- see finalize_tournament in
+    # backend/services/tournaments.py. finalized_at IS NOT NULL is the "is
+    # this tournament finalized" flag everywhere in the app. winner_summary
+    # is a plain display string ("George Griffiths", "Van Moore & Dom
+    # Buxton", or names joined with " & " for an exact tie) -- cheap enough
+    # to include here so the tournament page and any list of tournaments
+    # can show it without a second fetch. Deliberately NOT including the
+    # full final_leaderboard snapshot on this general-purpose response --
+    # that's a locked, potentially large JSON blob only the dedicated
+    # GET /tournaments/{id}/winner endpoint needs to return.
+    finalized_at: datetime | None = None
+    winner_summary: str | None = None
+
+
+class TournamentFinalizeRequest(BaseModel):
+    admin_id: UUID  # must match clubs.club_admin -- enforced in the service layer
 
 
 class TournamentPairsSetRequest(BaseModel):
