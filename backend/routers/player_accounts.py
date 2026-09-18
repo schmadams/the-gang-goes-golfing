@@ -1,11 +1,12 @@
 # target path: backend/routers/player_accounts.py
 from fastapi import APIRouter, HTTPException, status
 
-from backend.models.player_account import PlayerAccountCreate, PlayerAccountResponse
+from backend.models.player_account import GoogleAccountSignIn, PlayerAccountCreate, PlayerAccountResponse
 from backend.services.player_accounts import (
     DuplicateAccountError,
     create_player_account,
     get_account_by_email,
+    sign_in_with_google,
 )
 
 
@@ -34,3 +35,17 @@ def get_account_by_email_route(email: str):
         )
 
     return account
+
+
+@router.post("/google", response_model=PlayerAccountResponse)
+def sign_in_with_google_route(payload: GoogleAccountSignIn):
+    # No error branch needed here the way create_player_account_route has
+    # one -- sign_in_with_google already resolves every collision itself
+    # (that's the whole point of it: find-by-google_id, then
+    # find-by-email-and-link, then create, with a race-condition retry on
+    # top of that last step) rather than ever expecting the caller to
+    # react to a 409. See that function's own docstring for the three
+    # cases. frontend/src/auth_google.py's callback route is the only
+    # caller -- only reachable after it's independently verified the
+    # Google ID token this payload was built from.
+    return sign_in_with_google(payload)

@@ -22,6 +22,12 @@ dependencies = [
     "dash>=2.17",
     "dash-bootstrap-components",
     "python-multipart",
+    # Verifies a Google-issued ID token's signature against Google's own
+    # public keys (google.oauth2.id_token.verify_oauth2_token, used in
+    # frontend/src/auth_google.py's OAuth callback) -- this is what makes
+    # trusting the token's email/sub claims safe rather than just
+    # decoding an unverified JWT by hand.
+    "google-auth",
     # Production WSGI server for the Dash/Flask frontend (see
     # Dockerfile.frontend) -- app.run(debug=True)'s built-in dev server
     # (still used for local `uv run python frontend/src/app.py`) isn't

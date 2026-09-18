@@ -7,6 +7,7 @@ import dash_bootstrap_components as dbc
 from dash import dcc, html
 from flask import session
 
+from auth_google import register_google_auth_routes
 from components.spinner import golf_swing_spinner
 from layouts.bottom_nav import build_bottom_nav
 from layouts.navbar import build_navbar
@@ -34,6 +35,12 @@ app = dash.Dash(
 
 server = app.server  # exposed so gunicorn/wsgi can target `app:server` in prod
 server.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")  # required for Flask sessions
+
+# Plain Flask routes, not Dash pages -- see auth_google.py's own docstring
+# for why (they redirect, they don't render a layout). Registered here on
+# `server` directly rather than in pages/ so they're live before any Dash
+# Pages routing/dispatch is involved at all.
+register_google_auth_routes(server)
 
 # Plain default index_string -- this app used to inject a small inline
 # script here that read a saved light/dark preference out of localStorage

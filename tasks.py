@@ -494,3 +494,156 @@ def dev_all(c):
                 proc.terminate()
         for proc in (backend, frontend):
             proc.wait()
+
+# ── Admin cleanup ────────────────────────────────────────────
+# Every command below hits backend/routers/admin.py, which just wraps
+# backend/services/admin_cleanup.py -- see that module's own docstring
+# for the full cascade logic. All three default to a DRY RUN (prints
+# counts of what WOULD be deleted, deletes nothing) -- only pass
+# --execute once the preview numbers look right. There is no undo.
+
+
+def _print_admin_summary(result: dict) -> None:
+    player_name = result.pop("player_name", None)
+    player_email = result.pop("player_email", None)
+    if player_name is not None or player_email is not None:
+        print(f"Player: {player_name or '—'} ({player_email or '—'})\n")
+
+    any_nonzero = False
+    for key, count in result.items():
+        if count:
+            any_nonzero = True
+            print(f"  {key}: {count}")
+    if not any_nonzero:
+        print("  (nothing to delete)")
+
+
+@task
+def list_player_accounts(c):
+    """
+    List all player accounts (the login/email record, not the player
+    roster record) -- shows each account's own id, which is what
+    delete-player-account needs (not the player's own id from
+    list-players).
+
+    Usage:
+        uv run invoke list-player-accounts
+    """
+    import requests
+
+    response = requests.get("http://localhost:8000/admin/player-accounts")
+
+    if response.status_code != 200:
+        print(f"Error {response.status_code}: {response.json()}")
+        return
+
+    accounts = response.json()
+    if not accounts:
+        print("No player accounts found.")
+        return
+
+    print(f"\n{'Account ID':<38} {'Email':<30} {'Name':<20} {'Google?'}")
+    print("-" * 100)
+    for a in accounts:
+        print(f"{a['id']:<38} {a['email']:<30} {a['name']:<20} {'yes' if a.get('google_id') else 'no'}")
+
+
+@task
+def wipe_tournaments(c, execute=False):
+    """
+    Delete every tournament in the app (every club) -- entrants, pairs,
+    tournament rounds, tee times, every round played under any of them,
+    and any club feed post about a tournament.
+
+    Defaults to a dry run. Pass --execute to actually delete.
+
+    Usage:
+        uv run invoke wipe-tournaments               # preview, deletes nothing
+        uv run invoke wipe-tournaments --execute      # actually delete
+    """
+    import requests
+
+    dry_run = not execute
+    response = requests.post(
+        "http://localhost:8000/admin/tournaments/wipe",
+        params={"dry_run": str(dry_run).lower()},
+    )
+
+    if response.status_code != 200:
+        print(f"Error {response.status_code}: {response.json()}")
+        return
+
+    print("DRY RUN -- nothing deleted. Re-run with --execute to actually delete.\n" if dry_run else "DELETED:\n")
+    _print_admin_summary(response.json())
+
+
+@task
+def reset_clubs(c, keep_slug, execute=False):
+    """
+    Delete every club except the one matching --keep-slug, and every
+    tournament everywhere (including the kept club's own -- see
+    wipe-tournaments). The kept club's regular membership, casual rounds,
+    and non-tournament feed posts are left alone.
+
+    Defaults to a dry run. Pass --execute to actually delete.
+
+    Usage:
+        uv run invoke reset-clubs --keep-slug=the-gang                # preview
+        uv run invoke reset-clubs --keep-slug=the-gang --execute       # actually delete
+    """
+    import requests
+
+    dry_run = not execute
+    response = requests.post(
+        "http://localhost:8000/admin/clubs/reset",
+        params={"keep_slug": keep_slug, "dry_run": str(dry_run).lower()},
+    )
+
+    if response.status_code == 404:
+        print(f"No club with slug '{keep_slug}'. Run `uv run invoke list-clubs` to check the exact slug.")
+        return
+    if response.status_code != 200:
+        print(f"Error {response.status_code}: {response.json()}")
+        return
+
+    print("DRY RUN -- nothing deleted. Re-run with --execute to actually delete.\n" if dry_run else "DELETED:\n")
+    _print_admin_summary(response.json())
+
+
+@task
+def delete_player_account(c, player_account_id, execute=False):
+    """
+    Delete one player account and every piece of data anywhere in the app
+    tied to that player -- their own rows inside rounds/tournaments
+    (including ones shared with players who are staying), club
+    membership, posts, handicaps, friend requests, notifications, and
+    their uploaded photos.
+
+    Needs a player_account_id (see list-player-accounts), not a player id.
+
+    Defaults to a dry run. Pass --execute to actually delete.
+
+    Usage:
+        uv run invoke delete-player-account --player-account-id=<uuid>              # preview
+        uv run invoke delete-player-account --player-account-id=<uuid> --execute     # actually delete
+    """
+    import requests
+
+    dry_run = not execute
+    response = requests.delete(
+        f"http://localhost:8000/admin/player-accounts/{player_account_id}",
+        params={"dry_run": str(dry_run).lower()},
+    )
+
+    if response.status_code == 404:
+        print(
+            f"No player account with id {player_account_id}. "
+            "Run `uv run invoke list-player-accounts` to find the right id."
+        )
+        return
+    if response.status_code != 200:
+        print(f"Error {response.status_code}: {response.json()}")
+        return
+
+    print("DRY RUN -- nothing deleted. Re-run with --execute to actually delete.\n" if dry_run else "DELETED:\n")
+    _print_admin_summary(response.json())

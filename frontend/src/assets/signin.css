@@ -1,0 +1,188 @@
+/* target path: frontend/src/assets/signin.css (new file)
+
+   signin.py was the one page in the app still rendering raw, unthemed
+   dbc.Card/dbc.Input/dbc.Button markup -- a plain white Bootstrap card
+   with a stock blue button, floating on the app's own black page
+   background (.t3g-app-shell, see theme.css), which is what actually
+   made it look broken rather than just plain. This file brings it in
+   line with the same flat, shadow-free, Archivo/pink design language
+   every other page already uses (see theme.css's own header comment for
+   where those tokens came from) -- var(--t3g-surface) card, var(--t3g-
+   border) hairlines, var(--t3g-accent) for the one CTA, --t3g-radius-lg/
+   -md instead of Bootstrap's default rounded corners.
+
+   Bootstrap's own .form-control/.btn rules are still what dbc.Input/
+   dbc.Button render under the hood -- these overrides work the same way
+   theme.css already overrides Bootstrap defaults app-wide (this file
+   loads after dbc.themes.BOOTSTRAP in the asset order, so equal-
+   specificity class selectors here win), scoped under .t3g-signin-card
+   so nothing here leaks into any other page's inputs/buttons. */
+
+.t3g-signin-page {
+    min-height: 100vh;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem;
+    box-sizing: border-box;
+}
+
+.t3g-signin-card {
+    width: 100%;
+    max-width: 380px;
+    background: var(--t3g-surface);
+    border: 1px solid var(--t3g-border);
+    border-radius: var(--t3g-radius-lg);
+    box-shadow: var(--t3g-shadow-card);
+    padding: 2.5rem 2rem;
+    box-sizing: border-box;
+}
+
+.t3g-signin-title {
+    margin-bottom: 0.35rem;
+}
+
+.t3g-signin-subtitle {
+    color: var(--t3g-muted);
+    font-size: 0.875rem;
+    margin: 0 0 1.75rem;
+}
+
+/* Scoped to this card only -- see this file's header comment for why a
+   blanket .form-control/.btn override isn't used instead. */
+.t3g-signin-card .form-control {
+    background: var(--t3g-surface-raised);
+    border: 1px solid var(--t3g-border);
+    color: var(--t3g-ink);
+    border-radius: var(--t3g-radius-md);
+    padding: 0.65rem 0.9rem;
+    font-size: 0.95rem;
+}
+
+.t3g-signin-card .form-control:focus {
+    background: var(--t3g-surface-raised);
+    border-color: var(--t3g-accent);
+    color: var(--t3g-ink);
+    box-shadow: 0 0 0 0.15rem var(--t3g-accent-soft);
+}
+
+.t3g-signin-card .form-control::placeholder {
+    color: var(--t3g-muted-2);
+}
+
+/* The one real CTA on this page -- matches .t3g-panel-action-button's
+   flat/pink/uppercase treatment used everywhere else (home.css), just
+   full-width and a hair taller to read as a primary form action rather
+   than a panel-header button. */
+.t3g-signin-card .t3g-signin-primary-button {
+    width: 100%;
+    background: var(--t3g-accent);
+    color: #ffffff;
+    border: none;
+    border-radius: var(--t3g-radius-md);
+    padding: 0.7rem 1rem;
+    margin-top: 0.75rem;
+    font-family: "Archivo Narrow", "Archivo", sans-serif;
+    font-weight: 600;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    transition: opacity 0.15s ease, transform 0.08s ease;
+}
+
+.t3g-signin-card .t3g-signin-primary-button:hover {
+    opacity: 0.85;
+    color: #ffffff;
+}
+
+.t3g-signin-card .t3g-signin-primary-button:active {
+    transform: scale(0.98);
+    opacity: 0.7;
+}
+
+.t3g-signin-card .t3g-signin-primary-button:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.t3g-signin-error {
+    color: var(--t3g-danger-text);
+    font-size: 0.85rem;
+    min-height: 0;
+}
+
+.t3g-signin-error:empty {
+    margin: 0;
+}
+
+.t3g-signin-error:not(:empty) {
+    margin: 0.6rem 0 0;
+}
+
+/* "or use one of these options" -- a hairline on either side of the
+   label, same construction as the Booking-style reference this was
+   modeled on, built from theme tokens instead of literal grey. */
+.t3g-signin-divider {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin: 1.75rem 0 1.25rem;
+    color: var(--t3g-muted-2);
+    font-size: 0.8rem;
+}
+
+.t3g-signin-divider::before,
+.t3g-signin-divider::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--t3g-border);
+}
+
+/* Row of small square icon buttons (one per sign-in provider). Only
+   Google renders today (see signin.py's own comment -- it's the only
+   provider this app supports), but the row itself doesn't assume that:
+   dropping in another .t3g-signin-social-button anchor later needs no
+   layout changes here. */
+.t3g-signin-social-row {
+    display: flex;
+    justify-content: center;
+    gap: 0.75rem;
+}
+
+.t3g-signin-social-button {
+    width: 3rem;
+    height: 3rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--t3g-border);
+    border-radius: var(--t3g-radius-md);
+    background: var(--t3g-surface-raised);
+    color: var(--t3g-ink);
+    font-size: 1.15rem;
+    cursor: pointer;
+    text-decoration: none;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.t3g-signin-social-button:hover {
+    background: var(--t3g-surface);
+    border-color: var(--t3g-border-strong);
+    color: var(--t3g-ink);
+}
+
+.t3g-signin-card hr {
+    border: none;
+    border-top: 1px solid var(--t3g-border);
+    opacity: 1;
+    margin: 1.5rem 0 1.25rem;
+}
+
+@media (max-width: 480px) {
+    .t3g-signin-card {
+        padding: 2rem 1.5rem;
+    }
+}
