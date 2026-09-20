@@ -242,30 +242,43 @@ def wipe_all_tournaments(dry_run: bool = True) -> dict:
     return counts
 
 
-def reset_clubs_keep_one(keep_club_slug: str, dry_run: bool = True) -> dict:
+def reset_clubs_keep_one(keep_club_slug: str | None, dry_run: bool = True) -> dict:
     """Deletes every club except the one matching keep_club_slug, and
     (via wipe_all_tournaments) every tournament everywhere -- including
     the kept club's own. The kept club's regular membership, casual
     rounds, and non-tournament feed posts are left completely alone.
 
+    keep_club_slug may be None, meaning "keep nothing" -- every club in
+    the database is deleted, with no exception. This is deliberately a
+    separate, explicit code path rather than something a caller can
+    trigger by leaving keep_club_slug blank/typo'd by accident -- see
+    reset_clubs_route's own delete_all flag for the guard that requires
+    a caller to opt into this on purpose.
+
     Order matters: tournaments (and everything nested under them, per
     club) are wiped FIRST, so that by the time a to-be-deleted club's
     casual `rounds` are swept by club_id, nothing tournament-linked is
     left to double-count or conflict with."""
-    keep_club = (
-        supabase.table("clubs").select("id, slug").eq("slug", keep_club_slug).maybe_single().execute()
-    )
-    keep_club_data = keep_club.data if keep_club is not None else None
-    if not keep_club_data:
-        raise ClubNotFoundError(f"No club with slug '{keep_club_slug}'. Nothing was deleted.")
-    keep_club_id = keep_club_data["id"]
+    if keep_club_slug is None:
+        keep_club_id = None
+    else:
+        keep_club = (
+            supabase.table("clubs").select("id, slug").eq("slug", keep_club_slug).maybe_single().execute()
+        )
+        keep_club_data = keep_club.data if keep_club is not None else None
+        if not keep_club_data:
+            raise ClubNotFoundError(f"No club with slug '{keep_club_slug}'. Nothing was deleted.")
+        keep_club_id = keep_club_data["id"]
 
     counts = wipe_all_tournaments(dry_run=dry_run)
 
-    other_club_ids = [
-        row["id"]
-        for row in (supabase.table("clubs").select("id").neq("id", keep_club_id).execute().data or [])
-    ]
+    if keep_club_id is None:
+        other_club_ids = [row["id"] for row in (supabase.table("clubs").select("id").execute().data or [])]
+    else:
+        other_club_ids = [
+            row["id"]
+            for row in (supabase.table("clubs").select("id").neq("id", keep_club_id).execute().data or [])
+        ]
 
     for club_id in other_club_ids:
         round_ids = _select_ids("rounds", {"club_id": club_id})
@@ -274,7 +287,24 @@ def reset_clubs_keep_one(keep_club_slug: str, dry_run: bool = True) -> dict:
 
         counts["club_players"] += _count_and_maybe_delete("club_players", {"club_id": club_id}, dry_run)
         counts["club_invites"] += _count_and_maybe_delete("club_invites", {"club_id": club_id}, dry_run)
-        counts["club_posts"] += _count_and_maybe_delete("club_posts", {"club_id": club_id}, dry_run)
+
+        # Excludes tournament/tournament_finalized posts on purpose --
+        # wipe_all_tournaments (called above) already swept those
+        # globally by post_type. Re-matching this club's posts by
+        # club_id alone (with no post_type filter) would re-select the
+        # very same rows: harmless on a real run (they're already gone,
+        # so this just matches nothing for them), but in dry_run mode
+        # nothing has actually been removed between the two sweeps, so
+        # they'd get counted twice. Same double-counting failure mode as
+        # the one fixed in delete_player_account_cascade -- see that
+        # function's own comment for the general principle.
+        club_post_rows = (
+            supabase.table("club_posts").select("id, post_type").eq("club_id", club_id).execute().data or []
+        )
+        non_tournament_post_ids = [
+            row["id"] for row in club_post_rows if row.get("post_type") not in ("tournament", "tournament_finalized")
+        ]
+        counts["club_posts"] += _count_and_maybe_delete_in("club_posts", "id", non_tournament_post_ids, dry_run)
 
         club_response = supabase.table("clubs").select("photo_url").eq("id", club_id).maybe_single().execute()
         club_data = club_response.data if club_response is not None else None
@@ -282,6 +312,69 @@ def reset_clubs_keep_one(keep_club_slug: str, dry_run: bool = True) -> dict:
         _remove_storage_objects(CLUB_PHOTO_BUCKET, [photo_path], dry_run, counts)
 
         counts["clubs"] += _count_and_maybe_delete("clubs", {"id": club_id}, dry_run)
+
+    return counts
+
+
+def delete_club_cascade(club_slug: str, dry_run: bool = True) -> dict:
+    """Deletes ONE club and everything scoped to it: its own tournaments
+    (entrants, pairs, tournament rounds, tee times, every round played
+    under any of them), its own casual (non-tournament) rounds, its
+    membership, invites, feed posts, and its uploaded photo. Every other
+    club -- its clubs, tournaments, rounds, posts -- is left completely
+    untouched. This is the "delete one club at a time" primitive;
+    reset_clubs_keep_one is the separate "wipe down to one club / wipe
+    everything" bulk operation and isn't involved here at all.
+
+    tournaments.linked_tournament_id is a self-reference (pairs-format
+    tournaments linking to their own roster/pairing source elsewhere in
+    the app -- see tournaments.py's _resolve_source_tournament_id). Any
+    OTHER club's tournament could theoretically link to one of this
+    club's tournaments as its source, so those references get nulled out
+    first, same as wipe_all_tournaments does, rather than assuming links
+    only ever point within one club."""
+    club = supabase.table("clubs").select("id, slug, photo_url").eq("slug", club_slug).maybe_single().execute()
+    club_data = club.data if club is not None else None
+    if not club_data:
+        raise ClubNotFoundError(f"No club with slug '{club_slug}'. Nothing was deleted.")
+    club_id = club_data["id"]
+
+    counts = _new_counts()
+
+    tournament_ids = _select_ids("tournaments", {"club_id": club_id})
+
+    if not dry_run and tournament_ids:
+        supabase.table("tournaments").update({"linked_tournament_id": None}).in_(
+            "linked_tournament_id", tournament_ids
+        ).execute()
+
+    for tournament_id in tournament_ids:
+        _delete_tournament_cascade(tournament_id, dry_run, counts)
+
+    # Casual rounds tagged to this club (tournament rounds never carry
+    # club_id -- see rounds.py's start_tournament_round round_payload --
+    # so this can't re-match anything the loop above already handled).
+    casual_round_ids = _select_ids("rounds", {"club_id": club_id})
+    for round_id in casual_round_ids:
+        _delete_round_cascade(round_id, dry_run, counts)
+
+    counts["club_players"] += _count_and_maybe_delete("club_players", {"club_id": club_id}, dry_run)
+    counts["club_invites"] += _count_and_maybe_delete("club_invites", {"club_id": club_id}, dry_run)
+
+    # Unlike reset_clubs_keep_one (which sweeps club_posts globally by
+    # post_type across every club BEFORE this point, and so has to
+    # exclude those already-handled rows here to avoid recounting them),
+    # nothing earlier in this function has touched club_posts at all --
+    # _delete_tournament_cascade explicitly doesn't (see its own
+    # docstring). So one plain club_id-scoped sweep, covering every post
+    # type including tournament/tournament_finalized, is both correct
+    # and the only place these rows get counted.
+    counts["club_posts"] += _count_and_maybe_delete("club_posts", {"club_id": club_id}, dry_run)
+
+    photo_path = _storage_path_from_url(club_data.get("photo_url"), CLUB_PHOTO_BUCKET)
+    _remove_storage_objects(CLUB_PHOTO_BUCKET, [photo_path], dry_run, counts)
+
+    counts["clubs"] += _count_and_maybe_delete("clubs", {"id": club_id}, dry_run)
 
     return counts
 
@@ -441,5 +534,131 @@ def delete_player_account_cascade(player_account_id: str, dry_run: bool = True) 
 
     counts["player_accounts"] += _count_and_maybe_delete("player_accounts", {"id": player_account_id}, dry_run)
     counts["players"] += _count_and_maybe_delete("players", {"id": player_id}, dry_run)
+
+    return counts
+
+
+def diagnose_tournament_rounds(club_slug: str) -> dict:
+    """Read-only -- no dry_run, nothing here ever mutates anything.
+    Built for one specific failure mode: generate_tee_times (the Start
+    Sheet's "Generate" action) does a wholesale delete-and-reinsert of a
+    tournament_round's tournament_tee_times rows every time it's run
+    (see that function's own docstring -- "whatever's there gets thrown
+    out and rebuilt"), and it does this with NO check for whether any of
+    the slots it's about to delete already has a real `rounds` row
+    pointing at it (rounds.tee_time_id is set once, at Start, and is
+    never updated afterward).
+
+    So: group starts and plays their round (rounds row created, tied to
+    tee_time X) -> admin re-runs Generate for that same day (late add,
+    fixing a grouping, whatever) -> tee_time X is deleted and a new slot
+    Y is created in its place -> the played round's tee_time_id still
+    says X, which no longer exists. The round itself, its scores, and
+    its sign-off state are all completely untouched in the `rounds`/
+    `round_scores`/`round_players` tables -- this is purely a broken
+    display join. But every UI surface that renders the Start Sheet by
+    walking the CURRENT tournament_tee_times rows and asking "does any
+    round point at this slot" (fetch_live_rounds_by_tee_time) will never
+    find it, since it's looking for slot Y and the round says X -- so
+    that grouping shows up as never-started even though it was played
+    and (possibly) even fully scored.
+
+    For every tournament round in every tournament this club has ever
+    run, returns every `rounds` row under it with its real status,
+    tee_time_id, whether that tee_time_id is still among the CURRENTLY
+    generated slots for that tournament round ("orphaned": true if not),
+    and each accepted player's sign-off state -- so a specific missing
+    round can be found and diagnosed without guessing."""
+    club = supabase.table("clubs").select("id, slug").eq("slug", club_slug).maybe_single().execute()
+    club_data = club.data if club is not None else None
+    if not club_data:
+        raise ClubNotFoundError(f"No club with slug '{club_slug}'.")
+    club_id = club_data["id"]
+
+    tournaments = (
+        supabase.table("tournaments").select("id, name").eq("club_id", club_id).execute().data or []
+    )
+
+    tournament_round_reports = []
+    for tournament in tournaments:
+        tournament_rounds = (
+            supabase
+            .table("tournament_rounds")
+            .select("id, round_number, round_date")
+            .eq("tournament_id", tournament["id"])
+            .order("round_number")
+            .execute()
+            .data
+            or []
+        )
+        for tournament_round in tournament_rounds:
+            current_slot_ids = {
+                row["id"]
+                for row in (
+                    supabase.table("tournament_tee_times")
+                    .select("id")
+                    .eq("tournament_round_id", tournament_round["id"])
+                    .execute()
+                    .data
+                    or []
+                )
+            }
+
+            played_rounds = (
+                supabase
+                .table("rounds")
+                .select("id, status, tee_time_id, completed_at")
+                .eq("tournament_round_id", tournament_round["id"])
+                .execute()
+                .data
+                or []
+            )
+            if not played_rounds:
+                continue
+
+            round_reports = []
+            for round_row in played_rounds:
+                round_player_rows = (
+                    supabase
+                    .table("round_players")
+                    .select("player_id, status, signed_off_at, players(first_name, surname, nickname)")
+                    .eq("round_id", round_row["id"])
+                    .execute()
+                    .data
+                    or []
+                )
+                players_out = []
+                for rp in round_player_rows:
+                    player_info = rp.get("players") or {}
+                    name = player_info.get("nickname") or (
+                        f"{player_info.get('first_name', '')} {player_info.get('surname', '')}".strip()
+                    )
+                    players_out.append({
+                        "player_id": rp["player_id"],
+                        "name": name or rp["player_id"],
+                        "membership_status": rp["status"],
+                        "signed_off": bool(rp.get("signed_off_at")),
+                    })
+
+                round_reports.append({
+                    "round_id": round_row["id"],
+                    "status": round_row["status"],
+                    "completed_at": round_row.get("completed_at"),
+                    "tee_time_id": round_row.get("tee_time_id"),
+                    "orphaned": round_row.get("tee_time_id") not in current_slot_ids,
+                    "players": players_out,
+                })
+
+            tournament_round_reports.append({
+                "tournament_id": tournament["id"],
+                "tournament_name": tournament.get("name"),
+                "tournament_round_id": tournament_round["id"],
+                "round_number": tournament_round.get("round_number"),
+                "round_date": tournament_round.get("round_date"),
+                "current_slot_count": len(current_slot_ids),
+                "rounds": round_reports,
+            })
+
+    return {"club_slug": club_slug, "tournament_rounds": tournament_round_reports}
 
     return counts

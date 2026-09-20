@@ -578,29 +578,83 @@ def wipe_tournaments(c, execute=False):
 
 
 @task
-def reset_clubs(c, keep_slug, execute=False):
+def reset_clubs(c, keep_slug=None, keep_none=False, execute=False):
     """
     Delete every club except the one matching --keep-slug, and every
     tournament everywhere (including the kept club's own -- see
     wipe-tournaments). The kept club's regular membership, casual rounds,
     and non-tournament feed posts are left alone.
 
+    Pass --keep-none instead of --keep-slug to delete EVERY club, with no
+    exception -- this is a separate, explicit flag on purpose, so a
+    forgotten or typo'd --keep-slug can never silently turn into a full
+    wipe. One of --keep-slug or --keep-none is required.
+
     Defaults to a dry run. Pass --execute to actually delete.
 
     Usage:
-        uv run invoke reset-clubs --keep-slug=the-gang                # preview
-        uv run invoke reset-clubs --keep-slug=the-gang --execute       # actually delete
+        uv run invoke reset-clubs --keep-slug=the-gang                # preview, keep one club
+        uv run invoke reset-clubs --keep-slug=the-gang --execute       # actually delete, keep one club
+        uv run invoke reset-clubs --keep-none                         # preview, delete every club
+        uv run invoke reset-clubs --keep-none --execute                # actually delete every club
+    """
+    import requests
+
+    if keep_slug and keep_none:
+        print("Pass only one of --keep-slug or --keep-none, not both.")
+        return
+    if not keep_slug and not keep_none:
+        print("Pass --keep-slug=<slug> to keep one club, or --keep-none to delete every club.")
+        return
+
+    dry_run = not execute
+    params = {"dry_run": str(dry_run).lower(), "delete_all": str(keep_none).lower()}
+    if keep_slug:
+        params["keep_slug"] = keep_slug
+    response = requests.post("http://localhost:8000/admin/clubs/reset", params=params)
+
+    if response.status_code == 404:
+        print(f"No club with slug '{keep_slug}'. Run `uv run invoke list-clubs` to check the exact slug.")
+        return
+    if response.status_code != 200:
+        print(f"Error {response.status_code}: {response.json()}")
+        return
+
+    print("DRY RUN -- nothing deleted. Re-run with --execute to actually delete.\n" if dry_run else "DELETED:\n")
+    _print_admin_summary(response.json())
+
+
+@task
+def delete_club_cascade(c, slug, execute=False):
+    """
+    Delete ONE club and everything scoped to it -- its own tournaments
+    (entrants, pairs, tournament rounds, tee times, every round played
+    under any of them), its own casual rounds, membership, invites, feed
+    posts, and its uploaded photo. Every other club is left completely
+    untouched.
+
+    This is the safe way to delete a single club -- the plain
+    `delete-club` task just does a raw DB delete with no cascade, which
+    will fail (or worse, leave orphaned rows) the moment the club has any
+    real data attached. Use this one instead for any club that isn't
+    already empty.
+
+    Defaults to a dry run. Pass --execute to actually delete.
+
+    Usage:
+        uv run invoke delete-club-cascade --slug=senco-squad             # preview
+        uv run invoke delete-club-cascade --slug=senco-squad --execute    # actually delete
     """
     import requests
 
     dry_run = not execute
-    response = requests.post(
-        "http://localhost:8000/admin/clubs/reset",
-        params={"keep_slug": keep_slug, "dry_run": str(dry_run).lower()},
+    response = requests.delete(
+        f"http://localhost:8000/admin/clubs/{slug}",
+        params={"dry_run": str(dry_run).lower()},
     )
 
     if response.status_code == 404:
-        print(f"No club with slug '{keep_slug}'. Run `uv run invoke list-clubs` to check the exact slug.")
+        print(f"No club with slug '{slug}'. Run `uv run invoke list-clubs` to check the exact slug.")
         return
     if response.status_code != 200:
         print(f"Error {response.status_code}: {response.json()}")
@@ -647,3 +701,50 @@ def delete_player_account(c, player_account_id, execute=False):
 
     print("DRY RUN -- nothing deleted. Re-run with --execute to actually delete.\n" if dry_run else "DELETED:\n")
     _print_admin_summary(response.json())
+
+@task
+def diagnose_tournament_rounds(c, slug):
+    """
+    Read-only -- never deletes or changes anything. For every tournament
+    round in every tournament this club has run, lists every played round
+    under it: its real status, whether it's "orphaned" (its tee_time_id
+    no longer matches any of the CURRENTLY generated Start Sheet slots for
+    that day -- see diagnose_tournament_rounds's own docstring in
+    admin_cleanup.py for exactly how this happens), and each player's
+    sign-off state.
+
+    Use this when the Start Sheet shows a group as never-started but you
+    know they played -- it'll surface the real round (with its id) even
+    though the Start Sheet itself can no longer find it.
+
+    Usage:
+        uv run invoke diagnose-tournament-rounds --slug=senco-squad
+    """
+    import requests
+
+    response = requests.get(f"http://localhost:8000/admin/clubs/{slug}/diagnose-rounds")
+
+    if response.status_code == 404:
+        print(f"No club with slug '{slug}'. Run `uv run invoke list-clubs` to check the exact slug.")
+        return
+    if response.status_code != 200:
+        print(f"Error {response.status_code}: {response.json()}")
+        return
+
+    data = response.json()
+    tournament_rounds = data.get("tournament_rounds", [])
+    if not tournament_rounds:
+        print("No tournament rounds with any played rounds under them for this club.")
+        return
+
+    for tr in tournament_rounds:
+        print(
+            f"\n{tr['tournament_name']} -- Round {tr['round_number']} ({tr['round_date']})  "
+            f"[tournament_round_id={tr['tournament_round_id']}, currently {tr['current_slot_count']} slot(s) generated]"
+        )
+        for r in tr["rounds"]:
+            flag = "  <-- ORPHANED: tee_time_id no longer matches a current Start Sheet slot" if r["orphaned"] else ""
+            print(f"  round_id={r['round_id']}  status={r['status']}  completed_at={r['completed_at']}{flag}")
+            for p in r["players"]:
+                signed = "signed off" if p["signed_off"] else "NOT signed off"
+                print(f"      {p['name']:<20} {p['membership_status']:<10} {signed}")
